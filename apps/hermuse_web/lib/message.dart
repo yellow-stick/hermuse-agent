@@ -4,6 +4,7 @@ import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'browser_card.dart';
 import 'markdown_view.dart';
 
 YsColor _brand(int value) => YsColor(value);
@@ -22,6 +23,9 @@ class MessageRow extends StatelessComponent {
     required this.customAnswer,
     required this.onCustomAnswer,
     required this.onSelectOffer,
+    required this.instanceId,
+    required this.taskTitle,
+    required this.onOpenComputer,
     super.key,
   });
 
@@ -41,10 +45,22 @@ class MessageRow extends StatelessComponent {
   final ValueChanged<String> onCustomAnswer;
   final ValueChanged<String> onSelectOffer;
 
+  /// Instance of the conversation (the browser card's computer).
+  final String instanceId;
+
+  /// Title of the browser task ([browserTaskTitle]).
+  final String taskTitle;
+
+  /// Opens the computer viewer (the browser card's buttons).
+  final VoidCallback onOpenComputer;
+
   @override
   Component build(BuildContext context) {
     final isUser = message.author == Author.user;
-    final radius = _bubbleRadius(isUser, position);
+    // The browser card is a bubble of its own above the turn's other
+    // blocks, joined to them like grouped messages.
+    final card = message.blocks.whereType<BrowserBlock>().firstOrNull;
+    final hasRest = message.blocks.any((block) => block is! BrowserBlock);
     final choices = [
       for (final b in message.blocks)
         if (b is ChoiceBlock) b,
@@ -60,71 +76,110 @@ class MessageRow extends StatelessComponent {
               _action(YsIcon.copy, 'Copy', onCopy, copied: copied),
               _action(YsIcon.reply, 'Reply', onReply),
             ]),
-          div(classes: 'hermuse-bubble-wrap', [
-            div(
-              classes: isUser
-                  ? 'hermuse-bubble hermuse-bubble-user'
-                  : 'hermuse-bubble hermuse-bubble-agent',
-              styles: Styles(radius: radius),
-              [
-                for (final block in message.blocks)
-                  switch (block) {
-                    TextBlock(:final text) =>
-                      isUser
-                          ? p(classes: 'hermuse-text', [.text(text)])
-                          : HermuseMarkdown(text),
-                    BulletsBlock(:final items) => ul(
-                      classes: 'hermuse-bullets',
-                      [
-                        for (final item in items)
-                          li(classes: 'hermuse-bullet', [
-                            span(classes: 'hermuse-bullet-dot', [.text('•')]),
-                            span(classes: 'hermuse-bullet-text', [.text(item)]),
-                          ]),
-                      ],
+          div(
+            classes: card == null
+                ? 'hermuse-bubble-wrap'
+                : 'hermuse-bubble-wrap hermuse-bubble-wrap-browser',
+            [
+              if (card != null)
+                div(
+                  classes: 'hermuse-bubble hermuse-bubble-agent hermuse-bubble-browser',
+                  styles: Styles(
+                    radius: _bubbleRadius(
+                      isUser,
+                      joinsAbove: position.joinsAbove,
+                      joinsBelow: hasRest || position.joinsBelow,
                     ),
-                    ChoiceBlock choice => HermuseChoice(
-                      key: ValueKey(choices.indexOf(choice)),
-                      messageId: message.id,
-                      choice: choice,
-                      onChoose: (answer) =>
-                          onChoose(answer, choices.indexOf(choice)),
-                      customAnswer: customAnswer,
-                      onCustomAnswer: onCustomAnswer,
-                    ),
-                    ReasoningBlock(:final text) => HermuseReasoning(text: text),
-                    ToolCallBlock tool => HermuseToolCall(tool: tool),
-                    NoticeBlock(:final text, :final isError) => HermuseNotice(
-                      text: text,
-                      isError: isError,
-                    ),
-                    FlightResultsBlock(:final title, :final offers) => div(
-                      classes: 'hermuse-flights',
-                      [
-                        p(classes: 'hermuse-flights-title', [.text(title)]),
-                        for (final offer in offers)
-                          HermuseOfferRow(
-                            offer: offer,
-                            selected: selectedOffer == offer.id,
-                            onSelect: () => onSelectOffer(offer.id),
-                          ),
-                      ],
-                    ),
-                  },
-              ],
-            ),
-            if (message.reactions.isNotEmpty)
-              div(classes: 'hermuse-reactions', [
-                for (final emoji in message.reactions)
-                  YsPressable(
-                    onPressed: onToggleReaction,
-                    label: 'Remove $emoji reaction',
-                    classes: 'hermuse-reaction',
-                    builder: (context, press) =>
-                        span(classes: 'hermuse-reaction-emoji', [.text(emoji)]),
                   ),
-              ]),
-          ]),
+                  [
+                    HermuseBrowserCard(
+                      block: card,
+                      title: taskTitle,
+                      instanceId: instanceId,
+                      onOpen: onOpenComputer,
+                    ),
+                  ],
+                ),
+              if (card == null || hasRest)
+                div(
+                  classes: isUser
+                      ? 'hermuse-bubble hermuse-bubble-user'
+                      : 'hermuse-bubble hermuse-bubble-agent',
+                  styles: Styles(
+                    radius: _bubbleRadius(
+                      isUser,
+                      joinsAbove: card != null || position.joinsAbove,
+                      joinsBelow: position.joinsBelow,
+                    ),
+                  ),
+                  [
+                    for (final block in message.blocks)
+                      switch (block) {
+                        TextBlock(:final text) =>
+                          isUser
+                              ? p(classes: 'hermuse-text', [.text(text)])
+                              : HermuseMarkdown(text),
+                        BulletsBlock(:final items) => ul(
+                          classes: 'hermuse-bullets',
+                          [
+                            for (final item in items)
+                              li(classes: 'hermuse-bullet', [
+                                span(classes: 'hermuse-bullet-dot', [
+                                  .text('•'),
+                                ]),
+                                span(classes: 'hermuse-bullet-text', [
+                                  .text(item),
+                                ]),
+                              ]),
+                          ],
+                        ),
+                        ChoiceBlock choice => HermuseChoice(
+                          key: ValueKey(choices.indexOf(choice)),
+                          messageId: message.id,
+                          choice: choice,
+                          onChoose: (answer) =>
+                              onChoose(answer, choices.indexOf(choice)),
+                          customAnswer: customAnswer,
+                          onCustomAnswer: onCustomAnswer,
+                        ),
+                        ReasoningBlock(:final text) => HermuseReasoning(
+                          text: text,
+                        ),
+                        ToolCallBlock tool => HermuseToolCall(tool: tool),
+                        // Drawn as the bubble above.
+                        BrowserBlock() => .fragment([]),
+                        NoticeBlock(:final text, :final isError) =>
+                          HermuseNotice(text: text, isError: isError),
+                        FlightResultsBlock(:final title, :final offers) => div(
+                          classes: 'hermuse-flights',
+                          [
+                            p(classes: 'hermuse-flights-title', [.text(title)]),
+                            for (final offer in offers)
+                              HermuseOfferRow(
+                                offer: offer,
+                                selected: selectedOffer == offer.id,
+                                onSelect: () => onSelectOffer(offer.id),
+                              ),
+                          ],
+                        ),
+                      },
+                  ],
+                ),
+              if (message.reactions.isNotEmpty)
+                div(classes: 'hermuse-reactions', [
+                  for (final emoji in message.reactions)
+                    YsPressable(
+                      onPressed: onToggleReaction,
+                      label: 'Remove $emoji reaction',
+                      classes: 'hermuse-reaction',
+                      builder: (context, press) => span(
+                        classes: 'hermuse-reaction-emoji',
+                        [.text(emoji)],
+                      ),
+                    ),
+                ]),
+            ],
+          ),
           if (!isUser)
             div(classes: 'hermuse-actions', [
               _action(YsIcon.smile, 'React', onToggleReaction),
@@ -149,11 +204,15 @@ class MessageRow extends StatelessComponent {
         YsIconView(copied ? YsIcon.check : icon, size: 16),
   );
 
-  BorderRadius _bubbleRadius(bool isUser, GroupPosition position) {
+  BorderRadius _bubbleRadius(
+    bool isUser, {
+    required bool joinsAbove,
+    required bool joinsBelow,
+  }) {
     final full = Radius.circular(YsRadius.bubble.px);
     final tail = Radius.circular(YsRadius.bubbleTail.px);
-    final topJoin = position.joinsAbove ? tail : full;
-    final bottomJoin = position.joinsBelow ? tail : full;
+    final topJoin = joinsAbove ? tail : full;
+    final bottomJoin = joinsBelow ? tail : full;
     return isUser
         ? BorderRadius.only(
             topLeft: full,
@@ -280,6 +339,13 @@ class MessageRow extends StatelessComponent {
         maxWidth: YsLayout.userBubbleMaxWidth.px,
         raw: {'margin-left': 'auto'},
       ),
+      // Browser card bubble over the turn's other blocks: each bubble
+      // keeps its own width, 8 px apart.
+      css('.hermuse-bubble-wrap-browser')
+          .styles(display: .flex, flexDirection: .column, alignItems: .start),
+      css('.hermuse-bubble-browser').styles(padding: .all(12.px)),
+      css('.hermuse-bubble-browser + .hermuse-bubble')
+          .styles(margin: .only(top: 8.px)),
       css('.hermuse-reactions').styles(
         display: .flex,
         flexDirection: .row,

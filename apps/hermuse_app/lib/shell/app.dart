@@ -12,6 +12,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import 'package:hermuse_host/hermuse_host.dart' show DetectedHermes;
 
+import '../computer/computer_viewer.dart';
 import '../host/install_flow.dart';
 import '../platform/local_host.dart';
 import '../onboarding/connections.dart';
@@ -516,8 +517,13 @@ final class _ShellState extends ConsumerState<_Shell> {
     unawaited(ref.read(chatPanelProvider.notifier).setPinned(keep));
   }
 
-  void _goTo(HermuseDestination destination) =>
-      setState(() => _destination = destination);
+  /// A rail destination; it also leaves the computer viewer.
+  void _goTo(HermuseDestination destination) {
+    if (widget.controller.state.computerOpen) {
+      widget.controller.closeComputer();
+    }
+    setState(() => _destination = destination);
+  }
 
   /// Discuss / Start in chat: [seed] lands in the main chat's composer,
   /// focused and not sent (a quote, never a new side chat). A
@@ -665,6 +671,7 @@ final class _ShellState extends ConsumerState<_Shell> {
       activity: state.activity,
       approvals: _approvals(state),
       onOpenApproval: _openApproval,
+      onOpenComputer: widget.controller.openComputer,
       onClose: closePanel,
     );
     Widget threadView({
@@ -709,6 +716,21 @@ final class _ShellState extends ConsumerState<_Shell> {
       onDestination: _goTo,
       onSettings: widget.onManageInstances ?? () {},
     );
+    // The agent's computer replaces everything right of the rail.
+    if (state.computerOpen) {
+      return Row(
+        children: [
+          if (!compact) rail,
+          Expanded(
+            child: ComputerViewer(
+              key: ValueKey(widget.controller.instanceId),
+              controller: widget.controller,
+              instanceId: widget.controller.instanceId,
+            ),
+          ),
+        ],
+      );
+    }
     switch (shell) {
       case YsShell.compact:
         return _CompactShell(

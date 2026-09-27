@@ -74,6 +74,45 @@ final class ToolCallBlock extends Block {
   );
 }
 
+/// Whether [name] is one of Hermes' `browser_*` tools, shown as a
+/// [BrowserBlock] instead of tool call rows.
+bool isBrowserTool(String name) => name.startsWith('browser_');
+
+/// The agent's browser in a turn: one card, first in the bubble, standing
+/// for every `browser_*` tool call of that turn.
+final class BrowserBlock extends Block {
+  const BrowserBlock({
+    required this.lastToolId,
+    this.running = true,
+    this.step = '',
+    this.host = '',
+  });
+
+  /// Id of the turn's latest browser tool call (keys its saved snapshot).
+  final String lastToolId;
+
+  /// The turn is still in progress.
+  final bool running;
+
+  /// What the agent is doing while [running] (`Opening example.com`).
+  final String step;
+
+  /// Host of the last page the agent opened, when known.
+  final String host;
+
+  BrowserBlock copyWith({
+    String? lastToolId,
+    bool? running,
+    String? step,
+    String? host,
+  }) => BrowserBlock(
+    lastToolId: lastToolId ?? this.lastToolId,
+    running: running ?? this.running,
+    step: step ?? this.step,
+    host: host ?? this.host,
+  );
+}
+
 /// A status line inside the conversation (errors, cancelled requests).
 final class NoticeBlock extends Block {
   const NoticeBlock(this.text, {this.isError = false});
@@ -184,7 +223,9 @@ final class Message {
   /// tool activity are not part of what was said.
   String get plainText => [
     for (final block in blocks)
-      if (block is! ReasoningBlock && block is! ToolCallBlock)
+      if (block is! ReasoningBlock &&
+          block is! ToolCallBlock &&
+          block is! BrowserBlock)
         switch (block) {
           TextBlock(:final text) => text,
           BulletsBlock(:final items) => items.map((i) => '• $i').join('\n'),
@@ -199,6 +240,7 @@ final class Message {
           ReasoningBlock(:final text) => text,
           ToolCallBlock(:final name, :final summary) =>
             summary.isEmpty ? name : '$name: $summary',
+          BrowserBlock(:final step) => step,
           NoticeBlock(:final text) => text,
         },
   ].join('\n\n');

@@ -1,10 +1,10 @@
 name: hermuse
-version: 0.1.0
+version: 0.2.0
 description: "Hermuse product layer: Feed, Ideas, Goals, Library artifacts, Reflections and proactive preferences, stored as human-readable files under HERMES_HOME/hermuse/."
 author: Yellow Stick
 license: AGPL-3.0-only
 kind: standalone
-requires_hermes: ">=0.21,<0.22"
+requires_hermes: ">=0.21.5,<0.22"
 platforms:
   - linux
   - macos
@@ -16,3 +16,8 @@ provides_tools:
   - goal_update
   - artifact_save
   - reflection_write
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result
+provides_browser_providers:
+  - hermuse

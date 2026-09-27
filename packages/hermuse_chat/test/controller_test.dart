@@ -203,6 +203,135 @@ void main() {
   });
 
   test(
+    'browser tools render one BrowserBlock at the top of the turn',
+    () async {
+      final chat = await open();
+      await chat.send('titles please');
+      BrowserBlock card() =>
+          chat.state.activeThread.messages.last.blocks.first as BrowserBlock;
+
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {
+            'tool_id': 'b1',
+            'name': 'browser_navigate',
+            'args': {'url': 'https://en.wikipedia.org/wiki/Nantes'},
+          },
+        );
+      expect(
+        (card().lastToolId, card().running, card().step, card().host),
+        ('b1', true, 'Opening en.wikipedia.org', 'en.wikipedia.org'),
+      );
+
+      fake.emitEvent(
+        'tool.complete',
+        sessionId: 'live-1',
+        payload: {'tool_id': 'b1', 'name': 'browser_navigate'},
+      );
+      expect(card().running, isTrue, reason: 'the turn still owns the browser');
+
+      fake
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {'tool_id': 'b2', 'name': 'browser_click'},
+        )
+        ..emitEvent(
+          'message.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'Nantes'},
+        );
+      expect(
+        (card().lastToolId, card().step, card().host),
+        ('b2', 'Clicking', 'en.wikipedia.org'),
+      );
+
+      fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-1',
+        payload: {'text': 'Nantes', 'status': 'complete'},
+      );
+      final turn = chat.state.activeThread.messages.last;
+      expect(turn.blocks, hasLength(2));
+      expect(
+        (card().lastToolId, card().running, card().step),
+        ('b2', false, ''),
+      );
+      expect((turn.blocks.last as TextBlock).text, 'Nantes');
+      expect(turn.blocks.whereType<ToolCallBlock>(), isEmpty);
+      expect(turn.plainText, 'Nantes');
+      expect(chat.state.activity.single.title, 'browser_navigate');
+    },
+  );
+
+  test('an error ends the turn browser card', () async {
+    final chat = await open();
+    await chat.send('open it');
+    fake
+      ..emitEvent('message.start', sessionId: 'live-1')
+      ..emitEvent(
+        'tool.start',
+        sessionId: 'live-1',
+        payload: {'tool_id': 'b1', 'name': 'browser_snapshot'},
+      )
+      ..emitEvent(
+        'error',
+        sessionId: 'live-1',
+        payload: {'message': 'model overloaded'},
+      );
+    final card = chat.state.activeThread.messages
+        .expand((m) => m.blocks)
+        .whereType<BrowserBlock>()
+        .single;
+    expect((card.running, card.step), (false, ''));
+    expect(chat.state.busy, isFalse);
+  });
+
+  test(
+    'resumed browser tool rows fold into one finished BrowserBlock',
+    () async {
+      fake.on(
+        'session.resume',
+        (_) => {
+          'session_id': 'live-1',
+          'message_count': 5,
+          'info': {'title': 'Nantes'},
+          'messages': [
+            {'role': 'user', 'text': 'look at Nantes', 'row_id': 1},
+            {'role': 'assistant', 'text': 'Looking.', 'row_id': 2},
+            {
+              'role': 'tool',
+              'name': 'browser_snapshot',
+              'tool_call_id': 's1',
+              'row_id': 3,
+            },
+            {
+              'role': 'tool',
+              'name': 'browser_snapshot',
+              'tool_call_id': 's2',
+              'row_id': 4,
+            },
+            {'role': 'assistant', 'text': 'A city.', 'row_id': 5},
+          ],
+        },
+      );
+      final chat = await open();
+      final blocks = chat.state.activeThread.messages.last.blocks;
+      final card = blocks.first as BrowserBlock;
+      expect((card.lastToolId, card.running), ('s2', false));
+      expect(blocks.whereType<BrowserBlock>(), hasLength(1));
+      expect(blocks.whereType<ToolCallBlock>(), isEmpty);
+      expect(
+        [for (final b in blocks.skip(1)) (b as TextBlock).text],
+        ['Looking.', 'A city.'],
+      );
+    },
+  );
+
+  test(
     'a turn keeps one reasoning block first; thinking status is ignored',
     () async {
       final chat = await open();

@@ -14,10 +14,11 @@ import 'screens.dart';
 
 /// Shown when the Hermuse plugin backend is missing on an instance.
 ///
-/// The web app cannot install it (no shell on the host): the page keeps the
-/// destination title and explains, in a card, how to install it from a
-/// Hermuse checkout onto the machine running Hermes.
-class HermusePluginMissing extends StatelessComponent {
+/// The page keeps the destination title and offers, in a card, to install
+/// the plugin through the instance's dashboard ([installHermusePlugin]),
+/// with the commands to install it by hand from a Hermuse checkout as a
+/// fallback.
+class HermusePluginMissing extends StatefulComponent {
   const HermusePluginMissing({
     required this.instance,
     required this.title,
@@ -38,35 +39,7 @@ class HermusePluginMissing extends StatelessComponent {
       '# then restart Hermes (hermes serve or the dashboard)';
 
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-route', [
-    div(classes: 'hermuse-route-column', [
-      div(classes: 'hermuse-route-head', [
-        h1(classes: 'hermuse-route-title', [.text(title)]),
-      ]),
-      div(classes: 'hermuse-plugin-card', [
-        div(classes: 'hermuse-plugin-icon', [
-          YsIconView(YsIcon.library, size: 20),
-        ]),
-        h2(classes: 'hermuse-plugin-heading', [
-          .text('Turn on Feed, Ideas, Goals and Library'),
-        ]),
-        p(classes: 'hermuse-plugin-body', [
-          .text(
-            'These pages come from the Hermuse plugin, which runs on your '
-            'Hermes. It is not installed on ${instance.label} yet.',
-          ),
-        ]),
-        pre(classes: 'hermuse-plugin-cmd', [.text(commands)]),
-        div([
-          YsButton.primary(
-            label: 'Check again',
-            onPressed: () =>
-                context.container.invalidate(pluginStatusProvider(instance.id)),
-          ),
-        ]),
-      ]),
-    ]),
-  ]);
+  State<HermusePluginMissing> createState() => _HermusePluginMissingState();
 
   @css
   // ignore: unused_element
@@ -102,6 +75,16 @@ class HermusePluginMissing extends StatelessComponent {
       lineHeight: 22.px,
       color: .variable('--content-muted'),
     ),
+    // Hermes' scan report behind the consent prompt, in small text.
+    css('.hermuse-plugin-consent').styles(
+      margin: .zero,
+      fontSize: 12.px,
+      lineHeight: 18.px,
+      color: .variable('--content-muted'),
+      raw: {'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere'},
+    ),
+    css('.hermuse-plugin-actions')
+        .styles(display: .flex, gap: .all(8.px), raw: {'flex-wrap': 'wrap'}),
     css('.hermuse-plugin-cmd').styles(
       width: 100.percent,
       margin: .zero,
@@ -120,6 +103,128 @@ class HermusePluginMissing extends StatelessComponent {
       },
     ),
   ];
+}
+
+class _HermusePluginMissingState extends State<HermusePluginMissing> {
+  var _busy = false;
+  String? _error;
+  List<PluginScanFinding> _findings = const [];
+
+  /// The dashboard installed the plugin but must restart to serve it.
+  var _needsRestart = false;
+
+  /// Hermes' scan report while the install waits for the user's consent.
+  String? _consent;
+
+  /// [force] once the user allowed a "caution" scan verdict.
+  Future<void> _install({bool force = false}) async {
+    final id = component.instance.id;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _findings = const [];
+      _needsRestart = false;
+    });
+    try {
+      final rest = await context.container.read(restClientProvider(id).future);
+      final result = await installHermusePlugin(rest, force: force);
+      if (!mounted) return;
+      setState(() => _consent = null);
+      switch (result) {
+        case PluginInstalled():
+          context.container.invalidate(pluginStatusProvider(id));
+        case PluginNeedsConsent(:final detail):
+          setState(() => _consent = detail);
+        case PluginNeedsDashboardRestart():
+          setState(() => _needsRestart = true);
+        case PluginInstallFailed(:final message, :final findings):
+          setState(() {
+            _error = message;
+            _findings = findings;
+          });
+      }
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Component build(BuildContext context) {
+    final instance = component.instance;
+    return div(classes: 'hermuse-route', [
+      div(classes: 'hermuse-route-column', [
+        div(classes: 'hermuse-route-head', [
+          h1(classes: 'hermuse-route-title', [.text(component.title)]),
+        ]),
+        div(classes: 'hermuse-plugin-card', [
+          div(classes: 'hermuse-plugin-icon', [
+            YsIconView(YsIcon.library, size: 20),
+          ]),
+          h2(classes: 'hermuse-plugin-heading', [
+            .text('Turn on Feed, Ideas, Goals and Library'),
+          ]),
+          p(classes: 'hermuse-plugin-body', [
+            .text(
+              'These pages come from the Hermuse plugin, which runs on your '
+              'Hermes. It is not installed on ${instance.label} yet.',
+            ),
+          ]),
+          if (_consent case final consent?) ...[
+            p(classes: 'hermuse-plugin-body', [
+              .text(
+                'Hermuse needs permission to install Docker with sudo on '
+                'this server (Hermes flags this for review).',
+              ),
+            ]),
+            p(classes: 'hermuse-plugin-consent', [.text(consent)]),
+          ],
+          div(classes: 'hermuse-plugin-actions', [
+            if (_consent != null)
+              YsButton.primary(
+                label: _busy ? 'Installing…' : 'Allow and install',
+                onPressed: _busy
+                    ? null
+                    : () => unawaited(_install(force: true)),
+              )
+            else
+              YsButton.primary(
+                label: _busy ? 'Installing…' : 'Install Hermuse on this Hermes',
+                onPressed: _busy ? null : () => unawaited(_install()),
+              ),
+            YsButton.neutral(
+              label: 'Check again',
+              onPressed: () => context.container.invalidate(
+                pluginStatusProvider(instance.id),
+              ),
+            ),
+          ]),
+          if (_needsRestart) ...[
+            p(classes: 'hermuse-plugin-body', [
+              .text(
+                'Restart the Hermes dashboard to finish installing Hermuse. '
+                'Under systemd run the command below; otherwise stop '
+                '`hermes dashboard` and start it again. Then check again.',
+              ),
+            ]),
+            pre(classes: 'hermuse-plugin-cmd', [
+              .text('systemctl --user restart hermes-dashboard'),
+            ]),
+          ],
+          if (_error case final error?)
+            p(classes: 'hermuse-route-error', [.text(error)]),
+          if (_findings.isNotEmpty)
+            pre(classes: 'hermuse-plugin-cmd', [
+              .text([for (final f in _findings) '$f'].join('\n')),
+            ]),
+          p(classes: 'hermuse-plugin-body', [.text('Or install it by hand:')]),
+          pre(classes: 'hermuse-plugin-cmd', [
+            .text(HermusePluginMissing.commands),
+          ]),
+        ]),
+      ]),
+    ]);
+  }
 }
 
 /// Gates [child] on the plugin backend: missing → [HermusePluginMissing].

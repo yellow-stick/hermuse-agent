@@ -7,7 +7,9 @@
 import 'package:jaspr/server.dart';
 import 'package:hermuse_web/add_instance.dart' as _add_instance;
 import 'package:hermuse_web/app.dart' as _app;
+import 'package:hermuse_web/browser_card.dart' as _browser_card;
 import 'package:hermuse_web/chat_root.dart' as _chat_root;
+import 'package:hermuse_web/computer_viewer.dart' as _computer_viewer;
 import 'package:hermuse_web/connections.dart' as _connections;
 import 'package:hermuse_web/feed.dart' as _feed;
 import 'package:hermuse_web/goals.dart' as _goals;
@@ -65,6 +67,8 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._theme.ysThemeStyles,
     ..._add_instance.HermuseAddInstance.styles,
     ..._app.App.styles,
+    ..._browser_card.HermuseBrowserCard.styles,
+    ..._computer_viewer.HermuseComputerViewer.styles,
     ..._connections.HermuseConnections.styles,
     ..._feed.HermuseFeed.styles,
     ..._feed.HermusePluginMissing.styles,

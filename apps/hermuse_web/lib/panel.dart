@@ -14,6 +14,7 @@ class HermusePanel extends StatelessComponent {
     required this.tab,
     required this.onTab,
     required this.onClose,
+    required this.onOpenComputer,
     super.key,
   });
 
@@ -22,6 +23,9 @@ class HermusePanel extends StatelessComponent {
   final PanelTab tab;
   final ValueChanged<PanelTab> onTab;
   final VoidCallback onClose;
+
+  /// Shows the agent's computer (its browser and desktop) at will.
+  final VoidCallback onOpenComputer;
 
   @override
   Component build(BuildContext context) => aside(
@@ -50,6 +54,9 @@ class HermusePanel extends StatelessComponent {
           RawText(ysConnectedSvg(YsPalette.dark.success.css)),
         ]),
         span(classes: 'hermuse-panel-status-text', [.text('Connected')]),
+      ]),
+      div(classes: 'hermuse-panel-computer', [
+        YsButton.neutral(label: 'Open computer', onPressed: onOpenComputer),
       ]),
       div(classes: 'hermuse-panel-tabs', [
         YsSegmentedTabs<PanelTab>(
@@ -156,6 +163,7 @@ class HermusePanel extends StatelessComponent {
         lineHeight: 22.px,
         color: .variable('--content-muted'),
       ),
+      css('.hermuse-panel-computer').styles(margin: .only(top: 16.px)),
       css('.hermuse-panel-tabs').styles(
         width: 327.px,
         margin: .only(top: 44.px),

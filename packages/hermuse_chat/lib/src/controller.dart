@@ -64,6 +64,7 @@ final class ChatState {
     this.busyThreads = const {},
     this.models = const {},
     this.needsSignIn = false,
+    this.computerOpen = false,
   });
 
   final String agentName;
@@ -93,6 +94,9 @@ final class ChatState {
   /// (then retry) instead of a plain Retry.
   final bool needsSignIn;
 
+  /// The agent's computer viewer replaces the chat area.
+  final bool computerOpen;
+
   /// Model of the active thread, when known.
   ChatModel? get model => models[activeThreadId];
 
@@ -121,6 +125,7 @@ final class ChatState {
     Set<String>? busyThreads,
     Map<String, ChatModel>? models,
     bool? needsSignIn,
+    bool? computerOpen,
   }) => ChatState(
     agentName: agentName ?? this.agentName,
     threads: threads ?? this.threads,
@@ -135,6 +140,7 @@ final class ChatState {
     busyThreads: busyThreads ?? this.busyThreads,
     models: models ?? this.models,
     needsSignIn: needsSignIn ?? this.needsSignIn,
+    computerOpen: computerOpen ?? this.computerOpen,
   );
 }
 
@@ -464,6 +470,28 @@ final class ChatController {
           } else {
             out.add(Message(id: id, author: Author.agent, blocks: blocks));
           }
+        case 'tool' when isBrowserTool(m.name ?? ''):
+          // Browser calls fold into one card, first in the turn's bubble.
+          final toolId = m.toolCallId ?? id;
+          if (out.lastOrNull case final last?
+              when last.author == Author.agent) {
+            out[out.length - 1] = last.copyWith(
+              blocks: _upsertBrowser(
+                last.blocks,
+                (current) =>
+                    current?.copyWith(lastToolId: toolId) ??
+                    BrowserBlock(lastToolId: toolId, running: false),
+              ),
+            );
+          } else {
+            out.add(
+              Message(
+                id: id,
+                author: Author.agent,
+                blocks: [BrowserBlock(lastToolId: toolId, running: false)],
+              ),
+            );
+          }
         case 'tool':
           final block = ToolCallBlock(
             toolId: m.toolCallId ?? id,
@@ -505,6 +533,19 @@ final class ChatController {
       case ReasoningAvailableEvent(:final payload):
         // Non-streaming providers deliver the whole block at once.
         _addReasoning(threadId, payload.text, whole: true);
+      case ToolStartEvent(:final payload) when isBrowserTool(payload.name):
+        final host = _urlHost(payload.args?['url']);
+        _updateTurn(
+          threadId,
+          (blocks) => _upsertBrowser(
+            blocks,
+            (current) => BrowserBlock(
+              lastToolId: payload.toolId,
+              step: browserStep(payload.name, payload.args),
+              host: host.isEmpty ? current?.host ?? '' : host,
+            ),
+          ),
+        );
       case ToolStartEvent(:final payload):
         _updateTurn(
           threadId,
@@ -523,9 +564,12 @@ final class ChatController {
           threadId,
           (blocks) => [
             for (final b in blocks)
-              b is ToolCallBlock && b.toolId == payload.toolId
-                  ? b.done(summary.isEmpty ? b.summary : summary)
-                  : b,
+              if (b is BrowserBlock && isBrowserTool(payload.name))
+                b.copyWith(lastToolId: payload.toolId)
+              else if (b is ToolCallBlock && b.toolId == payload.toolId)
+                b.done(summary.isEmpty ? b.summary : summary)
+              else
+                b,
           ],
         );
         _emit(
@@ -575,6 +619,20 @@ final class ChatController {
     _emit(
       _updateMessage(threadId, id, (m) => m.copyWith(blocks: update(m.blocks))),
     );
+  }
+
+  /// A turn has one browser card, inserted first: [update] replaces it where
+  /// it is, or builds it (from null) when the turn has none yet.
+  static List<Block> _upsertBrowser(
+    List<Block> blocks,
+    BrowserBlock Function(BrowserBlock? current) update,
+  ) {
+    final index = blocks.indexWhere((b) => b is BrowserBlock);
+    if (index < 0) return [update(null), ...blocks];
+    return [
+      for (final (i, b) in blocks.indexed)
+        if (i == index) update(b as BrowserBlock) else b,
+    ];
   }
 
   void _appendText(String threadId, String delta) =>
@@ -667,10 +725,28 @@ final class ChatController {
     );
   }
 
+  /// Every way a turn ends (complete, error, stop) settles its browser card.
   void _endTurn(String threadId) {
-    _turn.remove(threadId);
+    final turnId = _turn.remove(threadId);
+    final settled = turnId == null
+        ? _state
+        : _updateMessage(
+            threadId,
+            turnId,
+            (m) => m.blocks.any((b) => b is BrowserBlock)
+                ? m.copyWith(
+                    blocks: [
+                      for (final b in m.blocks)
+                        if (b is BrowserBlock)
+                          b.copyWith(running: false, step: '')
+                        else
+                          b,
+                    ],
+                  )
+                : m,
+          );
     _emit(
-      _state.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
+      settled.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
     );
     final thread = _state.threads.where((t) => t.id == threadId).firstOrNull;
     if (thread != null) {
@@ -1071,6 +1147,12 @@ final class ChatController {
 
   void cancelReply() => _emit(_state.copyWith(replyToId: () => null));
 
+  /// Shows the agent's computer (browser viewer) in place of the chat.
+  void openComputer() => _emit(_state.copyWith(computerOpen: true));
+
+  /// Returns from the computer viewer to the chat.
+  void closeComputer() => _emit(_state.copyWith(computerOpen: false));
+
   /// Opens an empty side chat; its session is created on the first message
   /// and titled by the agent (an untitled thread has an empty [Thread.title]).
   void newSideChat() {
@@ -1239,6 +1321,35 @@ String formatChatTime(DateTime time) {
   final h = local.hour % 12 == 0 ? 12 : local.hour % 12;
   final m = local.minute.toString().padLeft(2, '0');
   return '$h:$m ${local.hour < 12 ? 'AM' : 'PM'}';
+}
+
+/// Browser card status line of a `browser_*` tool call ([args] as sent in
+/// `tool.start`).
+String browserStep(String name, Map<String, Object?>? args) => switch (name) {
+  'browser_navigate' => switch (_urlHost(args?['url'])) {
+    '' => 'Opening page',
+    final host => 'Opening $host',
+  },
+  'browser_click' => 'Clicking',
+  'browser_type' => 'Typing',
+  'browser_press' => 'Pressing keys',
+  'browser_scroll' => 'Scrolling',
+  'browser_back' => 'Going back',
+  'browser_snapshot' ||
+  'browser_vision' ||
+  'browser_get_images' ||
+  'browser_console' => 'Reading page',
+  _ => 'Working in browser',
+};
+
+/// Host of a tool's `url` argument (`https://` assumed without a scheme),
+/// or '' when there is none.
+String _urlHost(Object? url) {
+  if (url is! String || url.trim().isEmpty) return '';
+  final trimmed = url.trim();
+  return Uri.tryParse(trimmed.contains('://') ? trimmed : 'https://$trimmed')
+          ?.host ??
+      '';
 }
 
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

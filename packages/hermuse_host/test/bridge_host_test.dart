@@ -49,11 +49,15 @@ void main() {
     late Directory work;
     late Directory source;
     late Directory home;
+    late List<List<String>> commands;
+    late int computerExit;
 
     setUp(() async {
       work = await Directory.systemTemp.createTemp('hermuse_plugin');
       source = Directory('${work.path}/src')..createSync();
       home = Directory('${work.path}/home')..createSync();
+      commands = [];
+      computerExit = 0;
       File('${source.path}/plugin.yaml')
           .writeAsStringSync('name: hermuse\nversion: 0.1.0\n');
       File('${source.path}/store.py').writeAsStringSync('# store\n');
@@ -74,29 +78,75 @@ void main() {
       Map<String, String>? environment,
     }) async {
       expect(exe, '/bin/hermes');
-      expect(args, ['plugins', 'enable', 'hermuse']);
       expect(environment?['HERMES_HOME'], home.path);
+      commands.add(args);
+      if (args.first == 'hermuse') {
+        return ProcessResult(2, computerExit, '{"state": "building"}', '');
+      }
+      expect(args, ['plugins', 'enable', 'hermuse']);
       return ProcessResult(1, 0, 'enabled hermuse', '');
     }
 
-    test('copies the tree minus tests and enables', () async {
+    test(
+      'copies the tree minus tests, enables, sets up the computer',
+      () async {
+        final installer = HermusePluginInstaller(
+          pluginSourceDir: source.path,
+          runProcess: okRun,
+        );
+        final result = await installer.install(
+          hermesHome: home.path,
+          hermesExecutable: '/bin/hermes',
+        );
+        expect(result.pluginDir, '${home.path}/plugins/hermuse');
+        expect(result.overwrote, isFalse);
+        expect(result.enableOutput, contains('enabled'));
+        expect(File('${result.pluginDir}/store.py').existsSync(), isTrue);
+        expect(
+          File('${result.pluginDir}/dashboard/plugin_api.py').existsSync(),
+          isTrue,
+        );
+        expect(Directory('${result.pluginDir}/tests').existsSync(), isFalse);
+        expect(commands, [
+          ['plugins', 'enable', 'hermuse'],
+          ['hermuse', 'computer', 'setup'],
+        ]);
+        expect(result.computerSetup, ComputerSetup.ready);
+      },
+    );
+
+    test('computer setup outcomes never fail the install', () async {
       final installer = HermusePluginInstaller(
         pluginSourceDir: source.path,
         runProcess: okRun,
       );
-      final result = await installer.install(
+      for (final (exit, setup) in [
+        (3, ComputerSetup.dockerMissing),
+        (4, ComputerSetup.dockerNotRunning),
+        (1, ComputerSetup.failed),
+      ]) {
+        computerExit = exit;
+        final result = await installer.install(
+          hermesHome: home.path,
+          hermesExecutable: '/bin/hermes',
+        );
+        expect(result.computerSetup, setup, reason: 'exit $exit');
+      }
+
+      final unlaunchable = HermusePluginInstaller(
+        pluginSourceDir: source.path,
+        runProcess: (exe, args, {environment}) async {
+          if (args.first == 'hermuse') {
+            throw const ProcessException('/bin/hermes', [], 'killed');
+          }
+          return ProcessResult(1, 0, '', '');
+        },
+      );
+      final result = await unlaunchable.install(
         hermesHome: home.path,
         hermesExecutable: '/bin/hermes',
       );
-      expect(result.pluginDir, '${home.path}/plugins/hermuse');
-      expect(result.overwrote, isFalse);
-      expect(result.enableOutput, contains('enabled'));
-      expect(File('${result.pluginDir}/store.py').existsSync(), isTrue);
-      expect(
-        File('${result.pluginDir}/dashboard/plugin_api.py').existsSync(),
-        isTrue,
-      );
-      expect(Directory('${result.pluginDir}/tests').existsSync(), isFalse);
+      expect(result.computerSetup, ComputerSetup.failed);
     });
 
     test('refreshes an identical install, refuses a foreign one', () async {

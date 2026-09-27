@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermes_client/testing.dart';
+import 'package:hermuse_app/computer/browser_parts.dart' show FrameImage;
 import 'package:hermuse_app/shell/app.dart';
 import 'package:hermuse_app/shell/brand.dart';
 import 'package:hermuse_app/sidebar/side_chats.dart';
@@ -23,6 +24,8 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:web_socket/testing.dart';
+import 'package:web_socket/web_socket.dart';
 
 /// Screenshot + interaction evidence for the Flutter surface.
 ///
@@ -747,6 +750,359 @@ Future<void> main() async {
       expect(find.text('YOUR FEED PROMPT'), findsOneWidget);
     });
   });
+
+  group('browser', () {
+    testWidgets('card opens the viewer; input needs Take control', (
+      tester,
+    ) async {
+      final harness = await _Harness.open(browser: true);
+      addTearDown(harness.dispose);
+      final page = base64Decode(_pageJpeg);
+      Map<String, Object?> state({required bool mine}) => {
+        't': 'state',
+        'control': mine ? 'human' : 'agent',
+        'mine': mine,
+        'mode': 'browser',
+        'tabs': [
+          {
+            'id': 't1',
+            'url': 'https://en.wikipedia.org/wiki/Nantes',
+            'title': 'Nantes - Wikipedia',
+            'active': true,
+          },
+          {
+            'id': 't2',
+            'url': 'https://example.com/',
+            'title': 'Example Domain',
+            'active': false,
+          },
+        ],
+      };
+      // The plugin's end of the viewer's stream: geometry and state on
+      // connect, frames when the test sends them, control on request.
+      final (socket, computer) = fakes();
+      final sent = <Map<String, Object?>>[];
+      computer.events.listen((event) {
+        if (event is! TextDataReceived) return;
+        final message = jsonDecode(event.text) as Map<String, Object?>;
+        sent.add(message);
+        switch (message['t']) {
+          case 'take':
+            computer.sendText(jsonEncode(state(mine: true)));
+          case 'release':
+            computer.sendText(jsonEncode(state(mine: false)));
+        }
+      });
+      await _pumpApp(
+        tester,
+        _desktop,
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/computer/snapshots/b2': (_) => page,
+          'GET /api/plugins/hermuse/computer/status': (_) => {
+            'state': 'running',
+            'detail': '',
+            'control': 'agent',
+            'mode': 'browser',
+          },
+          'POST /api/plugins/hermuse/computer/ticket': (_) => {'ticket': 't'},
+        },
+        computer: (uri) async {
+          computer
+            ..sendText(
+              jsonEncode({
+                't': 'geometry',
+                'w': 1920,
+                'h': 1080,
+                'mode': 'browser',
+              }),
+            )
+            ..sendText(jsonEncode(state(mine: false)));
+          return socket;
+        },
+      );
+      await _decodePictures(tester);
+
+      // One card for both browser calls, done, showing the last one's
+      // snapshot.
+      expect(find.text('Completed · Wikipedia page titles'), findsOneWidget);
+      expect(find.byType(FrameImage), findsOneWidget);
+      await _capture(tester, 'browser-card.png');
+
+      await tester.tap(find.bySemanticsLabel('Open preview'));
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('Browser session viewer'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Take control of the browser'),
+        findsOneWidget,
+      );
+      expect(find.text('Wikipedia page titles'), findsOneWidget);
+      expect(find.text('Completed · en.wikipedia.org'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Browser window: en.wikipedia.org, Completed'),
+        findsOneWidget,
+      );
+      // Until the first frame, the stage says what it waits for.
+      expect(find.text('Preparing browser preview'), findsOneWidget);
+      await _capture(tester, 'computer-viewer-loading.png');
+
+      computer.sendBytes(page);
+      await tester.pump();
+      await _decodePictures(tester);
+      expect(find.text('Preparing browser preview'), findsNothing);
+      await _capture(tester, 'computer-viewer.png');
+
+      // Input reaches the computer only while the user is in control.
+      final canvas = find.bySemanticsLabel('Browser session canvas');
+      await tester.tap(canvas);
+      await tester.pump();
+      expect(sent, isEmpty);
+
+      // The agent works in the browser: its step heads the viewer, with
+      // Stop.
+      harness.fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {
+            'tool_id': 'b3',
+            'name': 'browser_navigate',
+            'args': {'url': 'https://en.wikipedia.org/wiki/Nantes'},
+          },
+        );
+      await tester.pumpAndSettle();
+      expect(find.text('Opening en.wikipedia.org'), findsOneWidget);
+      expect(find.text('Working · en.wikipedia.org'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Browser window: en.wikipedia.org'),
+        findsOneWidget,
+      );
+      await _capture(tester, 'computer-viewer-working.png');
+
+      await tester.tap(find.bySemanticsLabel('Take control of the browser'));
+      await tester.pumpAndSettle();
+      expect(find.text("You're in control"), findsOneWidget);
+      await _capture(tester, 'computer-viewer-control.png');
+      await tester.tap(canvas);
+      await tester.pump();
+      expect(sent, [
+        {'t': 'take'},
+        {'t': 'down', 'x': 960, 'y': 540, 'b': 1},
+        {'t': 'up', 'x': 960, 'y': 540, 'b': 1},
+      ]);
+
+      await tester.tap(
+        find.bySemanticsLabel('Hand browser control back to the assistant'),
+      );
+      await tester.pumpAndSettle();
+      expect(sent.last, {'t': 'release'});
+      expect(find.text("You're in control"), findsNothing);
+
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pumpAndSettle();
+      expect(harness.calls('session.interrupt').single['session_id'], 'live-1');
+      harness.fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-1',
+        payload: {'text': '', 'status': 'interrupted'},
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('Stop'), findsNothing);
+
+      await tester.tap(find.bySemanticsLabel('Close browser session panel'));
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('Browser session viewer'), findsNothing);
+      expect(find.bySemanticsLabel('Open preview'), findsNWidgets(2));
+    });
+
+    testWidgets('a stream refused twice shows why; Retry starts over', (
+      tester,
+    ) async {
+      final harness = await _Harness.open(browser: true);
+      addTearDown(harness.dispose);
+      const reason = 'Chromium did not answer on CDP within 30 s';
+      var setups = 0;
+      var streams = 0;
+      await _pumpApp(
+        tester,
+        _desktop,
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/computer/status': (_) => {
+            'state': 'running',
+          },
+          'POST /api/plugins/hermuse/computer/setup': (_) {
+            setups++;
+            return {'state': 'stopped'};
+          },
+          'POST /api/plugins/hermuse/computer/ticket': (_) => {'ticket': 't'},
+        },
+        // The plugin closes every stream: the computer cannot start.
+        computer: (uri) async {
+          streams++;
+          final (socket, computer) = fakes();
+          await computer.close(4001, reason);
+          return socket;
+        },
+      );
+      (await harness.controller(tester)).openComputer();
+      await tester.pumpAndSettle();
+      // One re-check with a new ticket, then the reason stays.
+      expect(streams, 2);
+      expect(find.text(reason), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Retry'));
+      await tester.pumpAndSettle();
+      expect(setups, 1);
+      await tester.pump(const Duration(milliseconds: 1500));
+      await tester.pumpAndSettle();
+      expect(streams, 4);
+      expect(find.text(reason), findsOneWidget);
+    });
+
+    testWidgets('no Docker: the command to paste on the host, with Copy', (
+      tester,
+    ) async {
+      final harness = await _Harness.open(browser: true);
+      addTearDown(harness.dispose);
+      const command =
+          'curl -fsSL https://get.docker.com | sudo sh && '
+          'sudo usermod -aG docker admin';
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await _pumpApp(
+        tester,
+        _desktop,
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/computer/status': (_) => {
+            'state': 'docker_missing',
+            'detail': command,
+          },
+        },
+      );
+      (await harness.controller(tester)).openComputer();
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Docker is not installed on the Hermes computer.'),
+        findsOneWidget,
+      );
+      expect(find.text(command), findsOneWidget);
+      await _capture(tester, 'computer-viewer-docker.png');
+
+      await tester.tap(find.bySemanticsLabel('Copy'));
+      await tester.pump();
+      expect(copied, command);
+      expect(find.bySemanticsLabel('Copied'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      // The viewer keeps polling while Docker is missing.
+      await tester.tap(find.bySemanticsLabel('Close browser session panel'));
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('plugin', () {
+    testWidgets('remote gate installs Hermuse through the dashboard', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final calls = <String>[];
+      // No plugin route answers until the dashboard installs it.
+      final routes = <String, Object? Function(http.Request)>{};
+      // Hermes does not know the plugin yet.
+      routes['POST /api/dashboard/agent-plugins/hermuse/enable'] = (_) {
+        calls.add('enable');
+        return http.Response(
+          jsonEncode({
+            'detail': "Plugin 'hermuse' is not installed or bundled.",
+          }),
+          400,
+        );
+      };
+      routes['POST /api/dashboard/agent-plugins/install'] = (request) {
+        calls.add('install ${request.body}');
+        // Hermes' scan rates the sudo Docker install "caution".
+        if ((jsonDecode(request.body) as Map)['force'] != true) {
+          return http.Response(
+            jsonEncode({
+              'detail':
+                  'Security scan blocked plugin install: Requires '
+                  'confirmation (caution verdict, 1 findings)\n\n'
+                  'hermuse/computer/bootstrap.py:42 privilege_escalation '
+                  'sudo sh',
+            }),
+            400,
+          );
+        }
+        routes
+          ..addAll(_feedRoutes())
+          ..['POST /api/plugins/hermuse/cron/enable'] = (_) {
+            calls.add('cron');
+            return {'ok': true};
+          }
+          ..['POST /api/plugins/hermuse/computer/setup'] = (_) {
+            calls.add('setup');
+            return {'state': 'building', 'detail': 'Installing Docker…'};
+          };
+        return {'ok': true, 'plugin_name': 'hermuse', 'enabled': true};
+      };
+      await _pumpApp(tester, _desktop, harness, plugin: routes);
+      await tester.tap(find.bySemanticsLabel('Close panel'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Feed'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Enable the Hermuse plugin'), findsOneWidget);
+      expect(
+        find.textContaining('hermes plugins enable hermuse'),
+        findsOneWidget,
+      );
+      await _capture(tester, 'plugin-install.png');
+
+      await tester.tap(find.bySemanticsLabel('Install Hermuse on this Hermes'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Hermuse needs permission to install Docker with sudo on this '
+          'server (Hermes flags this for review).',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('caution verdict'), findsOneWidget);
+      await _capture(tester, 'plugin-install-consent.png');
+
+      await tester.tap(find.bySemanticsLabel('Allow and install'));
+      await tester.pumpAndSettle();
+      const body =
+          '{"identifier":"yellow-stick/hermuse-agent/hermes-plugin/hermuse",'
+          '"enable":true,"force"';
+      expect(calls, [
+        'enable',
+        'install $body:false}',
+        'install $body:true}',
+        'cron',
+        'setup',
+      ]);
+      expect(find.text('Enable the Hermuse plugin'), findsNothing);
+      expect(find.text('YOUR FEED PROMPT'), findsOneWidget);
+    });
+  });
 }
 
 /// Test app wiring: one instance, memory DB/secrets, scripted transport.
@@ -808,9 +1164,41 @@ final class _Harness {
     ),
   };
 
+  /// Main chat of [open] (`browser: true`): one turn with two browser calls.
+  static const _browserTranscript = [
+    {
+      'role': 'user',
+      'text':
+          'Open example.com, then the Nantes page on Wikipedia, and tell '
+          'me both titles.',
+      'row_id': 1,
+    },
+    {
+      'role': 'tool',
+      'name': 'browser_navigate',
+      'tool_call_id': 'b1',
+      'row_id': 2,
+    },
+    {
+      'role': 'tool',
+      'name': 'browser_navigate',
+      'tool_call_id': 'b2',
+      'row_id': 3,
+    },
+    {
+      'role': 'assistant',
+      'text': 'They are “Example Domain” and “Nantes - Wikipedia”.',
+      'row_id': 4,
+    },
+  ];
+
   /// [sideChats] seeds side chats of the main chat (one pinned, one
-  /// archived) and caches the Bergen transcript for search.
-  static Future<_Harness> open({bool sideChats = false}) async {
+  /// archived) and caches the Bergen transcript for search; [browser]
+  /// makes the main chat [_browserTranscript].
+  static Future<_Harness> open({
+    bool sideChats = false,
+    bool browser = false,
+  }) async {
     final db = openMemoryDatabase();
     final instance = HermesInstance(
       id: instanceId,
@@ -891,6 +1279,14 @@ final class _Harness {
           };
         }
         assert(id == 'stored-1');
+        if (browser) {
+          return {
+            'session_id': 'live-1',
+            'message_count': _browserTranscript.length,
+            'info': {'title': 'Wikipedia page titles'},
+            'messages': _browserTranscript,
+          };
+        }
         return {
           'session_id': 'live-1',
           'message_count': 4,
@@ -1047,6 +1443,7 @@ Future<void> _pumpApp(
   _Harness harness, {
   http.Client? httpClient,
   Map<String, Object? Function(http.Request)>? plugin,
+  WebSocketConnector? computer,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -1081,17 +1478,39 @@ Future<void> _pumpApp(
           }),
           if (httpClient != null)
             httpClientProvider.overrideWithValue(httpClient),
-          // Hermuse plugin REST (`'METHOD /path'`); other routes answer 404.
+          // Hermuse plugin REST (`'METHOD /path'`): JSON, a JPEG for bytes,
+          // or a ready [http.Response]; other routes answer 404.
           if (plugin != null)
             restClientProvider(_Harness.instanceId).overrideWith(
               (ref) => HermesRestClient(
                 MockClient((request) async {
                   final route = plugin['${request.method} ${request.url.path}'];
-                  return route == null
-                      ? http.Response('{"detail":"Not Found"}', 404)
-                      : http.Response(jsonEncode(route(request)), 200);
+                  if (route == null) {
+                    return http.Response('{"detail":"Not Found"}', 404);
+                  }
+                  return switch (route(request)) {
+                    final http.Response response => response,
+                    final Uint8List bytes => http.Response.bytes(
+                      bytes,
+                      200,
+                      headers: const {'content-type': 'image/jpeg'},
+                    ),
+                    final body => http.Response.bytes(
+                      utf8.encode(jsonEncode(body)),
+                      200,
+                      headers: const {'content-type': 'application/json'},
+                    ),
+                  };
                 }),
                 baseUrl: Uri.parse('https://hermes.example.com'),
+              ),
+            ),
+          // The computer's stream, on [computer]'s fake sockets.
+          if (computer != null)
+            computerClientProvider(_Harness.instanceId).overrideWith(
+              (ref) async => ComputerClient(
+                await ref.watch(restClientProvider(_Harness.instanceId).future),
+                connect: computer,
               ),
             ),
         ],
@@ -1106,6 +1525,44 @@ Future<void> _pumpApp(
   );
   await tester.pumpAndSettle();
 }
+
+/// Lets [FrameImage]s decode their pictures: engine work that takes real
+/// time, each step resumed on a pump.
+Future<void> _decodePictures(WidgetTester tester) async {
+  for (var i = 0; i < 5; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+  }
+}
+
+/// A 64×36 JPEG of a browser window (tab strip, address bar, article).
+const _pageJpeg =
+    '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQY'
+    'GBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYa'
+    'KCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAAR'
+    'CAAkAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAA'
+    'AgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK'
+    'FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWG'
+    'h4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl'
+    '5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREA'
+    'AgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYk'
+    'NOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE'
+    'hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk'
+    '5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDxWC3VIlWREZh1OM0zzbT0T/vj/wCtX2z4'
+    '10Dw/wCH/DN5qemeAdK1m7g2bLG3sI98u51U4xGx4BLdDwPxryz/AISyX/o31/8AwBP/AMi1'
+    'VxHzpctbugERRWznO0j+lVti/wDPVPyP+FfSn/CWS/8ARvr/APgCf/kWj/hLJf8Ao31//AE/'
+    '/ItAHzXsX/nqn5H/AAo2L/z1T8j/AIV9e/Dmax8Va3PY6x8H7bw9bx27TLdXVgu12DKAg3QI'
+    'MkMT1/hPFejf8IP4T/6FjQv/AAXxf/E0rgfAEdq0q5R0Izjv/hT/ALDL/eT8zX35/wAIP4T/'
+    'AOhY0L/wXxf/ABNH/CD+E/8AoWNC/wDBfF/8TRcLGlrv/IKnyEb7vD2r3I+8P+Wa/M34dOva'
+    'uT+X/njZ/wDhLXX/AMVXYatDJcafLFAm+RsYX7S9vnkf8tEBYfh16d653+x9R/59P/LjvP8A'
+    '4ikMo/L/AM8bP/wlrr/4qj5f+eNn/wCEtdf/ABVXv7H1H/n0/wDLjvP/AIij+x9R/wCfT/y4'
+    '7z/4ii4FH5f+eNn/AOEtdf8AxVcP8TNcvtG/s3+zvscXneZv/wCJEbfONmP9cG3dT93GO/UV'
+    '6pY6EHhJv/tkMu7hYdZupQR65JXnrxj8a84+Nvhm7l/sX+xrPVb7HneZh57rZ/q8feLbc8+m'
+    'ce1d2WqEsTFVLW1322Zz4q6pNx3/AOCedf8ACca7/wA97P8A8F9v/wDG69r+Ceq3eseFbq4v'
+    '2iaVb14wY4UiGAkZ6IAO55614R/wifiL/oAat/4Byf4V7n8DNPvdN8JXcOo2dxaTNfO4SeJo'
+    '2K+XGM4I6cH8q9nNaeHjh26aje62scODlUdT3m7HolFFFfMHrBRRRQAUUUUAFFFFAH//2Q==';
 
 /// Captures the current app pixels to `.artifacts/flutter/[fileName]`.
 Future<void> _capture(WidgetTester tester, String fileName) async {

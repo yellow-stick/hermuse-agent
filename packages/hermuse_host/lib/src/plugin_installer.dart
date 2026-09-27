@@ -5,12 +5,29 @@ import 'dart:io';
 import 'detector.dart';
 import 'errors.dart';
 
+/// Outcome of `hermes hermuse computer setup`: the agent's browser runs in
+/// a Docker container Hermuse cannot install itself.
+enum ComputerSetup {
+  /// Configured; the computer image is built or building.
+  ready,
+
+  /// Docker is not installed.
+  dockerMissing,
+
+  /// Docker is installed but its daemon is not running.
+  dockerNotRunning,
+
+  /// Any other failure.
+  failed,
+}
+
 /// Result of [HermusePluginInstaller.install].
 final class HermusePluginInstall {
   const HermusePluginInstall({
     required this.pluginDir,
     required this.overwrote,
     required this.enableOutput,
+    required this.computerSetup,
   });
 
   /// `$HERMES_HOME/plugins/hermuse`.
@@ -21,6 +38,9 @@ final class HermusePluginInstall {
 
   /// Combined stdout of `hermes plugins enable hermuse`.
   final String enableOutput;
+
+  /// The agent's computer step; never fails the install.
+  final ComputerSetup computerSetup;
 }
 
 /// Installs the Hermuse product-layer plugin into a LOCAL instance's
@@ -28,9 +48,10 @@ final class HermusePluginInstall {
 ///
 /// Steps mirror the plugin README: recursive copy of the `hermes-plugin/hermuse`
 /// source tree (excluding `tests/`), then `hermes plugins enable hermuse`
-/// with `HERMES_HOME` pointed at the instance home. The dashboard/gateway
-/// must restart afterwards for the new routes to load (owned by the caller:
-/// [HermesSupervisor.restart] on a supervised instance).
+/// and `hermes hermuse computer setup` with `HERMES_HOME` pointed at the
+/// instance home. The dashboard/gateway must restart afterwards for the new
+/// routes to load (owned by the caller: [HermesSupervisor.restart] on a
+/// supervised instance).
 ///
 /// Safety: an existing `plugins/hermuse` dir whose `plugin.yaml` does NOT
 /// describe the Hermuse plugin is never touched unless [overwrite] is true;
@@ -117,7 +138,31 @@ final class HermusePluginInstaller {
       pluginDir: target.path,
       overwrote: overwrote,
       enableOutput: '${enable.stdout}'.trim(),
+      computerSetup: await _setupComputer(hermesHome, hermesExecutable),
     );
+  }
+
+  /// Points Hermes' browser tools at the agent's computer and starts
+  /// building its image. Never throws: the plugin works without it.
+  Future<ComputerSetup> _setupComputer(
+    String hermesHome,
+    String hermesExecutable,
+  ) async {
+    try {
+      final setup = await _runProcess(
+        hermesExecutable,
+        ['hermuse', 'computer', 'setup'],
+        environment: {'HERMES_HOME': hermesHome},
+      );
+      return switch (setup.exitCode) {
+        0 => ComputerSetup.ready,
+        3 => ComputerSetup.dockerMissing,
+        4 => ComputerSetup.dockerNotRunning,
+        _ => ComputerSetup.failed,
+      };
+    } on Object {
+      return ComputerSetup.failed;
+    }
   }
 
   /// True when [dir] looks like an installed Hermuse plugin.
