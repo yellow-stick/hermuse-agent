@@ -680,6 +680,91 @@ void main() {
         ('slash worker timed out', true, false),
       );
     });
+
+    // Hermes 0.21.5 (tui_gateway/user_messages.py::busy_message).
+    String busy(String command) =>
+        'session busy — Hermes is still replying. Stop the current reply '
+        'first (Stop button, or Ctrl+C in a terminal), then run /$command.';
+
+    test('a /model sent during a reply applies once the reply ends', () async {
+      // The VPS trace: Stop, then /model while the interrupted turn still
+      // ran. Only the slash worker switched; the live agent kept its model
+      // and the next prompt used it.
+      var execs = 0;
+      fake.on(
+        'slash.exec',
+        (_) => ++execs == 1
+            ? {
+                'output': 'Model switched: claude-sonnet-4-6',
+                'warning': busy('model'),
+              }
+            : {'output': 'Model switched: claude-sonnet-4-6'},
+      );
+      final chat = await open();
+      await chat.send('hello');
+      fake.emitEvent('message.start', sessionId: 'live-1');
+      await chat.interrupt();
+      await chat.send('/model claude-sonnet-4-6');
+      expect(execs, 1);
+      var row = lastRow(chat);
+      expect(
+        (row.running, row.output),
+        (true, 'Waits for the current reply to end — Stop ends it now.'),
+        reason: 'nothing was switched yet: no "Model switched"',
+      );
+
+      fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-1',
+        payload: {'text': 'Operation interrupted.', 'status': 'interrupted'},
+      );
+      await pumpEventQueue();
+      expect(execs, 1, reason: 'Hermes still runs the turn after complete');
+
+      // End of turn: `running` cleared, then the settled session.info.
+      fake.emitEvent(
+        'session.info',
+        sessionId: 'live-1',
+        payload: {
+          'running': false,
+          'model': 'muse-spark-1.3',
+          'provider': 'custom',
+        },
+      );
+      await pumpEventQueue();
+      expect(execs, 2);
+      expect(fake.calls.last.params, {
+        'session_id': 'live-1',
+        'command': 'model claude-sonnet-4-6',
+      });
+      row = lastRow(chat);
+      expect(
+        (row.running, row.isError, row.output),
+        (false, false, 'Model switched: claude-sonnet-4-6'),
+      );
+    });
+
+    test(
+      'a busy refusal crossing the idle report runs again at once',
+      () async {
+        var execs = 0;
+        fake.on('slash.exec', (_) {
+          if (++execs > 1) return {'output': 'Undid 1 turn.'};
+          // The turn settles while the refusal is on its way back.
+          fake.emitEvent(
+            'session.info',
+            sessionId: 'live-1',
+            payload: {'running': false},
+          );
+          throw FakeRpcError(4009, busy('undo'));
+        });
+        final chat = await open();
+        await chat.send('/model');
+        await pumpEventQueue();
+        expect(execs, 2);
+        expect(lastRow(chat).output, 'Undid 1 turn.');
+      },
+    );
   });
 
   test('reply quotes the target; blank input is ignored', () async {

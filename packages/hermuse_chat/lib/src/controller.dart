@@ -212,6 +212,13 @@ final class ChatController {
   StreamSubscription<HermesEvent>? _eventsSub;
   StreamSubscription<ConnectionState>? _stateSub;
 
+  /// Slash commands Hermes refused because the thread's session was still
+  /// running a turn, by thread: they run again once it settles ([_settled]).
+  final Map<String, List<({String rowId, String command})>> _held = {};
+
+  /// Idle reports (`session.info` with `running: false`) seen per thread.
+  final Map<String, int> _settles = {};
+
   /// Stored thread id → live session id, and back.
   final Map<String, String> _live = {};
   final Map<String, String> _threadOfLive = {};
@@ -418,6 +425,7 @@ final class ChatController {
         request.params,
       );
     }
+    if (result.running != true) _settled(threadId);
   }
 
   /// Display time of the session's first message (`started_at`, else the
@@ -598,18 +606,23 @@ final class ChatController {
         _setTitle(threadId, payload.title);
         _observer?.sessionTitled(_refOf(threadId), payload.title);
       // Model switches (`/model`, `config.set`) announce the new model here.
-      case SessionInfoEvent(:final payload) when payload.model.isNotEmpty:
-        _emit(
-          _state.copyWith(
-            models: {
-              ..._state.models,
-              threadId: ChatModel(
-                provider: payload.provider,
-                model: payload.model,
-              ),
-            },
-          ),
-        );
+      // Hermes also sends one when a turn is over and its session idle again
+      // (`running` is cleared after `message.complete`).
+      case SessionInfoEvent(:final payload):
+        if (payload.model.isNotEmpty) {
+          _emit(
+            _state.copyWith(
+              models: {
+                ..._state.models,
+                threadId: ChatModel(
+                  provider: payload.provider,
+                  model: payload.model,
+                ),
+              },
+            ),
+          );
+        }
+        if (!payload.running) _settled(threadId);
       case RequestCancelEvent(:final payload):
         _cancelRequest(payload.id, payload.reason);
       default:
@@ -1130,14 +1143,34 @@ final class ChatController {
     var thread = threadId;
     try {
       thread = await _ensureSession(thread);
-      await _execute(transport, thread, rowId, command);
     } on Object catch (e) {
-      _answerCommand(thread, rowId, '${_describe(e)}', isError: true);
+      return _answerCommand(thread, rowId, '${_describe(e)}', isError: true);
+    }
+    await _attempt(transport, thread, rowId, command);
+  }
+
+  /// Runs [command] for the row [rowId]; a failure becomes the row's error.
+  Future<void> _attempt(
+    HermesTransport transport,
+    String threadId,
+    String rowId,
+    String command,
+  ) async {
+    try {
+      await _execute(transport, threadId, rowId, command);
+    } on Object catch (e) {
+      _answerCommand(threadId, rowId, '${_describe(e)}', isError: true);
     }
   }
 
   /// Runs [command] on the live session of [threadId] and answers the
   /// command row [rowId]; [hops] counts the aliases followed so far.
+  ///
+  /// Hermes refuses commands that change the session while a turn runs:
+  /// with error 4009, or, for `/model`, `/personality`, `/prompt`, with a
+  /// busy `warning` after the slash worker ran the command on its own copy
+  /// only — the live agent kept its model. Either way nothing was applied:
+  /// the command waits for the session to settle and runs again.
   Future<void> _execute(
     HermesTransport transport,
     String threadId,
@@ -1156,21 +1189,30 @@ final class ChatController {
     }
     final (:name, :arg) = parts;
     final live = _live[threadId]!;
+    final settles = _settles[threadId] ?? 0;
     SlashExecResult result;
     try {
-      result = await transport.call(
-        HermesMethods.slashExec,
-        SlashExecParams(sessionId: live, command: command.substring(1)),
-      );
+      try {
+        result = await transport.call(
+          HermesMethods.slashExec,
+          SlashExecParams(sessionId: live, command: command.substring(1)),
+        );
+      } on HermesRpcError catch (e) {
+        // Skills and snapshot restores are refused here: they run through
+        // the command dispatcher, which answers the same directive fields.
+        if (e.code != 4018 || !_dispatchOnly.hasMatch(e.message)) rethrow;
+        final dispatched = await transport.call(
+          HermesMethods.commandDispatch,
+          CommandDispatchParams(name: name, arg: arg, sessionId: live),
+        );
+        result = SlashExecResult.fromJson(dispatched.toJson());
+      }
     } on HermesRpcError catch (e) {
-      // Skills and snapshot restores are refused here: they run through the
-      // command dispatcher, which answers the same directive fields.
-      if (e.code != 4018 || !_dispatchOnly.hasMatch(e.message)) rethrow;
-      final dispatched = await transport.call(
-        HermesMethods.commandDispatch,
-        CommandDispatchParams(name: name, arg: arg, sessionId: live),
-      );
-      result = SlashExecResult.fromJson(dispatched.toJson());
+      if (e.code != _sessionBusy) rethrow;
+      return _hold(transport, threadId, rowId, command, settles);
+    }
+    if (_busyWarning.hasMatch(result.warning ?? '')) {
+      return _hold(transport, threadId, rowId, command, settles);
     }
     return _followDirective(
       transport,
@@ -1180,6 +1222,55 @@ final class ChatController {
       result,
       hops: hops,
     );
+  }
+
+  /// Keeps [command] waiting until [threadId]'s session settles; when it
+  /// settled while the refusal was on its way ([settledBefore] idle reports
+  /// seen at sending), it runs again right away.
+  Future<void> _hold(
+    HermesTransport transport,
+    String threadId,
+    String rowId,
+    String command,
+    int settledBefore,
+  ) async {
+    if ((_settles[threadId] ?? 0) > settledBefore) {
+      return _attempt(transport, threadId, rowId, command);
+    }
+    _held.putIfAbsent(threadId, () => []).add((rowId: rowId, command: command));
+    _emit(
+      _updateMessage(
+        threadId,
+        rowId,
+        (m) => m.copyWith(
+          blocks: [
+            for (final b in m.blocks)
+              b is CommandBlock
+                  ? CommandBlock(
+                      command: b.command,
+                      output:
+                          'Waits for the current reply to end — '
+                          'Stop ends it now.',
+                    )
+                  : b,
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// [threadId]'s session is idle on the server: the commands it refused
+  /// while busy run again, in order.
+  void _settled(String threadId) {
+    _settles[threadId] = (_settles[threadId] ?? 0) + 1;
+    final held = _held.remove(threadId);
+    final transport = _connection?.transport;
+    if (held == null || transport == null) return;
+    unawaited(() async {
+      for (final c in held) {
+        await _attempt(transport, threadId, c.rowId, c.command);
+      }
+    }());
   }
 
   /// Acts on the server's answer to [command]: output for the row, an alias
@@ -1629,6 +1720,15 @@ final _dispatchOnly = RegExp(
   r'^skill command: use command\.dispatch for /|'
   r'use command\.dispatch for /snapshot restore',
 );
+
+/// JSON-RPC error of a command refused because the session is running a
+/// turn (`tui_gateway/methods_tools.py::_busy_error`).
+const _sessionBusy = 4009;
+
+/// `slash.exec`'s `warning` when the live session refused the command's
+/// effect because a turn was running (`tui_gateway/user_messages.py::
+/// busy_message`, via `methods_slash.py::_mirror_slash_side_effects`).
+final _busyWarning = RegExp(r'^session busy\b');
 
 /// Browser card status line of a `browser_*` tool call ([args] as sent in
 /// `tool.start`).
