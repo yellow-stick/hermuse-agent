@@ -8,6 +8,8 @@
   <img alt="Built with Flutter and Jaspr" src="https://img.shields.io/badge/built%20with-Flutter%20·%20Jaspr-F5C21B?style=flat-square&labelColor=181819">
 </p>
 
+<p align="center"><a href="https://yellow-stick.com"><strong>yellow-stick.com</strong></a></p>
+
 Ask in plain words. Hermuse gets to work in your calendar, your apps and on the
 web, and checks with you before anything that matters.
 
@@ -201,4 +203,4 @@ Third-party assets:
 - The Hermuse avatar is original artwork; airline logos are rendered as monogram
   discs rather than brand artwork.
 
-<p align="center"><sub>Built by Yellow Stick · Free your imagination.</sub></p>
+<p align="center"><sub>Built by <a href="https://yellow-stick.com">Yellow Stick</a> · Free your imagination.</sub></p>
