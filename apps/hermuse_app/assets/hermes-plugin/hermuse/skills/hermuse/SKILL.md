@@ -3,7 +3,7 @@ name: hermuse
 description: "Hermuse product layer: when to call feed_post, idea_propose, goal_track, goal_update, artifact_save and reflection_write, honouring PREFERENCES.md."
 version: 0.1.0
 author: Yellow Stick
-license: MIT
+license: AGPL-3.0-only
 platforms: [linux, macos, windows]
 metadata:
   hermes:

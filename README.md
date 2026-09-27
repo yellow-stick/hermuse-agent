@@ -1,27 +1,138 @@
-# Hermuse Agent
+<p align="center">
+  <img src="docs/readme/banner.png" alt="Yellow Stick — Hermuse Agent. Your personal agent. It takes things off your plate." width="100%">
+</p>
 
-Hermuse Agent, the first Yellow Stick product: a personal AI agent on six platforms from one Dart monorepo, built on the **Yellow Stick
-UI** design system.
+<p align="center">
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-F5C21B?style=flat-square&labelColor=181819"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-web%20·%20macOS%20·%20Windows%20·%20Linux%20·%20iOS%20·%20Android-F5C21B?style=flat-square&labelColor=181819">
+  <img alt="Built with Flutter and Jaspr" src="https://img.shields.io/badge/built%20with-Flutter%20·%20Jaspr-F5C21B?style=flat-square&labelColor=181819">
+</p>
+
+Ask in plain words. Hermuse gets to work in your calendar, your apps and on the
+web, and checks with you before anything that matters.
+
+<p align="center">
+  <img src="docs/readme/app.png" alt="The Hermuse web app: in a demo conversation, the agent lists round-trip flights from Lisbon to Oslo with prices in euros, while the side panel shows what it did today." width="100%">
+</p>
+
+## How it works
+
+1. **Ask.** Say what you need, the way you would tell a friend.
+2. **It works on its own.** It searches, compares and gets things done. Each
+   step shows up in Activity.
+3. **You approve.** Before it books, buys or sends anything for you, it asks.
+   Your answers live in Approvals.
+
+## What's inside
+
+- **Main chat and side chats.** One conversation that knows you, plus side
+  chats to keep a trip, a move or a project apart.
+- **Activity and Approvals.** A plain record of what it did and when, and
+  nothing goes out without you.
+- **Feed, Ideas, Goals, Library.** A daily feed written for you, ideas it can
+  run, goals it keeps an eye on, and everything it made for you in one place.
+- **Your models.** Connect the AI accounts and subscriptions you already have:
+  the ones Hermes supports natively, plus Claude Pro/Max, ChatGPT, Meta, Kimi and
+  more through a local bridge.
+
+## Inspired by Muse, built our own way
+
+We are big fans of [Muse](https://muse.ai), Meta's personal AI agent. It showed
+what an agent for everyone can feel like: one friendly conversation, an agent
+that keeps working while you are away, and a clear record of what it did. A lot
+of the Hermuse experience is inspired by it, and we say so openly.
+
+Hermuse is our own proposal, built on different choices:
+
+- **Open source.** Every line is public under the AGPL, so anyone can check
+  what the agent does with your data, and improve it.
+- **Your agent runs where you choose.** Hermuse drives your own
+  [Hermes Agent](https://github.com/NousResearch/hermes-agent) instance, on
+  your computer or your server, not a machine you cannot see.
+- **Your data stays readable.** What the agent writes for you (feed, ideas,
+  goals, library, reflections, preferences) is stored as Markdown and JSON
+  files under `HERMES_HOME/hermuse/`. Open them, edit them, back them up or
+  delete them with any tool.
+- **Bring your own models.** Use the AI subscriptions you already pay for
+  instead of a single built-in model.
+- **Every screen, one codebase.** Web, macOS, Windows, Linux, iOS and Android
+  from one Dart monorepo.
+
+> Hermuse Agent is an independent project by Yellow Stick. It is not
+> affiliated with, endorsed by or sponsored by Meta Platforms, Inc. or Nous
+> Research. Muse is a trademark of Meta Platforms, Inc.; Hermes Agent is a
+> project of Nous Research. Names are used only to describe inspiration and
+> compatibility.
+
+## Platforms
+
+| Web | macOS | Windows | Linux | iOS | Android |
+| :-: | :-: | :-: | :-: | :-: | :-: |
+| Installable web app | Desktop app | Desktop app | Desktop app | Coming soon | Coming soon |
+
+The desktop apps can install and supervise Hermes on your computer and add the
+`hermuse` plugin to it. The web and mobile apps connect to a Hermes instance
+you already run, for example on a server.
+
+---
+
+## Development
+
+A Dart pub workspace (Melos 8.9) with two apps sharing the same state and
+design tokens.
 
 | Surface | Stack | Platforms |
 | --- | --- | --- |
 | `apps/hermuse_app` | Flutter 3.47 | iOS, Android, macOS, Windows, Linux |
-| `apps/hermuse_web` | Jaspr 0.23 (static pre-render + `@client` hydration) | Web (real DOM) |
+| `apps/hermuse_web` | Jaspr 0.23 (static pre-render + `@client` hydration) | Web (real DOM, PWA) |
 
 ```
-pubspec.yaml                    pub workspace + Melos 8.9 scripts
+pubspec.yaml               pub workspace + Melos scripts
 packages/
-  yellow_stick_ui_core/         pure Dart — tokens + icons, the single source of truth
-  yellow_stick_ui/              Flutter kit
-  yellow_stick_ui_web/          Jaspr kit
-  hermuse_chat/                  pure Dart — chat models, state, controller, seed conversation
+  yellow_stick_ui_core/    tokens + icons, the single source of truth
+  yellow_stick_ui/         Flutter kit
+  yellow_stick_ui_web/     Jaspr kit
+  hermes_contract/         Hermes gateway JSON-RPC contract (generated from OpenRPC)
+  hermes_client/           instances, secrets, dashboard REST + WebSocket transport
+  cliproxy_client/         CLIProxyAPI management client (subscription bridge)
+  hermuse_chat/            chat models, state and the Hermes-backed controller
+  hermuse_data/            drift database (native file or WASM on the web)
+  hermuse_state/           shared Riverpod state for both apps
+  hermuse_host/            desktop only: Hermes install, supervision, bridge sidecar
 apps/
-  hermuse_app/                   Flutter app
-  hermuse_web/                   Jaspr app
-.artifacts/{flutter,web}/       renders of both apps (wide, medium, compact, interaction proofs)
+  hermuse_app/             Flutter app
+  hermuse_web/             Jaspr app
+  hermuse_relay/           same-origin relay from the web app to Hermes instances
+hermes-plugin/hermuse/     Hermes plugin: Feed, Ideas, Goals, Library, Reflections
 ```
 
-## Design system rule
+### Setup
+
+```bash
+dart pub global activate melos
+flutter pub get          # resolves the whole workspace
+melos run analyze
+melos run test
+```
+
+### Running
+
+```bash
+cd apps/hermuse_app && flutter run -d linux     # or macos / windows / an iOS or Android device
+cd apps/hermuse_web && jaspr serve              # http://localhost:8080
+cd apps/hermuse_web && jaspr build              # static output in build/jaspr
+```
+
+### Hermes plugin
+
+`hermes-plugin/hermuse` adds the product layer to Hermes: six agent tools, the
+background jobs (daily feed, weekly ideas, weekly goals check-in, nightly
+reflection), a `hermes hermuse` CLI and a REST backend at
+`/api/plugins/hermuse/`. Install and test instructions are in
+[its README](hermes-plugin/hermuse/README.md). The desktop app bundles a copy;
+refresh it with `dart run tool/sync_plugin_assets.dart` from `apps/hermuse_app`.
+
+### Design system rule
 
 > The token is the contract. The implementation is local.
 
@@ -45,24 +156,7 @@ session as parent; pin, rename, archive, delete, full-text search). Other
 sessions of the instance (CLI, Telegram, …) are not listed. The main chat and
 the thread on screen are remembered per instance (`hermuse_state`).
 
-## Setup
-
-```bash
-dart pub global activate melos
-flutter pub get          # resolves the whole workspace
-melos run analyze
-melos run test
-```
-
-## Running
-
-```bash
-cd apps/hermuse_app && flutter run -d linux     # or macos / windows / an iOS or Android device
-cd apps/hermuse_web && jaspr serve              # http://localhost:8080
-cd apps/hermuse_web && jaspr build              # static output in build/jaspr
-```
-
-## Web app (PWA)
+### Web app (PWA)
 
 `apps/hermuse_web` is an installable Progressive Web App:
 
@@ -80,17 +174,31 @@ Install from Chrome/Edge (install icon in the address bar) or Safari (Share →
 Add to Home Screen). Service workers need HTTPS in production (localhost is
 exempt).
 
-## Version notes
+### Version notes
 
 - `jaspr_builder` 0.23.5 requires `analyzer ^12`, which caps `build_runner` at
   2.15.1 and `build_web_compilers` at 4.8.5. Bump them together with Jaspr.
 - `flutter_test` (Flutter 3.47.5) pins `test_api` 0.7.12, so pure Dart packages
   resolve `test` 1.31.x.
 
-## Assets
+### README assets
+
+`docs/readme/banner.svg` is the source of `banner.png` (render with
+`rsvg-convert -w 2560 banner.svg -o banner.png`; needs Inter installed).
+`docs/readme/logo.svg` is the minimal Yellow Stick mark.
+
+## License
+
+Hermuse Agent is licensed under the
+[GNU Affero General Public License v3.0](LICENSE). If you run a modified
+version as a service, you must share its source with its users.
+
+Third-party assets:
 
 - Inter 4.1 (SIL Open Font License 1.1), bundled in `yellow_stick_ui/fonts` and
   `apps/hermuse_web/web/fonts`.
 - Icons adapted from Lucide (ISC License).
 - The Hermuse avatar is original artwork; airline logos are rendered as monogram
   discs rather than brand artwork.
+
+<p align="center"><sub>Built by Yellow Stick · Free your imagination.</sub></p>
