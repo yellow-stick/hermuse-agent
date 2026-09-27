@@ -36,6 +36,47 @@ web, and checks with you before anything that matters.
 - **Your models.** Connect the AI accounts and subscriptions you already have:
   the ones Hermes supports natively, plus Claude Pro/Max, ChatGPT, Meta, Kimi and
   more through a local bridge.
+- **Its own computer, in plain sight.** The agent browses on its own Linux
+  desktop, next to your Hermes. Watch it live, take the mouse and keyboard
+  when it needs you, then hand them back.
+
+## The agent's computer
+
+When your agent uses the web, a **Browser** card shows up in its answer with a
+live picture of its screen.
+
+<p align="center">
+  <img src="docs/readme/browser-card.jpg" alt="A chat where the agent planned a walk in Nantes: a Browser card with a thumbnail of the Wikipedia page it opened, above its answer listing three places to see." width="100%">
+</p>
+
+Open it to watch the agent's browser, with one tab per window it opened.
+
+<p align="center">
+  <img src="docs/readme/computer-browser.jpg" alt="The live viewer showing the agent's Chromium on the Wikipedia page of the Château des ducs de Bretagne, with Take control of the browser at the top right." width="100%">
+</p>
+
+**Take control of the browser** gives you the mouse and keyboard, to log in
+somewhere or accept a cookie banner. The agent waits until you click **Done**.
+
+<p align="center">
+  <img src="docs/readme/computer-take-control.jpg" alt="You're in control: the viewer shows an OpenStreetMap map of central Nantes in the agent's browser, with a Done button." width="100%">
+</p>
+
+Switch to **Desktop** to see its whole Linux desktop, terminal included.
+
+<p align="center">
+  <img src="docs/readme/computer-desktop.jpg" alt="The agent's full XFCE desktop: Chromium with a map of Nantes and a terminal window listing the running processes." width="100%">
+</p>
+
+## Get started
+
+- [Set up Hermuse with Hermes on a server](docs/guides/server.md): a VPS or a
+  home server, with a one-click install from Hermuse.
+- [Run Hermes on your computer with the desktop app](docs/guides/desktop.md).
+- [Web app and relay](docs/guides/web-app-and-relay.md): serve the web app for
+  your Hermes.
+- [The agent's computer](docs/guides/agent-computer.md): the Browser card,
+  the live viewer, Take control and the desktop.
 
 ## Inspired by Muse, built our own way
 
@@ -105,7 +146,7 @@ apps/
   hermuse_app/             Flutter app
   hermuse_web/             Jaspr app
   hermuse_relay/           same-origin relay from the web app to Hermes instances
-hermes-plugin/hermuse/     Hermes plugin: Feed, Ideas, Goals, Library, Reflections
+hermes-plugin/hermuse/     Hermes plugin: Feed, Ideas, Goals, Library, Reflections, the agent's computer
 ```
 
 ### Setup
