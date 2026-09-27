@@ -183,17 +183,16 @@ exempt).
 - `flutter_test` (Flutter 3.47.5) pins `test_api` 0.7.12, so pure Dart packages
   resolve `test` 1.31.x.
 
-### README assets
-
-`docs/readme/banner.svg` is the source of `banner.png` (render with
-`rsvg-convert -w 2560 banner.svg -o banner.png`; needs Inter installed).
-`docs/readme/logo.svg` is the minimal Yellow Stick mark.
-
 ## License
 
 Hermuse Agent is licensed under the
 [GNU Affero General Public License v3.0](LICENSE). If you run a modified
 version as a service, you must share its source with its users.
+
+**Commercial license.** Want to use Hermuse in a product or service without
+the AGPL obligations? Contact us at
+[contact@yellow-stick.com](mailto:contact@yellow-stick.com) for a commercial
+license.
 
 Third-party assets:
 
