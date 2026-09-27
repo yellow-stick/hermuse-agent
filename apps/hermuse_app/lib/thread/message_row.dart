@@ -538,7 +538,12 @@ final class _CommandView extends StatelessWidget {
           Text(
             block.output,
             style: small.copyWith(
-              color: block.isError ? palette.errorColor : palette.contentColor,
+              // While running, the text is a note (waiting), not an answer.
+              color: block.isError
+                  ? palette.errorColor
+                  : block.running
+                  ? palette.contentMutedColor
+                  : palette.contentColor,
             ),
           ),
         ],

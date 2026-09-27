@@ -345,6 +345,7 @@ class MessageRow extends StatelessComponent {
         color: .variable('--content'),
         raw: {'overflow-wrap': 'break-word', 'white-space': 'pre-wrap'},
       ),
+      css('.hermuse-command-note').styles(color: .variable('--content-muted')),
       css('.hermuse-notice-error').styles(color: .variable('--primary-2')),
       // Reaction chip overlapping the bubble's bottom edge.
       css('.hermuse-bubble-wrap').styles(
@@ -527,8 +528,11 @@ class HermuseCommand extends StatelessComponent {
     ]),
     if (command.output.isNotEmpty)
       p(
+        // While running, the text is a note (waiting), not an answer.
         classes: command.isError
             ? 'hermuse-command-output hermuse-notice-error'
+            : command.running
+            ? 'hermuse-command-output hermuse-command-note'
             : 'hermuse-command-output',
         [.text(command.output)],
       ),
