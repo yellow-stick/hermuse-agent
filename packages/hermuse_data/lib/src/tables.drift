@@ -1,0 +1,75 @@
+-- Instance metadata only; secrets live in the platform SecretStore.
+CREATE TABLE instances (
+  id TEXT NOT NULL PRIMARY KEY,
+  label TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  kind TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  profile TEXT,
+  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+  position INTEGER NOT NULL
+) AS InstanceRow;
+
+CREATE TABLE sessions (
+  instance_id TEXT NOT NULL REFERENCES instances (id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  -- Stored id of the main session this side chat branches from.
+  parent_id TEXT,
+  -- Last activity (ms since epoch): creation or last finished turn.
+  updated_at INTEGER NOT NULL,
+  -- Side chat hidden on the server (`session.set_hidden`), listed under
+  -- "Archived chats".
+  archived BOOLEAN NOT NULL DEFAULT FALSE,
+  -- When the side chat was pinned (ms since epoch); null when not pinned.
+  pinned_at INTEGER,
+  PRIMARY KEY (instance_id, session_id)
+) AS SessionRow;
+
+CREATE TABLE messages (
+  instance_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  author TEXT NOT NULL,
+  body_text TEXT NOT NULL,
+  -- Transcript row id: orders messages and matches `session.resume` ids.
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (instance_id, session_id, message_id),
+  FOREIGN KEY (instance_id, session_id)
+    REFERENCES sessions (instance_id, session_id) ON DELETE CASCADE
+) AS MessageRow;
+
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+  body_text,
+  content = 'messages',
+  content_rowid = 'rowid'
+);
+
+CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts (rowid, body_text) VALUES (new.rowid, new.body_text);
+END;
+
+CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, body_text)
+    VALUES ('delete', old.rowid, old.body_text);
+END;
+
+CREATE TRIGGER messages_fts_update AFTER UPDATE ON messages BEGIN
+  INSERT INTO messages_fts (messages_fts, rowid, body_text)
+    VALUES ('delete', old.rowid, old.body_text);
+  INSERT INTO messages_fts (rowid, body_text) VALUES (new.rowid, new.body_text);
+END;
+
+CREATE TABLE settings (
+  "key" TEXT NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL
+) AS SettingRow;
+
+searchMessages:
+  SELECT m.** FROM messages_fts f
+    INNER JOIN messages m ON m.rowid = f.rowid
+    WHERE messages_fts MATCH :query
+      AND m.instance_id = :instanceId
+      AND m.session_id IN :sessionIds
+    ORDER BY rank
+    LIMIT :limit;

@@ -1,0 +1,41 @@
+{
+  "version": "v7.3.18",
+  "platforms": {
+    "linux-amd64": {
+      "asset": "CLIProxyAPI_7.3.18_linux_amd64.tar.gz",
+      "archive_sha256": "f9441024eaa953fd19ad1ff191dbe29dcfbc6a70a53f712062d96f531803b766",
+      "binary": "cliproxy",
+      "binary_sha256": "b6e3431e3ba296745327a9a9f3f4bbb5385035c3f1c4df2118c786c12f01ceff"
+    },
+    "linux-arm64": {
+      "asset": "CLIProxyAPI_7.3.18_linux_aarch64.tar.gz",
+      "archive_sha256": "eeae7e16fa8f86bd06be2993c637e70240903e52dd72fcc2a5c9fa2e6b327cee",
+      "binary": "cliproxy",
+      "binary_sha256": "9d4661491969ee16ec8b6c641d3f691480cfb2fc381a0155bf7e082cedd11d1d"
+    },
+    "macos-amd64": {
+      "asset": "CLIProxyAPI_7.3.18_darwin_amd64.tar.gz",
+      "archive_sha256": "a2afd18087788a24675079f4ed3cef1fbd9c92e1d01e36e7c7d71ae7e068e658",
+      "binary": "cliproxy",
+      "binary_sha256": "dc89805839694bd9bcbe23002873dd413b8acf458757a3039d69c2ed05d358cc"
+    },
+    "macos-arm64": {
+      "asset": "CLIProxyAPI_7.3.18_darwin_aarch64.tar.gz",
+      "archive_sha256": "c051bf70d32496c64c6f1244085db2ec5debdbab9540335cdc33a0d25e63bcdd",
+      "binary": "cliproxy",
+      "binary_sha256": "3b77685aa61f02dd59733dd687f9cdcfd0c8169b243c2c44c0ccb9b776cda622"
+    },
+    "windows-amd64": {
+      "asset": "CLIProxyAPI_7.3.18_windows_amd64.zip",
+      "archive_sha256": "98b85238104ce3905b3731292fab9c8cd6895b06415203dd844c41b6b0302ea6",
+      "binary": "cliproxy.exe",
+      "binary_sha256": "88926916fdec8210a7e19f4acb10ee542df4608142526d8c57fd827a0aee1474"
+    },
+    "windows-arm64": {
+      "asset": "CLIProxyAPI_7.3.18_windows_aarch64.zip",
+      "archive_sha256": "708647f9b246178410431d4352477b9189bd2a62bc6fbc78e2cb47886f8816ea",
+      "binary": "cliproxy.exe",
+      "binary_sha256": "9efe65d08b38bd8f2e56f3a1153fd04033ed9510bf9313893ecb19ac0e18d75d"
+    }
+  }
+}

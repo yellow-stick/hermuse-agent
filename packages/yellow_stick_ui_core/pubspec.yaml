@@ -1,0 +1,12 @@
+name: yellow_stick_ui_core
+description: Yellow Stick UI design tokens and icons. Pure Dart, shared by the Flutter and Jaspr kits.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.26.0

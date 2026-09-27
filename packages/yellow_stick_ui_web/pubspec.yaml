@@ -1,0 +1,17 @@
+name: yellow_stick_ui_web
+description: Yellow Stick UI for Jaspr — headless-style components rendering the yellow_stick_ui_core tokens as real DOM.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  jaspr: ^0.23.5
+  universal_web: ^1.1.1
+  yellow_stick_ui_core: ^0.1.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.26.0

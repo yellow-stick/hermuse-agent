@@ -1,0 +1,43 @@
+name: hermuse_app
+description: Hermuse chat — Flutter app for iOS, Android, macOS, Windows and Linux.
+publish_to: none
+version: 0.1.0+1
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.4.3
+  flutter_secure_storage: ^11.2.0
+  cliproxy_client: ^0.1.0
+  hermes_client: ^0.1.0
+  hermuse_chat: ^0.1.0
+  hermuse_data: ^0.1.0
+  hermuse_host: ^0.1.0
+  hermuse_state: ^0.1.0
+  http: ^1.6.0
+  path_provider: ^2.1.6
+  url_launcher: ^6.3.2
+  uuid: ^4.6.0
+  yellow_stick_ui: ^0.1.0
+  yellow_stick_ui_core: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/hermuse-avatar.webp
+    # Hermes plugin installed on the local instance (tool/sync_plugin_assets.dart).
+    - assets/hermes-plugin/hermuse/
+    - assets/hermes-plugin/hermuse/dashboard/
+    - assets/hermes-plugin/hermuse/skills/hermuse/

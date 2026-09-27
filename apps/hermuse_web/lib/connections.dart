@@ -1,0 +1,748 @@
+import 'dart:async';
+
+import 'package:jaspr/dom.dart';
+import 'package:jaspr/jaspr.dart';
+import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_state/hermuse_state.dart';
+import 'package:jaspr_riverpod/jaspr_riverpod.dart';
+import 'package:universal_web/web.dart' as web;
+import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
+
+import 'scope.dart';
+import 'screens.dart';
+
+/// Connections page: "Connectors" card grid for one instance.
+///
+/// Cards come from [connectionCardsProvider]: device-code logins show the
+/// user code + verification URL with polling state and cancel; API keys use
+/// a masked field with server validate errors; custom endpoints get an
+/// add/delete form; external cards explain the terminal step. Bridge cards
+/// never appear on web ([bridgeHostProvider] is null, no sidecar).
+class HermuseConnections extends StatefulComponent {
+  const HermuseConnections({
+    required this.instance,
+    required this.onBack,
+    super.key,
+  });
+
+  final HermesInstance instance;
+  final VoidCallback onBack;
+
+  @override
+  State<HermuseConnections> createState() => _HermuseConnectionsState();
+
+  @css
+  // ignore: unused_element
+  static List<StyleRule> get styles => [
+    ...hermuseScreenStyles,
+    css('.hermuse-screen-top').styles(alignItems: .start),
+    css('.hermuse-conn-sub').styles(
+      margin: .zero,
+      fontSize: 14.px,
+      lineHeight: 20.px,
+      color: .variable('--content-muted'),
+    ),
+    css('.hermuse-conn-group').styles(
+      margin: .only(top: 8.px),
+      fontSize: 13.px,
+      lineHeight: 18.px,
+      fontWeight: .w500,
+      color: .variable('--content-muted'),
+    ),
+    // Connector list: one rounded surface, hairline dividers.
+    css('.hermuse-conn-list').styles(
+      radius: .circular(YsRadius.row.px),
+      display: .flex,
+      flexDirection: .column,
+      overflow: .hidden,
+      backgroundColor: .variable('--neutral-ambient'),
+    ),
+    css('.hermuse-conn-item + .hermuse-conn-item')
+        .styles(raw: {'border-top': '1.2px solid var(--line)'}),
+    css('.hermuse-conn-head').styles(
+      width: 100.percent,
+      minHeight: 44.px,
+      padding: .symmetric(vertical: 8.px, horizontal: 14.px),
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(10.px),
+      textAlign: .left,
+    ),
+    css('.hermuse-conn-logo').styles(
+      width: 24.px,
+      height: 24.px,
+      radius: .circular(6.px),
+      display: .flex,
+      alignItems: .center,
+      justifyContent: .center,
+      backgroundColor: .variable('--paper-clear'),
+      fontSize: 12.px,
+      lineHeight: 16.px,
+      fontWeight: .w600,
+      raw: {'flex-shrink': '0'},
+    ),
+    css('.hermuse-conn-title').styles(
+      flex: .grow(1),
+      display: .flex,
+      flexDirection: .column,
+      raw: {'min-width': '0'},
+    ),
+    css('.hermuse-conn-name').styles(
+      fontSize: 14.px,
+      lineHeight: 20.px,
+      fontWeight: .w500,
+      overflow: .hidden,
+      textOverflow: .ellipsis,
+      raw: {'white-space': 'nowrap'},
+    ),
+    css('.hermuse-conn-detail').styles(
+      fontSize: 12.px,
+      lineHeight: 16.px,
+      color: .variable('--content-muted'),
+      overflow: .hidden,
+      textOverflow: .ellipsis,
+      raw: {'white-space': 'nowrap'},
+    ),
+    css('.hermuse-conn-action').styles(
+      fontSize: 14.px,
+      lineHeight: 20.px,
+      fontWeight: .w500,
+      color: .variable('--primary-2'),
+      raw: {'flex-shrink': '0', 'white-space': 'nowrap'},
+    ),
+    css('.hermuse-conn-action-muted')
+        .styles(color: .variable('--content-muted')),
+    css('.hermuse-conn-action-error').styles(color: .variable('--primary-2')),
+    css('.hermuse-conn-body').styles(
+      padding: .only(left: 48.px, right: 14.px, bottom: 12.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(10.px),
+    ),
+    css('.hermuse-conn-device').styles(
+      padding: .symmetric(vertical: 12.px, horizontal: 12.px),
+      radius: .circular(YsRadius.row.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(8.px),
+      backgroundColor: .variable('--paper-clear'),
+    ),
+    css('.hermuse-conn-code').styles(
+      margin: .zero,
+      textAlign: .center,
+      fontSize: 22.px,
+      lineHeight: 28.px,
+      fontWeight: .w600,
+      raw: {'letter-spacing': '2px'},
+    ),
+    css('.hermuse-conn-link').styles(
+      fontSize: 14.px,
+      lineHeight: 20.px,
+      color: .variable('--primary-2'),
+      raw: {'word-break': 'break-all'},
+    ),
+    css('.hermuse-conn-pool').styles(
+      margin: .zero,
+      fontSize: 12.px,
+      lineHeight: 16.px,
+      color: .variable('--content-subtle'),
+    ),
+    css('.hermuse-conn-row').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(8.px),
+    ),
+    css('.hermuse-conn-grow').styles(flex: .grow(1), raw: {'min-width': '0'}),
+    css('.hermuse-conn-grow .ys-inputbox').styles(width: 100.percent),
+    css('.hermuse-conn-models')
+        .styles(display: .flex, flexDirection: .column, gap: .all(8.px)),
+    css('.hermuse-conn-slot').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(8.px),
+    ),
+    css('.hermuse-conn-slot-label').styles(
+      width: 52.px,
+      fontSize: 13.px,
+      lineHeight: 18.px,
+      fontWeight: .w500,
+      color: .variable('--content-muted'),
+      raw: {'flex-shrink': '0'},
+    ),
+    css('.hermuse-conn-slot-pick').styles(flex: .grow(1)),
+  ];
+}
+
+class _HermuseConnectionsState extends State<HermuseConnections> {
+  var _query = '';
+
+  @override
+  Component build(BuildContext context) => HermuseWatch(
+    provider: connectionCardsProvider(component.instance.id),
+    builder: (context, connections) => _body(context, connections),
+  );
+
+  Component _body(
+    BuildContext context,
+    AsyncValue<ConnectionsState> connections,
+  ) {
+    final state = connections.value;
+    final needle = _query.trim().toLowerCase();
+    final cards = [
+      for (final card in state?.cards ?? const <ConnectionCard>[])
+        if (card.flow != ConnectionFlow.bridge &&
+            (needle.isEmpty || card.name.toLowerCase().contains(needle)))
+          card,
+    ];
+    final connected = [
+      for (final card in cards)
+        if (card.state == ConnectionCardState.connected) card,
+    ];
+    final available = [
+      for (final card in cards)
+        if (card.state != ConnectionCardState.connected) card,
+    ];
+    Component list(List<ConnectionCard> group) =>
+        div(classes: 'hermuse-conn-list', [
+          for (final card in group)
+            _ConnectionCard(
+              key: ValueKey(card.id),
+              instanceId: component.instance.id,
+              card: card,
+              pendingLogin: state?.pendingLogin,
+            ),
+        ]);
+    return div(classes: 'hermuse-screen hermuse-screen-top', [
+      div(classes: 'hermuse-list-card', [
+        div(classes: 'hermuse-list-head', [
+          h1(classes: 'hermuse-list-title', [.text('Connections')]),
+          div(classes: 'hermuse-list-head-spacer', []),
+          YsButton.icon(
+            icon: YsIcon.close,
+            label: 'Back',
+            onPressed: component.onBack,
+            size: 36,
+          ),
+        ]),
+        p(classes: 'hermuse-conn-sub', [
+          .text('Model accounts ${component.instance.label} can use.'),
+        ]),
+        YsInputBox(
+          value: _query,
+          onChanged: (v) => setState(() => _query = v),
+          placeholder: 'Search connections',
+          name: 'connections-search',
+          label: 'Search connections',
+          autocomplete: 'off',
+        ),
+        if (connections.isLoading && state == null)
+          p(classes: 'hermuse-conn-sub', [.text('Loading connections…')])
+        else if (connections.hasError && state == null)
+          p(classes: 'hermuse-card-error', [
+            .text('Could not load connections: ${connections.error}.'),
+          ])
+        else ...[
+          if (connected.isNotEmpty) ...[
+            p(classes: 'hermuse-conn-group', [.text('Connected')]),
+            list(connected),
+          ],
+          if (available.isNotEmpty) ...[
+            p(classes: 'hermuse-conn-group', [.text('Available')]),
+            list(available),
+          ],
+          if (cards.isEmpty)
+            p(classes: 'hermuse-conn-sub', [.text('No connection matches.')]),
+          p(classes: 'hermuse-conn-group', [.text('Custom endpoint')]),
+          _CustomEndpointCard(instanceId: component.instance.id),
+        ],
+      ]),
+    ]);
+  }
+}
+
+class _ConnectionCard extends StatefulComponent {
+  const _ConnectionCard({
+    required this.instanceId,
+    required this.card,
+    required this.pendingLogin,
+    super.key,
+  });
+
+  final String instanceId;
+  final ConnectionCard card;
+  final DeviceCodeLogin? pendingLogin;
+
+  @override
+  State<_ConnectionCard> createState() => _ConnectionCardState();
+}
+
+class _ConnectionCardState extends State<_ConnectionCard> {
+  var _open = false;
+  var _key = '';
+  var _busy = false;
+  String? _error;
+
+  ConnectionCards _cards(BuildContext context) => context.container.read(
+    connectionCardsProvider(component.instanceId).notifier,
+  );
+
+  @override
+  Component build(BuildContext context) {
+    final card = component.card;
+    final pending = component.pendingLogin;
+    final isPending = pending != null && pending.providerId == card.id;
+    // An in-flight login keeps its row open.
+    final open = _open || isPending || _error != null;
+    final connected = card.state == ConnectionCardState.connected;
+    final (action, actionClass) = switch ((card.state, card.flow)) {
+      (ConnectionCardState.connected, _) => (
+        'Manage',
+        'hermuse-conn-action-muted',
+      ),
+      (ConnectionCardState.pending, _) => (
+        'Waiting…',
+        'hermuse-conn-action-muted',
+      ),
+      (ConnectionCardState.error, _) => ('Retry', 'hermuse-conn-action-error'),
+      (_, ConnectionFlow.external) => ('Terminal', 'hermuse-conn-action-muted'),
+      _ => ('Connect', ''),
+    };
+    return div(classes: 'hermuse-conn-item', [
+      YsPressable(
+        onPressed: () => setState(() => _open = !open),
+        label: '${card.name}: $action',
+        classes: 'hermuse-conn-head',
+        builder: (context, press) => .fragment([
+          span(classes: 'hermuse-conn-logo', [.text(_letter(card.name))]),
+          span(classes: 'hermuse-conn-title', [
+            span(classes: 'hermuse-conn-name', [.text(card.name)]),
+            if (card.detail.isNotEmpty && card.detail != card.name)
+              span(classes: 'hermuse-conn-detail', [.text(card.detail)]),
+          ]),
+          span(classes: 'hermuse-conn-action $actionClass'.trim(), [
+            .text(action),
+          ]),
+        ]),
+      ),
+      if (open)
+        div(classes: 'hermuse-conn-body', [
+          if (card.flow == ConnectionFlow.deviceCode && !connected)
+            _deviceBody(context, card, isPending ? pending : null),
+          if (card.flow == ConnectionFlow.apiKey && !connected)
+            _keyBody(context, card),
+          if (card.flow == ConnectionFlow.external) _externalBody(card),
+          if (card.poolEntries.isNotEmpty)
+            p(classes: 'hermuse-conn-pool', [
+              .text(
+                card.poolEntries
+                    .map(
+                      (e) =>
+                          '#${e.index} ${e.label.isEmpty ? e.authType : e.label}'
+                          '${e.tokenPreview.isEmpty ? '' : ' ${e.tokenPreview}'}',
+                    )
+                    .join(' · '),
+              ),
+            ]),
+          if (connected) ...[
+            _ModelSlots(instanceId: component.instanceId, card: card),
+            div(classes: 'hermuse-conn-row', [
+              div(classes: 'hermuse-conn-grow', []),
+              YsButton.neutral(
+                label: _busy ? 'Working…' : 'Disconnect',
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        setState(() {
+                          _busy = true;
+                          _error = null;
+                        });
+                        try {
+                          await _cards(context).disconnect(card.id);
+                        } on Object catch (e) {
+                          if (mounted) setState(() => _error = '$e');
+                        }
+                        if (mounted) setState(() => _busy = false);
+                      },
+              ),
+            ]),
+          ],
+          if (_error case final error?)
+            p(classes: 'hermuse-card-error', [.text(error)]),
+        ]),
+    ]);
+  }
+
+  Component _deviceBody(
+    BuildContext context,
+    ConnectionCard card,
+    DeviceCodeLogin? login,
+  ) {
+    if (login == null) {
+      return div(classes: 'hermuse-conn-row', [
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.primary(
+          label: _busy ? 'Starting…' : 'Connect',
+          onPressed: _busy
+              ? null
+              : () async {
+                  setState(() {
+                    _busy = true;
+                    _error = null;
+                  });
+                  try {
+                    final result = await _cards(context)
+                        .startDeviceCode(card.id);
+                    if (mounted &&
+                        result.outcome != DevicePollOutcome.approved) {
+                      setState(() => _error = _deviceVerdict(result));
+                    }
+                  } on Object catch (e) {
+                    if (mounted) setState(() => _error = '$e');
+                  }
+                  if (mounted) setState(() => _busy = false);
+                },
+        ),
+      ]);
+    }
+    return div(classes: 'hermuse-conn-device', [
+      p(classes: 'hermuse-conn-code', [.text(login.userCode)]),
+      a(
+        classes: 'hermuse-conn-link',
+        href: login.verificationUrl,
+        target: .blank,
+        [.text(login.verificationUrl)],
+      ),
+      p(classes: 'hermuse-conn-sub', [
+        .text('Enter the code at the link, then wait for approval.'),
+      ]),
+      div(classes: 'hermuse-conn-row', [
+        YsButton.neutral(
+          label: 'Open link',
+          onPressed: kIsWeb
+              ? () => web.window.open(login.verificationUrl, '_blank')
+              : null,
+        ),
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.neutral(
+          label: 'Cancel',
+          onPressed: () => unawaited(_cards(context).cancelLogin()),
+        ),
+      ]),
+    ]);
+  }
+
+  Component _keyBody(BuildContext context, ConnectionCard card) =>
+      div(classes: 'hermuse-conn-row', [
+        div(classes: 'hermuse-conn-grow', [
+          YsInputBox(
+            value: _key,
+            onChanged: (v) => setState(() => _key = v),
+            onSubmitted: () => unawaited(_saveKey(context, card)),
+            placeholder: card.keyEnv.isEmpty
+                ? 'API key'
+                : 'API key (${card.keyEnv})',
+            name: 'key-${card.id}',
+            label: '${card.name} API key',
+            obscure: true,
+            autocomplete: 'off',
+          ),
+        ]),
+        YsButton.primary(
+          label: _busy ? 'Saving…' : 'Save',
+          onPressed: _busy || _key.trim().isEmpty
+              ? null
+              : () => unawaited(_saveKey(context, card)),
+        ),
+      ]);
+
+  Future<void> _saveKey(BuildContext context, ConnectionCard card) async {
+    final key = _key;
+    if (key.trim().isEmpty || _busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _cards(context).saveApiKey(card.id, key);
+      if (mounted) setState(() => _key = '');
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Component _externalBody(ConnectionCard card) =>
+      p(classes: 'hermuse-conn-sub', [
+        .text(
+          card.cliCommand.isNotEmpty
+              ? 'Sign in from a terminal: ${card.cliCommand}'
+              : 'Sign in from a terminal; Hermes picks up the credentials.',
+        ),
+      ]);
+
+  static String _deviceVerdict(DevicePollResult result) =>
+      switch (result.outcome) {
+        DevicePollOutcome.denied => 'The login was denied in the browser.',
+        DevicePollOutcome.expired => 'The code expired. Try again.',
+        DevicePollOutcome.cancelled => 'The login was cancelled.',
+        DevicePollOutcome.timeout => 'Timed out waiting for approval.',
+        DevicePollOutcome.error =>
+          result.message.isEmpty ? 'The login failed.' : result.message,
+        DevicePollOutcome.approved => '',
+      };
+
+  static String _letter(String name) {
+    final trimmed = name.trim();
+    return trimmed.isEmpty ? '?' : trimmed[0].toUpperCase();
+  }
+}
+
+/// The ≤2 selected models of a connected card, with a picker per slot and
+/// "Use as default" (large → main, small → auxiliary).
+class _ModelSlots extends StatefulComponent {
+  const _ModelSlots({required this.instanceId, required this.card});
+
+  final String instanceId;
+  final ConnectionCard card;
+
+  @override
+  State<_ModelSlots> createState() => _ModelSlotsState();
+}
+
+class _ModelSlotsState extends State<_ModelSlots> {
+  var _busy = false;
+  String? _error;
+
+  @override
+  Component build(BuildContext context) => HermuseWatch(
+    provider: modelSelectionProvider(component.instanceId, component.card.id),
+    builder: (context, selection) => _body(context, selection),
+  );
+
+  Component _body(BuildContext context, AsyncValue<ModelSelection> selection) {
+    final current = selection.value;
+    if (selection.isLoading && current == null) {
+      return p(classes: 'hermuse-conn-pool', [.text('Loading models…')]);
+    }
+    if (current == null) {
+      return p(classes: 'hermuse-conn-pool', [
+        .text('Models unavailable: ${selection.error}'),
+      ]);
+    }
+    final options = [for (final id in current.allModels) (id, id)];
+    return div(classes: 'hermuse-conn-models', [
+      div(classes: 'hermuse-conn-slot', [
+        span(classes: 'hermuse-conn-slot-label', [.text('Large')]),
+        div(classes: 'hermuse-conn-slot-pick', [
+          YsSelect(
+            value: current.large ?? '',
+            options: [('', 'None'), ...options],
+            onChanged: (v) => unawaited(
+              _select(context, ModelTier.large, v.isEmpty ? null : v),
+            ),
+            label: '${component.card.name} large model',
+          ),
+        ]),
+      ]),
+      div(classes: 'hermuse-conn-slot', [
+        span(classes: 'hermuse-conn-slot-label', [.text('Small')]),
+        div(classes: 'hermuse-conn-slot-pick', [
+          YsSelect(
+            value: current.small ?? '',
+            options: [('', 'None'), ...options],
+            onChanged: (v) => unawaited(
+              _select(context, ModelTier.small, v.isEmpty ? null : v),
+            ),
+            label: '${component.card.name} small model',
+          ),
+        ]),
+      ]),
+      div(classes: 'hermuse-conn-row', [
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.neutral(
+          label: _busy ? 'Working…' : 'Use as default',
+          onPressed: _busy || current.large == null
+              ? null
+              : () => unawaited(_makeDefault(context)),
+        ),
+      ]),
+      if (_error case final error?)
+        p(classes: 'hermuse-card-error', [.text(error)]),
+    ]);
+  }
+
+  Future<void> _select(
+    BuildContext context,
+    ModelTier tier,
+    String? modelId,
+  ) async {
+    setState(() => _error = null);
+    try {
+      await context.container
+          .read(
+            modelSelectionProvider(
+              component.instanceId,
+              component.card.id,
+            ).notifier,
+          )
+          .select(tier, modelId);
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+  }
+
+  Future<void> _makeDefault(BuildContext context) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.container
+          .read(
+            modelSelectionProvider(
+              component.instanceId,
+              component.card.id,
+            ).notifier,
+          )
+          .makeDefault();
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+}
+
+class _CustomEndpointCard extends StatefulComponent {
+  const _CustomEndpointCard({required this.instanceId});
+
+  final String instanceId;
+
+  @override
+  State<_CustomEndpointCard> createState() => _CustomEndpointCardState();
+}
+
+class _CustomEndpointCardState extends State<_CustomEndpointCard> {
+  var _open = false;
+  var _name = '';
+  var _baseUrl = '';
+  var _apiKey = '';
+  var _model = '';
+  var _busy = false;
+  String? _error;
+
+  @override
+  Component build(BuildContext context) {
+    if (!_open) {
+      return div(classes: 'hermuse-conn-row', [
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.neutral(
+          label: 'Add custom endpoint',
+          onPressed: () => setState(() => _open = true),
+        ),
+      ]);
+    }
+    return div(classes: 'hermuse-conn-card', [
+      div(classes: 'hermuse-conn-head', [
+        div(classes: 'hermuse-conn-title', [
+          span(classes: 'hermuse-conn-name', [.text('Custom endpoint')]),
+          span(classes: 'hermuse-conn-detail', [
+            .text('Any OpenAI-compatible API.'),
+          ]),
+        ]),
+      ]),
+      YsField(
+        label: 'Name',
+        child: YsInputBox(
+          value: _name,
+          onChanged: (v) => setState(() => _name = v),
+          placeholder: 'Local model',
+          name: 'endpoint-name',
+          label: 'Endpoint name',
+        ),
+      ),
+      YsField(
+        label: 'Base URL',
+        child: YsInputBox(
+          value: _baseUrl,
+          onChanged: (v) => setState(() => _baseUrl = v),
+          placeholder: 'http://localhost:1234/v1',
+          name: 'endpoint-url',
+          label: 'Endpoint base URL',
+          autocomplete: 'off',
+        ),
+      ),
+      YsField(
+        label: 'API key (optional)',
+        child: YsInputBox(
+          value: _apiKey,
+          onChanged: (v) => setState(() => _apiKey = v),
+          placeholder: 'sk-…',
+          name: 'endpoint-key',
+          label: 'Endpoint API key',
+          obscure: true,
+          autocomplete: 'off',
+        ),
+      ),
+      YsField(
+        label: 'Model (optional)',
+        child: YsInputBox(
+          value: _model,
+          onChanged: (v) => setState(() => _model = v),
+          placeholder: 'model id',
+          name: 'endpoint-model',
+          label: 'Endpoint model',
+          autocomplete: 'off',
+        ),
+      ),
+      if (_error case final error?)
+        p(classes: 'hermuse-card-error', [.text(error)]),
+      div(classes: 'hermuse-conn-row', [
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.neutral(
+          label: 'Cancel',
+          onPressed: _busy ? null : () => setState(() => _open = false),
+        ),
+        YsButton.primary(
+          label: _busy ? 'Adding…' : 'Add',
+          onPressed: _busy || _name.trim().isEmpty || _baseUrl.trim().isEmpty
+              ? null
+              : () async {
+                  setState(() {
+                    _busy = true;
+                    _error = null;
+                  });
+                  try {
+                    await context.container
+                        .read(
+                          connectionCardsProvider(component.instanceId)
+                              .notifier,
+                        )
+                        .addCustomEndpoint(
+                          name: _name.trim(),
+                          baseUrl: _baseUrl.trim(),
+                          apiKey: _apiKey,
+                          model: _model.trim(),
+                        );
+                    if (mounted) {
+                      setState(() {
+                        _open = false;
+                        _name = '';
+                        _baseUrl = '';
+                        _apiKey = '';
+                        _model = '';
+                      });
+                    }
+                  } on Object catch (e) {
+                    if (mounted) setState(() => _error = '$e');
+                  }
+                  if (mounted) setState(() => _busy = false);
+                },
+        ),
+      ]),
+    ]);
+  }
+}

@@ -1,0 +1,16 @@
+name: hermuse_chat
+description: Hermuse chat domain — models, state and the Hermes-backed controller. Pure Dart, shared by the Flutter and Jaspr apps.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  hermes_client: ^0.1.0
+  markdown: ^7.3.1
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.26.0
