@@ -4,6 +4,8 @@ import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../computer/browser_parts.dart' show browserTaskTitle;
+import 'browser_card.dart';
 import 'flight_card.dart' show FlightCard;
 import 'markdown_view.dart';
 
@@ -15,6 +17,7 @@ final class MessageRow extends StatefulWidget {
     required this.selectedOfferId,
     required this.controller,
     required this.columnWidth,
+    required this.threadTitle,
     super.key,
   });
 
@@ -23,6 +26,9 @@ final class MessageRow extends StatefulWidget {
   final String? selectedOfferId;
   final ChatController controller;
   final double columnWidth;
+
+  /// Title of the message's thread (the browser card's task title).
+  final String threadTitle;
 
   @override
   State<MessageRow> createState() => _MessageRowState();
@@ -65,6 +71,7 @@ final class _MessageRowState extends State<MessageRow> {
             message: widget.message,
             position: widget.position,
             controller: widget.controller,
+            threadTitle: widget.threadTitle,
             maxWidth: _isUser
                 ? widget.columnWidth.clamp(0.0, YsLayout.userBubbleMaxWidth)
                 : widget.columnWidth * YsLayout.agentBubbleMaxFraction,
@@ -146,13 +153,92 @@ final class _Bubble extends StatelessWidget {
     required this.message,
     required this.position,
     required this.controller,
+    required this.threadTitle,
     required this.maxWidth,
   });
 
   final Message message;
   final GroupPosition position;
   final ChatController controller;
+  final String threadTitle;
   final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.author == Author.user;
+    Widget bubble(
+      GroupPosition position,
+      List<Block> blocks, {
+      EdgeInsets padding = const EdgeInsets.symmetric(
+        horizontal: 15,
+        vertical: 11,
+      ),
+    }) => _BubbleShell(
+      message: message,
+      blocks: blocks,
+      position: position,
+      controller: controller,
+      threadTitle: threadTitle,
+      maxWidth: maxWidth,
+      padding: padding,
+    );
+    final card = isUser
+        ? null
+        : message.blocks.whereType<BrowserBlock>().firstOrNull;
+    if (card == null) return bubble(position, message.blocks);
+    // The browser card is a bubble of its own, first in the turn (Muse);
+    // the rest of the turn follows in a second bubble joined to it.
+    const cardPadding = EdgeInsets.all(12);
+    final rest = [
+      for (final block in message.blocks)
+        if (block is! BrowserBlock) block,
+    ];
+    if (rest.isEmpty) return bubble(position, [card], padding: cardPadding);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        bubble(_joined(position, below: true), [card], padding: cardPadding),
+        const SizedBox(height: 8),
+        bubble(_joined(position, above: true), rest),
+      ],
+    );
+  }
+}
+
+/// [position] with one more bubble of the same author joined [above] or
+/// [below].
+GroupPosition _joined(
+  GroupPosition position, {
+  bool above = false,
+  bool below = false,
+}) => switch ((above || position.joinsAbove, below || position.joinsBelow)) {
+  (false, false) => GroupPosition.single,
+  (false, true) => GroupPosition.first,
+  (true, true) => GroupPosition.middle,
+  (true, false) => GroupPosition.last,
+};
+
+final class _BubbleShell extends StatelessWidget {
+  const _BubbleShell({
+    required this.message,
+    required this.blocks,
+    required this.position,
+    required this.controller,
+    required this.threadTitle,
+    required this.maxWidth,
+    required this.padding,
+  });
+
+  final Message message;
+
+  /// The part of [message] this bubble shows.
+  final List<Block> blocks;
+  final GroupPosition position;
+  final ChatController controller;
+  final String threadTitle;
+  final double maxWidth;
+  final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
@@ -169,21 +255,20 @@ final class _Bubble extends StatelessWidget {
             borderRadius: _bubbleRadius(position, isUser),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
+            padding: padding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (var i = 0; i < message.blocks.length; i++) ...[
+                for (var i = 0; i < blocks.length; i++) ...[
                   if (i > 0) const SizedBox(height: 8),
                   _BlockView(
-                    block: message.blocks[i],
+                    block: blocks[i],
                     messageId: message.id,
                     isUser: isUser,
-                    blockIndex: message.blocks[i] is ChoiceBlock
-                        ? ++choiceIndex
-                        : -1,
+                    blockIndex: blocks[i] is ChoiceBlock ? ++choiceIndex : -1,
                     controller: controller,
+                    threadTitle: threadTitle,
                   ),
                 ],
               ],
@@ -202,6 +287,7 @@ final class _BlockView extends StatelessWidget {
     required this.isUser,
     required this.blockIndex,
     required this.controller,
+    required this.threadTitle,
   });
 
   final Block block;
@@ -212,6 +298,7 @@ final class _BlockView extends StatelessWidget {
   /// (`controller.choose` block index); -1 for non-choice blocks.
   final int blockIndex;
   final ChatController controller;
+  final String threadTitle;
 
   @override
   Widget build(BuildContext context) {
@@ -227,7 +314,18 @@ final class _BlockView extends StatelessWidget {
       ),
       ReasoningBlock() => _ReasoningView(block: block),
       ToolCallBlock() => _ToolCallView(block: block),
+      // Keyed by message: list rows are reused by position, and a card must
+      // not show another turn's picture.
+      BrowserBlock() => BrowserCard(
+        key: ValueKey(messageId),
+        block: block,
+        title: browserTaskTitle(threadTitle),
+        instanceId: controller.instanceId,
+        onOpen: controller.openComputer,
+      ),
       NoticeBlock() => _NoticeView(block: block),
+      WaitBlock(:final text) => _WaitView(text: text),
+      CommandBlock() => _CommandView(block: block),
       FlightResultsBlock() => const SizedBox.shrink(),
     };
   }
@@ -348,6 +446,103 @@ final class _NoticeView extends StatelessWidget {
       style: YsType.small.flutter.copyWith(
         color: block.isError ? palette.errorColor : palette.contentMutedColor,
       ),
+    );
+  }
+}
+
+/// What a pending turn waits on: an API retry backoff, a slow provider.
+final class _WaitView extends StatelessWidget {
+  const _WaitView({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 18,
+            child: Center(child: YsSpinner(size: 12)),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              style: YsType.small.flutter.copyWith(
+                color: palette.contentMutedColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A slash command run on the server: the command, then its answer.
+final class _CommandView extends StatelessWidget {
+  const _CommandView({required this.block});
+
+  final CommandBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final small = YsType.small.flutter;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          label: block.running ? 'Running ${block.command}' : null,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 18,
+                child: Center(
+                  child: block.running
+                      ? const YsSpinner(size: 12)
+                      : YsIconWidget(
+                          block.isError ? YsIcon.close : YsIcon.check,
+                          size: 12,
+                          color: block.isError
+                              ? palette.errorColor
+                              : palette.successColor,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  block.command,
+                  style: small.copyWith(
+                    color: palette.contentMutedColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (block.output.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            block.output,
+            style: small.copyWith(
+              color: block.isError ? palette.errorColor : palette.contentColor,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

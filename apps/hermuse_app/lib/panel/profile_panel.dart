@@ -12,6 +12,7 @@ final class ProfilePanel extends StatefulWidget {
     required this.activity,
     required this.approvals,
     required this.onOpenApproval,
+    required this.onOpenComputer,
     required this.onClose,
     super.key,
   });
@@ -22,6 +23,9 @@ final class ProfilePanel extends StatefulWidget {
   /// Pending approval cards of the active conversation.
   final List<PendingApprovalCard> approvals;
   final ValueChanged<PendingApprovalCard> onOpenApproval;
+
+  /// Shows the agent's computer (its browser, its desktop) at will.
+  final VoidCallback onOpenComputer;
   final VoidCallback onClose;
 
   @override
@@ -100,6 +104,14 @@ final class ProfilePanelState extends State<ProfilePanel> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 16),
+            // Hugs its label, like a secondary pill.
+            IntrinsicWidth(
+              child: YsButton.neutral(
+                label: 'Open computer',
+                onPressed: widget.onOpenComputer,
+              ),
             ),
             const SizedBox(height: 44),
             SizedBox(

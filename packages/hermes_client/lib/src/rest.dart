@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -134,7 +135,26 @@ final class HermesRestClient {
   Future<Map<String, Object?>> deleteWithBody(String path, Object? body) =>
       _send('DELETE', path, body: body);
 
+  /// `GET` of a binary body (images), with the same auth and error mapping
+  /// as the JSON calls.
+  Future<Uint8List> getBytes(String path, [Map<String, String>? query]) async =>
+      (await _request('GET', path, query: query)).bodyBytes;
+
   Future<Map<String, Object?>> _send(
+    String method,
+    String path, {
+    Map<String, String>? query,
+    Object? body,
+  }) async {
+    final response = await _request(method, path, query: query, body: body);
+    if (response.body.isEmpty) return const {};
+    final decoded = jsonDecode(response.body);
+    return decoded is Map<String, Object?> ? decoded : {'data': decoded};
+  }
+
+  /// Sends one authenticated request; throws on transport failures and
+  /// non-2xx statuses.
+  Future<http.Response> _request(
     String method,
     String path, {
     Map<String, String>? query,
@@ -169,9 +189,7 @@ final class HermesRestClient {
     if (status < 200 || status >= 300) {
       throw HermesHttpError(status, '$method $path: ${_detail(response)}');
     }
-    if (response.body.isEmpty) return const {};
-    final decoded = jsonDecode(response.body);
-    return decoded is Map<String, Object?> ? decoded : {'data': decoded};
+    return response;
   }
 
   String _detail(http.Response response) {

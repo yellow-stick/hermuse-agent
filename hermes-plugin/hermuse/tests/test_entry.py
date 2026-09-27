@@ -1,15 +1,19 @@
-"""Plugin entry point: register(ctx) wires tools + skill + CLI; handlers persist."""
+"""Plugin entry point: register(ctx) wires tools + skill + CLI; handlers persist;
+inside a running dashboard it mounts the backend routes without a restart."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+API_MODULE = "hermes_dashboard_plugin_hermuse"  # Hermes' own name for the mounted backend
+SPA_CATCH_ALL = "/{full_path:path}"
 
 
 def _load_entry():
@@ -33,6 +37,8 @@ class _Ctx:
         self.tools = {}
         self.skills = {}
         self.cli = {}
+        self.browser_providers = []
+        self.hooks = {}
 
     def register_tool(self, name, toolset, schema, handler, **kwargs):
         self.tools[name] = {
@@ -46,9 +52,15 @@ class _Ctx:
     def register_cli_command(self, name, help, setup_fn, handler_fn=None, description=""):
         self.cli[name] = {"help": help, "setup": setup_fn, "handler": handler_fn}
 
+    def register_browser_provider(self, provider):
+        self.browser_providers.append(provider)
+
+    def register_hook(self, hook_name, callback):
+        self.hooks.setdefault(hook_name, []).append(callback)
+
 
 @pytest.fixture()
-def registered():
+def registered(hermes_home):
     ctx = _Ctx()
     _load_entry().register(ctx)
     return ctx
@@ -104,6 +116,51 @@ def test_cli_registered_and_dispatches_status(registered, hermes_home, capsys):
     assert "Hermuse store" in out and str(hermes_home) in out
 
 
+def test_computer_provider_and_hooks_are_accepted_by_hermes(registered):
+    from agent.browser_provider import BrowserProvider
+    from hermes_cli.plugins import VALID_HOOKS
+
+    [provider] = registered.browser_providers
+    assert isinstance(provider, BrowserProvider)  # Hermes ignores anything else
+    assert provider.name == "hermuse"  # the browser.cloud_provider value setup writes
+    assert set(registered.hooks) == {"pre_tool_call", "transform_tool_result"}
+    assert set(registered.hooks) <= VALID_HOOKS
+
+
+class _StatusRuntime:
+    def __init__(self, state):
+        self.state = state
+
+    def prepare(self, home):
+        pass
+
+    def status(self, home, timeout=10.0):
+        return {"state": self.state, "detail": "d"}
+
+
+@pytest.mark.parametrize(("state", "code"), [
+    ("building", 0), ("stopped", 0), ("running", 0),
+    ("docker_missing", 3), ("daemon_down", 4), ("image_missing", 1), ("error", 1),
+])
+def test_cli_computer_setup_configures_hermes_and_exits_with_docker_state(
+        registered, hermes_home, monkeypatch, capsys, state, code):
+    import argparse
+
+    from hermes_cli.config import read_raw_config
+
+    runtime = sys.modules["hermuse_plugin_under_test.computer.runtime"]
+    monkeypatch.setattr(runtime, "get_runtime", lambda: _StatusRuntime(state))
+    parser = argparse.ArgumentParser()
+    registered.cli["hermuse"]["setup"](parser)
+    args = parser.parse_args(["computer", "setup"])
+    assert args.func(args) == code
+    assert json.loads(capsys.readouterr().out) == {"state": state, "detail": "d"}  # JSON only
+    browser = read_raw_config()["browser"]
+    assert browser["cloud_provider"] == "hermuse"
+    assert browser["auto_local_for_private_urls"] is False
+    assert browser["backend"] == "off"
+
+
 def test_tool_handlers_persist_files(registered, hermes_home):
     import store as plugin_store
 
@@ -137,3 +194,75 @@ def test_tool_handlers_persist_files(registered, hermes_home):
     bad = json.loads(handlers["goal_track"](
         {"title": "t", "category": "nope", "why": "w"}))
     assert "error" in bad
+
+
+@pytest.fixture()
+def dashboard(hermes_home, monkeypatch):
+    """A dashboard that was running before the install: ``hermes_cli.web_server.app``
+    with an API route and the SPA catch-all, hermuse enabled."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from hermes_cli import plugins_cmd
+
+    app = FastAPI()
+
+    @app.get("/api/status")
+    def status():
+        return {"ok": True}
+
+    @app.get(SPA_CATCH_ALL)
+    def spa(full_path: str):
+        if full_path.startswith("api/"):
+            return JSONResponse({"detail": f"No such API endpoint: /{full_path}"}, status_code=404)
+        return {"spa": full_path}
+
+    web_server = types.ModuleType("hermes_cli.web_server")
+    web_server.app = app
+    monkeypatch.setitem(sys.modules, "hermes_cli.web_server", web_server)
+    enabled = {"hermuse"}
+    monkeypatch.setattr(plugins_cmd, "_get_enabled_set", lambda: set(enabled))
+    monkeypatch.setattr(plugins_cmd, "_get_disabled_set", lambda: set())
+    sys.modules.pop(API_MODULE, None)
+    yield app, enabled
+    sys.modules.pop(API_MODULE, None)
+
+
+def _plugin_routes(app):
+    return [route for route in app.router.routes
+            if str(getattr(route, "path", "")).startswith("/api/plugins/hermuse/")]
+
+
+def test_install_into_a_running_dashboard_serves_the_routes_at_once(dashboard):
+    from fastapi.testclient import TestClient
+
+    import store as plugin_store
+
+    app, _ = dashboard
+    client = TestClient(app)
+    assert client.get("/api/plugins/hermuse/files").status_code == 404  # the catch-all's answer
+
+    _load_entry().register(_Ctx())
+    assert client.get("/api/plugins/hermuse/files").json() == {"files": list(plugin_store.MANAGED_FILES)}
+    assert client.get("/chat").json() == {"spa": "chat"}  # the catch-all still serves the SPA
+    assert client.get("/api/status").json() == {"ok": True}
+    mounted = _plugin_routes(app)
+    assert "/api/plugins/hermuse/computer/ws" in {route.path for route in mounted}
+
+    _load_entry().register(_Ctx())  # a forced rediscovery calls register() again
+    assert _plugin_routes(app) == mounted
+
+
+def test_disabled_plugin_backend_is_not_imported(dashboard):
+    app, enabled = dashboard
+    enabled.clear()
+    _load_entry().register(_Ctx())
+    assert _plugin_routes(app) == []
+    assert API_MODULE not in sys.modules
+
+
+def test_register_during_dashboard_import_leaves_the_mount_to_hermes(dashboard):
+    app, _ = dashboard
+    # Before mount_spa(): Hermes' own _mount_plugin_api_routes() is still to come.
+    app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", "") != SPA_CATCH_ALL]
+    _load_entry().register(_Ctx())
+    assert _plugin_routes(app) == []

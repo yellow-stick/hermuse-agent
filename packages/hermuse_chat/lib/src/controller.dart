@@ -64,6 +64,7 @@ final class ChatState {
     this.busyThreads = const {},
     this.models = const {},
     this.needsSignIn = false,
+    this.computerOpen = false,
   });
 
   final String agentName;
@@ -93,6 +94,9 @@ final class ChatState {
   /// (then retry) instead of a plain Retry.
   final bool needsSignIn;
 
+  /// The agent's computer viewer replaces the chat area.
+  final bool computerOpen;
+
   /// Model of the active thread, when known.
   ChatModel? get model => models[activeThreadId];
 
@@ -121,6 +125,7 @@ final class ChatState {
     Set<String>? busyThreads,
     Map<String, ChatModel>? models,
     bool? needsSignIn,
+    bool? computerOpen,
   }) => ChatState(
     agentName: agentName ?? this.agentName,
     threads: threads ?? this.threads,
@@ -135,6 +140,7 @@ final class ChatState {
     busyThreads: busyThreads ?? this.busyThreads,
     models: models ?? this.models,
     needsSignIn: needsSignIn ?? this.needsSignIn,
+    computerOpen: computerOpen ?? this.computerOpen,
   );
 }
 
@@ -464,6 +470,28 @@ final class ChatController {
           } else {
             out.add(Message(id: id, author: Author.agent, blocks: blocks));
           }
+        case 'tool' when isBrowserTool(m.name ?? ''):
+          // Browser calls fold into one card, first in the turn's bubble.
+          final toolId = m.toolCallId ?? id;
+          if (out.lastOrNull case final last?
+              when last.author == Author.agent) {
+            out[out.length - 1] = last.copyWith(
+              blocks: _upsertBrowser(
+                last.blocks,
+                (current) =>
+                    current?.copyWith(lastToolId: toolId) ??
+                    BrowserBlock(lastToolId: toolId, running: false),
+              ),
+            );
+          } else {
+            out.add(
+              Message(
+                id: id,
+                author: Author.agent,
+                blocks: [BrowserBlock(lastToolId: toolId, running: false)],
+              ),
+            );
+          }
         case 'tool':
           final block = ToolCallBlock(
             toolId: m.toolCallId ?? id,
@@ -498,13 +526,28 @@ final class ChatController {
         _startTurn(threadId);
       case MessageDeltaEvent(:final payload):
         _appendText(threadId, payload.text);
-      // `thinking.delta` is the spinner status line ("🤔 thinking…", "" to
-      // clear), not model reasoning: the busy state already covers it.
+      // The live status line: an explained wait (API retry backoff, slow
+      // provider) shows on the pending turn; spinner chatter clears it.
+      case ThinkingDeltaEvent(:final payload):
+        _setWait(threadId, _waitStatus(payload.text));
       case ReasoningDeltaEvent(:final payload):
         _addReasoning(threadId, payload.text);
       case ReasoningAvailableEvent(:final payload):
         // Non-streaming providers deliver the whole block at once.
         _addReasoning(threadId, payload.text, whole: true);
+      case ToolStartEvent(:final payload) when isBrowserTool(payload.name):
+        final host = _urlHost(payload.args?['url']);
+        _updateTurn(
+          threadId,
+          (blocks) => _upsertBrowser(
+            blocks,
+            (current) => BrowserBlock(
+              lastToolId: payload.toolId,
+              step: browserStep(payload.name, payload.args),
+              host: host.isEmpty ? current?.host ?? '' : host,
+            ),
+          ),
+        );
       case ToolStartEvent(:final payload):
         _updateTurn(
           threadId,
@@ -523,9 +566,12 @@ final class ChatController {
           threadId,
           (blocks) => [
             for (final b in blocks)
-              b is ToolCallBlock && b.toolId == payload.toolId
-                  ? b.done(summary.isEmpty ? b.summary : summary)
-                  : b,
+              if (b is BrowserBlock && isBrowserTool(payload.name))
+                b.copyWith(lastToolId: payload.toolId)
+              else if (b is ToolCallBlock && b.toolId == payload.toolId)
+                b.done(summary.isEmpty ? b.summary : summary)
+              else
+                b,
           ],
         );
         _emit(
@@ -551,6 +597,19 @@ final class ChatController {
       case SessionTitleEvent(:final payload):
         _setTitle(threadId, payload.title);
         _observer?.sessionTitled(_refOf(threadId), payload.title);
+      // Model switches (`/model`, `config.set`) announce the new model here.
+      case SessionInfoEvent(:final payload) when payload.model.isNotEmpty:
+        _emit(
+          _state.copyWith(
+            models: {
+              ..._state.models,
+              threadId: ChatModel(
+                provider: payload.provider,
+                model: payload.model,
+              ),
+            },
+          ),
+        );
       case RequestCancelEvent(:final payload):
         _cancelRequest(payload.id, payload.reason);
       default:
@@ -570,11 +629,53 @@ final class ChatController {
     return id;
   }
 
+  /// Applies [update] to the running turn's blocks, starting a turn when none
+  /// runs. Whatever the turn shows next replaces its wait line.
   void _updateTurn(String threadId, List<Block> Function(List<Block>) update) {
     final id = _turn[threadId] ?? _startTurn(threadId);
     _emit(
-      _updateMessage(threadId, id, (m) => m.copyWith(blocks: update(m.blocks))),
+      _updateMessage(
+        threadId,
+        id,
+        (m) => m.copyWith(
+          blocks: update([
+            for (final b in m.blocks)
+              if (b is! WaitBlock) b,
+          ]),
+        ),
+      ),
     );
+  }
+
+  /// Shows [status] as the running turn's wait line; '' clears it.
+  void _setWait(String threadId, String status) {
+    final turnId = _turn[threadId];
+    final current = _state.threads
+        .where((t) => t.id == threadId)
+        .expand((t) => t.messages)
+        .where((m) => m.id == turnId)
+        .expand((m) => m.blocks)
+        .whereType<WaitBlock>()
+        .firstOrNull;
+    if ((current?.text ?? '') == status) return;
+    _updateTurn(
+      threadId,
+      (blocks) => [...blocks, if (status.isNotEmpty) WaitBlock(status)],
+    );
+  }
+
+  /// A turn has one browser card, inserted first: [update] replaces it where
+  /// it is, or builds it (from null) when the turn has none yet.
+  static List<Block> _upsertBrowser(
+    List<Block> blocks,
+    BrowserBlock Function(BrowserBlock? current) update,
+  ) {
+    final index = blocks.indexWhere((b) => b is BrowserBlock);
+    if (index < 0) return [update(null), ...blocks];
+    return [
+      for (final (i, b) in blocks.indexed)
+        if (i == index) update(b as BrowserBlock) else b,
+    ];
   }
 
   void _appendText(String threadId, String delta) =>
@@ -667,10 +768,29 @@ final class ChatController {
     );
   }
 
+  /// Every way a turn ends (complete, error, stop) settles its browser card
+  /// and drops its wait line.
   void _endTurn(String threadId) {
-    _turn.remove(threadId);
+    final turnId = _turn.remove(threadId);
+    final settled = turnId == null
+        ? _state
+        : _updateMessage(
+            threadId,
+            turnId,
+            (m) => m.blocks.any((b) => b is BrowserBlock || b is WaitBlock)
+                ? m.copyWith(
+                    blocks: [
+                      for (final b in m.blocks)
+                        if (b is BrowserBlock)
+                          b.copyWith(running: false, step: '')
+                        else if (b is! WaitBlock)
+                          b,
+                    ],
+                  )
+                : m,
+          );
     _emit(
-      _state.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
+      settled.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
     );
     final thread = _state.threads.where((t) => t.id == threadId).firstOrNull;
     if (thread != null) {
@@ -889,52 +1009,294 @@ final class ChatController {
   // --------------------------------------------------------- user actions
 
   /// Sends [text] to the active thread, creating its session on first use.
+  ///
+  /// A slash command of the server's catalog runs on the server instead
+  /// ([_runCommand]); any other text, `/`-prefixed or not, goes to the agent.
   Future<void> send(String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final threadId = _state.activeThreadId;
     final replyTo = _state.replyTo;
-    final message = Message(
-      id: 'local-${_seq++}',
-      author: Author.user,
-      blocks: [TextBlock(trimmed)],
-      replyToId: _state.replyToId,
+    final replyToId = _state.replyToId;
+    final transport = _connection?.transport;
+    if (_slashCommand(trimmed) case (:final name, arg: _)
+        when transport != null && _state.connection == ChatConnection.ready) {
+      if (await _isServerCommand(transport, threadId, name)) {
+        return _runCommand(transport, threadId, trimmed);
+      }
+    }
+    _emit(_state.copyWith(replyToId: () => null));
+    final quoted = replyTo == null
+        ? trimmed
+        : '${replyTo.plainText.split('\n').map((l) => '> $l').join('\n')}'
+              '\n\n$trimmed';
+    await _submit(
+      threadId,
+      Message(
+        id: 'local-${_seq++}',
+        author: Author.user,
+        blocks: [TextBlock(trimmed)],
+        replyToId: replyToId,
+      ),
+      quoted,
     );
-    var threadId = _state.activeThreadId;
-    _emit(
-      _updateThread(
-        threadId,
-        (m) => [...m, message],
-      ).copyWith(replyToId: () => null),
-    );
+  }
+
+  /// Posts [message] in [threadId] and submits [text] as the agent's next
+  /// turn.
+  Future<void> _submit(String threadId, Message message, String text) async {
+    var thread = threadId;
+    _emit(_updateThread(thread, (m) => [...m, message]));
     final transport = _connection?.transport;
     if (transport == null || _state.connection != ChatConnection.ready) {
-      _appendNotice(threadId, 'Not connected — message not sent');
+      _appendNotice(thread, 'Not connected — message not sent');
       return;
     }
-    _emit(_state.copyWith(busyThreads: {..._state.busyThreads, threadId}));
+    _emit(_state.copyWith(busyThreads: {..._state.busyThreads, thread}));
     try {
-      if (_isDraft(threadId)) {
-        final draftId = threadId;
-        threadId = await _createSession(draftId);
-        if (_pendingModels.remove(draftId) case final model?) {
-          await _applyModel(threadId, model);
-        }
-      }
-      final quoted = replyTo == null
-          ? trimmed
-          : '${replyTo.plainText.split('\n').map((l) => '> $l').join('\n')}'
-                '\n\n$trimmed';
+      thread = await _ensureSession(thread);
       await transport.call(
         HermesMethods.promptSubmit,
-        PromptSubmitParams(sessionId: _live[threadId]!, text: quoted),
+        PromptSubmitParams(sessionId: _live[thread]!, text: text),
       );
     } on Object catch (e) {
-      _appendNotice(threadId, 'Not sent: ${_describe(e)}');
+      _appendNotice(thread, 'Not sent: ${_describe(e)}');
       _emit(
-        _state.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
+        _state.copyWith(busyThreads: {..._state.busyThreads}..remove(thread)),
       );
     }
   }
+
+  /// The stored id of [threadId]: a draft gets its session first, then the
+  /// model picked for it meanwhile.
+  Future<String> _ensureSession(String threadId) async {
+    if (!_isDraft(threadId)) return threadId;
+    final stored = await _createSession(threadId);
+    if (_pendingModels.remove(threadId) case final model?) {
+      await _applyModel(stored, model);
+    }
+    return stored;
+  }
+
+  /// Whether `/[name]` is in the server's command catalog (`commands.catalog`:
+  /// built-ins and their aliases, quick, plugin and skill commands). An
+  /// unreadable catalog knows no command: the text goes to the agent.
+  Future<bool> _isServerCommand(
+    HermesTransport transport,
+    String threadId,
+    String name,
+  ) async {
+    final CommandsCatalogResult catalog;
+    try {
+      catalog = await transport.call(
+        HermesMethods.commandsCatalog,
+        CommandsCatalogParams(sessionId: _live[threadId]),
+      );
+    } on Object {
+      return false;
+    }
+    final key = '/$name';
+    return [
+      ...?catalog.canon?.keys,
+      for (final pair in catalog.pairs ?? const <List<String>>[])
+        ?pair.firstOrNull,
+      ...?catalog.skills?.keys,
+    ].any((k) => k.toLowerCase() == key);
+  }
+
+  /// Runs the slash [command] typed in [threadId] on the server (`slash.exec`,
+  /// like Hermes Desktop and the TUI): a command row shows it until the
+  /// server answers, then its output. Commands that start a turn instead
+  /// (skills, `/goal <text>`) post their prompt as the user's message.
+  Future<void> _runCommand(
+    HermesTransport transport,
+    String threadId,
+    String command,
+  ) async {
+    final rowId = 'command-${_seq++}';
+    _emit(
+      _updateThread(
+        threadId,
+        (m) => [
+          ...m,
+          Message(
+            id: rowId,
+            author: Author.agent,
+            blocks: [CommandBlock(command: command)],
+          ),
+        ],
+      ),
+    );
+    var thread = threadId;
+    try {
+      thread = await _ensureSession(thread);
+      await _execute(transport, thread, rowId, command);
+    } on Object catch (e) {
+      _answerCommand(thread, rowId, '${_describe(e)}', isError: true);
+    }
+  }
+
+  /// Runs [command] on the live session of [threadId] and answers the
+  /// command row [rowId]; [hops] counts the aliases followed so far.
+  Future<void> _execute(
+    HermesTransport transport,
+    String threadId,
+    String rowId,
+    String command, {
+    int hops = 0,
+  }) async {
+    final parts = _slashCommand(command);
+    if (parts == null) {
+      return _answerCommand(
+        threadId,
+        rowId,
+        'Not a command: $command',
+        isError: true,
+      );
+    }
+    final (:name, :arg) = parts;
+    final live = _live[threadId]!;
+    SlashExecResult result;
+    try {
+      result = await transport.call(
+        HermesMethods.slashExec,
+        SlashExecParams(sessionId: live, command: command.substring(1)),
+      );
+    } on HermesRpcError catch (e) {
+      // Skills and snapshot restores are refused here: they run through the
+      // command dispatcher, which answers the same directive fields.
+      if (e.code != 4018 || !_dispatchOnly.hasMatch(e.message)) rethrow;
+      final dispatched = await transport.call(
+        HermesMethods.commandDispatch,
+        CommandDispatchParams(name: name, arg: arg, sessionId: live),
+      );
+      result = SlashExecResult.fromJson(dispatched.toJson());
+    }
+    return _followDirective(
+      transport,
+      threadId,
+      rowId,
+      command,
+      result,
+      hops: hops,
+    );
+  }
+
+  /// Acts on the server's answer to [command]: output for the row, an alias
+  /// to run instead, or a prompt to submit (`send`/`skill`).
+  Future<void> _followDirective(
+    HermesTransport transport,
+    String threadId,
+    String rowId,
+    String command,
+    SlashExecResult result, {
+    required int hops,
+  }) async {
+    final notice = result.notice?.trim() ?? '';
+    final message = result.message ?? '';
+    switch (result.type$) {
+      case DispatchType.alias:
+        final target = (result.target ?? '').replaceFirst(RegExp('^/+'), '');
+        if (target.isEmpty || hops >= 3) {
+          return _answerCommand(
+            threadId,
+            rowId,
+            'Could not follow the alias of $command',
+            isError: true,
+          );
+        }
+        final arg = _slashCommand(command)?.arg ?? '';
+        return _execute(
+          transport,
+          threadId,
+          rowId,
+          '/$target${arg.isEmpty ? '' : ' $arg'}',
+          hops: hops + 1,
+        );
+      case DispatchType.send || DispatchType.skill:
+        if (message.trim().isEmpty) {
+          return _answerCommand(
+            threadId,
+            rowId,
+            'The server sent no prompt for $command',
+            isError: true,
+          );
+        }
+        if (notice.isEmpty) {
+          _emit(
+            _updateThread(
+              threadId,
+              (m) => [
+                for (final x in m)
+                  if (x.id != rowId) x,
+              ],
+            ),
+          );
+        } else {
+          _answerCommand(threadId, rowId, notice);
+        }
+        // The bubble shows the invocation (`display`), never a skill's
+        // expanded body: that is scaffolding for the model.
+        final display = result.display?.trim() ?? '';
+        final shown = display.isNotEmpty
+            ? display
+            : result.type$ == DispatchType.skill
+            ? command
+            : message.trim();
+        return _submit(
+          threadId,
+          Message(
+            id: 'local-${_seq++}',
+            author: Author.user,
+            blocks: [TextBlock(shown)],
+          ),
+          message,
+        );
+      case DispatchType.prefill:
+        // `/undo`: the text to edit and resubmit stays readable in the row.
+        return _answerCommand(
+          threadId,
+          rowId,
+          [
+            notice,
+            message.trim(),
+          ].where((part) => part.isNotEmpty).join('\n\n'),
+        );
+      case null ||
+          DispatchType.exec ||
+          DispatchType.plugin ||
+          DispatchType.$unknown:
+        // Worker output is CLI text: blank lines around it would show as
+        // empty lines in the row; its indentation is kept.
+        final output = (result.output ?? '(no output)')
+            .replaceFirst(RegExp(r'^(?:[ \t]*\n)+'), '')
+            .trimRight();
+        final warning = result.warning?.trim() ?? '';
+        return _answerCommand(
+          threadId,
+          rowId,
+          warning.isEmpty ? output : 'warning: $warning\n$output',
+        );
+    }
+  }
+
+  void _answerCommand(
+    String threadId,
+    String rowId,
+    String output, {
+    bool isError = false,
+  }) => _emit(
+    _updateMessage(
+      threadId,
+      rowId,
+      (m) => m.copyWith(
+        blocks: [
+          for (final b in m.blocks)
+            b is CommandBlock ? b.done(output, isError: isError) : b,
+        ],
+      ),
+    ),
+  );
 
   Future<String> _createSession(String draftId) async {
     var parentId = _parents[draftId];
@@ -1070,6 +1432,12 @@ final class ChatController {
       _emit(_state.copyWith(replyToId: () => messageId));
 
   void cancelReply() => _emit(_state.copyWith(replyToId: () => null));
+
+  /// Shows the agent's computer (browser viewer) in place of the chat.
+  void openComputer() => _emit(_state.copyWith(computerOpen: true));
+
+  /// Returns from the computer viewer to the chat.
+  void closeComputer() => _emit(_state.copyWith(computerOpen: false));
 
   /// Opens an empty side chat; its session is created on the first message
   /// and titled by the agent (an untitled thread has an empty [Thread.title]).
@@ -1239,6 +1607,89 @@ String formatChatTime(DateTime time) {
   final h = local.hour % 12 == 0 ? 12 : local.hour % 12;
   final m = local.minute.toString().padLeft(2, '0');
   return '$h:$m ${local.hour < 12 ? 'AM' : 'PM'}';
+}
+
+/// `/name arg…`: a `/` then a bare name (`/usr/bin` and `/ x` are prose),
+/// the argument's interior kept verbatim (Hermes' `apps/shared/src/slash.ts`).
+final _slashPattern = RegExp(r'^/([^\s/]+)(?:\s+([\s\S]*))?$');
+
+/// [text] split as a slash command (name lower-cased, like every Hermes
+/// surface), or null when it is not one.
+({String name, String arg})? _slashCommand(String text) {
+  final match = _slashPattern.firstMatch(text.trim());
+  if (match == null) return null;
+  return (name: match[1]!.toLowerCase(), arg: (match[2] ?? '').trim());
+}
+
+/// `slash.exec` refusals (code 4018) that mean "run this through
+/// `command.dispatch`": skill commands and `/snapshot restore`
+/// (`tui_gateway/methods_tools.py`). Other 4018s come from a dispatcher
+/// `slash.exec` already forwarded to; running them again would repeat them.
+final _dispatchOnly = RegExp(
+  r'^skill command: use command\.dispatch for /|'
+  r'use command\.dispatch for /snapshot restore',
+);
+
+/// Browser card status line of a `browser_*` tool call ([args] as sent in
+/// `tool.start`).
+String browserStep(String name, Map<String, Object?>? args) => switch (name) {
+  'browser_navigate' => switch (_urlHost(args?['url'])) {
+    '' => 'Opening page',
+    final host => 'Opening $host',
+  },
+  'browser_click' => 'Clicking',
+  'browser_type' => 'Typing',
+  'browser_press' => 'Pressing keys',
+  'browser_scroll' => 'Scrolling',
+  'browser_back' => 'Going back',
+  'browser_snapshot' ||
+  'browser_vision' ||
+  'browser_get_images' ||
+  'browser_console' => 'Reading page',
+  _ => 'Working in browser',
+};
+
+/// Host of a tool's `url` argument (`https://` assumed without a scheme),
+/// or '' when there is none.
+String _urlHost(Object? url) {
+  if (url is! String || url.trim().isEmpty) return '';
+  final trimmed = url.trim();
+  return Uri.tryParse(trimmed.contains('://') ? trimmed : 'https://$trimmed')
+          ?.host ??
+      '';
+}
+
+/// An API retry backoff as Hermes words it on the live status line
+/// (`agent/turn_recovery.py::compute_error_backoff`):
+/// `⏳ rate limited — resets in ~13m, retrying in 600s (attempt 1/3)`.
+final _retryWait = RegExp(
+  r'^⏳\s*(.*?)\s*retrying in (\d+(?:\.\d+)?)s \(attempt (\d+)/(\d+)\)',
+);
+
+/// The other waits Hermes explains there (the frames Hermes Desktop shows):
+/// a silent or reconnecting provider, a local model loading.
+final _explainedWait = RegExp(
+  r'^(?:⏳|⚠|↻|⚙)\uFE0F?\s*(?:(?:still\s+)?waiting on|loading|'
+  r'processing prompt|no (?:output|response)|model returned)',
+  caseSensitive: false,
+);
+
+/// The pending turn's wait line for a `thinking.delta` frame, or '' for the
+/// spinner's chatter (`(◕‿◕) pondering...`, '' between API attempts).
+String _waitStatus(String frame) {
+  final text = frame.trim();
+  if (_retryWait.firstMatch(text) case final retry?) {
+    final seconds = double.parse(retry[2]!).round();
+    final wait = seconds < 60 ? '${seconds}s' : '${(seconds / 60).round()} min';
+    final reason = retry[1]!
+        .replaceFirst(RegExp(r'[\s,—]+$'), '')
+        .replaceAll(' — ', ', ');
+    final line = 'Retrying in $wait (attempt ${retry[3]}/${retry[4]})';
+    return reason.isEmpty ? line : '$line — $reason';
+  }
+  if (!_explainedWait.hasMatch(text)) return '';
+  final line = text.replaceFirst(RegExp(r'^\S+\s*'), '');
+  return '${line[0].toUpperCase()}${line.substring(1)}';
 }
 
 const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];

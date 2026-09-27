@@ -8,6 +8,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'browser_card.dart';
 import 'message.dart';
 import 'scope.dart';
 import 'screens.dart';
@@ -125,6 +126,9 @@ class HermuseThread extends StatelessComponent {
                           onSelectOffer(thread.messages[i].id, offerId),
                       customAnswer: customAnswer,
                       onCustomAnswer: onCustomAnswer,
+                      instanceId: instanceId,
+                      taskTitle: browserTaskTitle(thread.title),
+                      onOpenComputer: controller.openComputer,
                     ),
                   ],
                 ),

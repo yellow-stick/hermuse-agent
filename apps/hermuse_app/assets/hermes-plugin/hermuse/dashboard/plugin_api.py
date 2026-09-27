@@ -3,28 +3,44 @@
 Loaded by the dashboard plugin system (``hermes_cli/web_server_dashboard.py``)
 from this file path via ``importlib`` — NOT as part of the plugin package — so
 it adds its parent dir to ``sys.path`` to import the sibling ``store`` module
-(stdlib-only, shared with the agent tools). Auth is enforced by Hermes'
-existing ``/api/`` gate; this router adds no auth of its own.
+(stdlib-only, shared with the agent tools) and the ``computer`` package. HTTP
+auth is enforced by Hermes' existing ``/api/`` gate; the computer WebSocket
+(which that gate does not cover) takes a single-use ticket from
+``POST /computer/ticket``, like Hermes' own ``/api/display/ws``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, WebSocket
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import store  # noqa: E402
+from computer import runtime as computer_runtime  # noqa: E402
+from computer import setup as computer_setup  # noqa: E402
+from computer import state as computer_state  # noqa: E402
+from hermes_cli.web_server_chat import _ws_request_is_allowed  # noqa: E402
 from hermes_constants import get_hermes_home  # noqa: E402
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+# Take control leases only live in this process's WebSocket connections, so
+# none can survive a dashboard (re)start: the agent holds control again.
+try:
+    computer_state.reset_control(get_hermes_home())
+except OSError as exc:
+    log.warning("hermuse computer: could not reset control: %s", exc)
 
 
 def _root() -> Path:
@@ -314,3 +330,324 @@ def cron_disable():
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
     return {"removed": remove_all(cron_jobs)}
+
+
+# --- Computer --------------------------------------------------------------
+
+_COMPUTER_TICKET_PROVIDER = "hermuse-computer"
+_CLOSE_UNAVAILABLE = 4001
+_CLOSE_BAD_TICKET = 4401
+_CLOSE_NOT_ALLOWED = 4403
+_STATE_PERIOD_S = 2.0
+_UPSTREAM_ATTEMPTS = 10  # screend may still be starting right after ensure_running
+_UPSTREAM_RETRY_S = 0.5
+_UPSTREAM_MAX_MESSAGE = 16 * 1024 * 1024
+_FPS_DEFAULT, _FPS_MIN, _FPS_MAX = 5, 1, 10
+_INPUT_TYPES = frozenset({"move", "down", "up", "wheel", "key", "text"})
+_TAB_ACTIONS = frozenset({"activate", "close"})
+
+
+def _computer_mode(home: Path) -> str:
+    mode = (computer_state.read_runtime(home) or {}).get("mode")
+    return mode if mode in computer_runtime.MODES else "browser"
+
+
+def _computer_status(home: Path) -> dict[str, Any]:
+    status = computer_runtime.get_runtime().status(home)
+    return {**status, "control": computer_state.read_control(home)["holder"],
+            "mode": _computer_mode(home)}
+
+
+@router.get("/computer/status")
+def computer_status():
+    return _computer_status(get_hermes_home())
+
+
+@router.post("/computer/setup")
+def computer_setup_route():
+    return computer_setup.setup(get_hermes_home())
+
+
+@router.post("/computer/start")
+def computer_start():
+    home = get_hermes_home()
+    try:
+        computer_runtime.get_runtime().ensure_running(home)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _computer_status(home)
+
+
+@router.post("/computer/stop")
+def computer_stop():
+    home = get_hermes_home()
+    try:
+        computer_runtime.get_runtime().stop(home)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _computer_status(home)
+
+
+@router.get("/computer/thumbnail")
+def computer_thumbnail():
+    rt = computer_state.read_runtime(get_hermes_home())
+    try:
+        if rt is None:
+            raise RuntimeError("no runtime.json")
+        jpeg = computer_runtime.get_runtime().thumbnail(rt)
+    except Exception as exc:  # noqa: BLE001 — unreachable screend = not running
+        raise HTTPException(status_code=409, detail="computer is not running") from exc
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+# ``:path`` so an id with "/" (``..%2Fx``) reaches the validation (400) instead
+# of missing the route.
+@router.get("/computer/snapshots/{tool_call_id:path}")
+def computer_snapshot(tool_call_id: str):
+    path = computer_state.snapshot_path(get_hermes_home(), tool_call_id)
+    if path is None:
+        raise HTTPException(status_code=400, detail="invalid tool call id")
+    try:
+        jpeg = path.read_bytes()
+    except FileNotFoundError:
+        raise _not_found("snapshot") from None
+    return Response(content=jpeg, media_type="image/jpeg")
+
+
+@router.post("/computer/ticket")
+def computer_ticket():
+    from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
+
+    return {"ticket": mint_ticket(user_id="hermuse", provider=_COMPUTER_TICKET_PROVIDER)}
+
+
+def _consume_computer_ticket(ticket: str) -> bool:
+    from hermes_cli.dashboard_auth.ws_tickets import TicketInvalid, consume_ticket
+
+    if not ticket:
+        return False
+    try:
+        info = consume_ticket(ticket)
+    except TicketInvalid:
+        return False
+    return info.get("provider") == _COMPUTER_TICKET_PROVIDER
+
+
+def _fps(raw: Optional[str]) -> int:
+    try:
+        fps = int(raw or _FPS_DEFAULT)
+    except ValueError:
+        fps = _FPS_DEFAULT
+    return min(max(fps, _FPS_MIN), _FPS_MAX)
+
+
+def _close_reason(text: str) -> str:
+    return text.encode("utf-8")[:120].decode("utf-8", "ignore")  # a close frame holds <= 123 bytes
+
+
+@router.websocket("/computer/ws")
+async def computer_ws(ws: WebSocket) -> None:
+    # Order of Hermes' /api/display/ws: Host/Origin/peer policy before accept;
+    # ticket and computer state after it, so code + reason reach the client.
+    if not _ws_request_is_allowed(ws):
+        await ws.close(code=_CLOSE_NOT_ALLOWED)
+        return
+    await ws.accept()
+    if not _consume_computer_ticket(ws.query_params.get("ticket", "")):
+        await ws.close(code=_CLOSE_BAD_TICKET, reason="ticket missing, expired or used")
+        return
+    home = get_hermes_home()
+    backend = computer_runtime.get_runtime()
+    try:
+        rt = await asyncio.to_thread(backend.ensure_running, home)
+    except Exception as exc:  # noqa: BLE001 — any failure: the computer cannot start
+        await ws.close(code=_CLOSE_UNAVAILABLE, reason=_close_reason(str(exc)))
+        return
+    await _ComputerViewer(ws, home, backend, rt).run(_fps(ws.query_params.get("fps")))
+
+
+_viewers: set["_ComputerViewer"] = set()  # /computer/ws connections of this process
+
+
+async def _broadcast_state() -> None:
+    live = [viewer for viewer in _viewers if not viewer.closing]
+    await asyncio.gather(*(viewer.push_state(force=True) for viewer in live),
+                         return_exceptions=True)
+
+
+class _ComputerViewer:
+    """One ``/computer/ws`` connection bridged to screend's ``/stream``.
+
+    Frames and geometry pass through untouched; ``state`` messages add control,
+    mode and tabs. Input reaches the computer only from the viewer whose lease
+    is the stored one; disconnecting releases this viewer's lease (a no-op when
+    another viewer took over since).
+    """
+
+    def __init__(self, ws: WebSocket, home: Path, backend: Any, rt: dict[str, Any]) -> None:
+        self.ws = ws
+        self.home = home
+        self.backend = backend
+        self.rt = rt
+        self.lease_id: Optional[str] = None
+        self.sent_state: Optional[dict[str, Any]] = None
+        self.closing = False
+        self.send_lock = asyncio.Lock()
+        self.state_lock = asyncio.Lock()
+
+    async def _send(self, *, text: Optional[str] = None, data: Optional[bytes] = None) -> None:
+        async with self.send_lock:
+            if text is not None:
+                await self.ws.send_text(text)
+            else:
+                await self.ws.send_bytes(data or b"")
+
+    def _state(self) -> dict[str, Any]:
+        """Blocking (control/runtime files + CDP tab list): run in a thread."""
+        control = computer_state.read_control(self.home)
+        try:
+            pages = self.backend.tabs(self.rt)
+        except Exception:  # noqa: BLE001 — Chromium restarting: no tabs for now
+            pages = []
+        return {
+            "t": "state",
+            "control": control["holder"],
+            "mine": self.lease_id is not None and self.lease_id == control["lease_id"],
+            "mode": _computer_mode(self.home),
+            # /json/list is most-recently-used first: the first page is in front.
+            "tabs": [{**page, "active": index == 0} for index, page in enumerate(pages)],
+        }
+
+    async def push_state(self, force: bool = False) -> None:
+        async with self.state_lock:
+            payload = await asyncio.to_thread(self._state)
+            if force or payload != self.sent_state:
+                self.sent_state = payload
+                await self._send(text=json.dumps(payload))
+
+    def _in_control(self) -> bool:
+        return (self.lease_id is not None
+                and self.lease_id == computer_state.read_control(self.home)["lease_id"])
+
+    async def run(self, fps: int) -> None:
+        upstream = await self._connect(fps)
+        if upstream is None:
+            await self.ws.close(code=_CLOSE_UNAVAILABLE, reason="the computer screen is not answering")
+            return
+        _viewers.add(self)
+        pumps = [asyncio.create_task(self._from_upstream(upstream)),
+                 asyncio.create_task(self._from_viewer(upstream)),
+                 asyncio.create_task(self._state_loop())]
+        upstream_ended = False
+        try:
+            done, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+            upstream_ended = pumps[0] in done
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+            for task in done:
+                if task.exception() is not None:
+                    log.debug("hermuse computer ws ended: %r", task.exception())
+        finally:
+            self.closing = True
+            try:
+                await upstream.close()
+                if self.lease_id is not None:
+                    released = await asyncio.to_thread(
+                        computer_state.release_control, self.home, self.lease_id)
+                    self.lease_id = None
+                    if released:
+                        await _broadcast_state()
+            finally:
+                _viewers.discard(self)  # last: a viewer is gone once its lease is settled
+        try:
+            if upstream_ended:
+                await self.ws.close(code=_CLOSE_UNAVAILABLE, reason="the computer screen stream ended")
+            else:
+                await self.ws.close()
+        except Exception:  # noqa: BLE001 — the viewer already went away
+            pass
+
+    async def _connect(self, fps: int) -> Any:
+        from websockets.asyncio.client import connect
+
+        token = urllib.parse.quote(str(self.rt["token"]), safe="")
+        url = f"ws://127.0.0.1:{int(self.rt['screen_port'])}/stream?token={token}&fps={fps}"
+        error: Optional[Exception] = None
+        for _ in range(_UPSTREAM_ATTEMPTS):
+            try:
+                return await connect(url, max_size=_UPSTREAM_MAX_MESSAGE, compression=None,
+                                     proxy=None, open_timeout=5)
+            except Exception as exc:  # noqa: BLE001 — refused/handshake/timeout: retry
+                error = exc
+                await asyncio.sleep(_UPSTREAM_RETRY_S)
+        log.warning("hermuse computer: screen stream unreachable: %s", error)
+        return None
+
+    async def _from_upstream(self, upstream: Any) -> None:
+        from websockets.exceptions import ConnectionClosed
+
+        try:
+            async for message in upstream:
+                if isinstance(message, bytes):
+                    await self._send(data=message)
+                else:
+                    await self._send(text=message)
+        except ConnectionClosed:
+            pass
+
+    async def _from_viewer(self, upstream: Any) -> None:
+        from websockets.exceptions import ConnectionClosed
+
+        while True:
+            message = await self.ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+            text = message.get("text")
+            if text is None:
+                continue
+            try:
+                data = json.loads(text)
+            except ValueError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            try:
+                await self._handle(data, text, upstream)
+            except ConnectionClosed:
+                return
+
+    async def _handle(self, message: dict[str, Any], raw: str, upstream: Any) -> None:
+        kind = message.get("t")
+        if kind in _INPUT_TYPES:
+            if self._in_control():
+                await upstream.send(raw)
+        elif kind == "take":
+            self.lease_id = await asyncio.to_thread(computer_state.take_control, self.home)
+            await _broadcast_state()
+        elif kind == "release":
+            await asyncio.to_thread(computer_state.release_control, self.home, self.lease_id)
+            self.lease_id = None
+            await _broadcast_state()
+        elif kind == "mode":
+            mode = message.get("mode")
+            if mode in computer_runtime.MODES:
+                await self._backend_call(self.backend.set_mode, mode)
+        elif kind == "tab":
+            action, tab_id = message.get("action"), message.get("id")
+            if action in _TAB_ACTIONS and isinstance(tab_id, str) and tab_id:
+                call = self.backend.activate if action == "activate" else self.backend.close_tab
+                await self._backend_call(call, tab_id)
+
+    async def _backend_call(self, call: Any, argument: str) -> None:
+        try:
+            await asyncio.to_thread(call, self.rt, argument)
+        except Exception as exc:  # noqa: BLE001 — report in logs, keep the stream
+            log.warning("hermuse computer: %s(%s) failed: %s", call.__name__, argument, exc)
+            return
+        await _broadcast_state()
+
+    async def _state_loop(self) -> None:
+        while True:
+            await self.push_state()
+            await asyncio.sleep(_STATE_PERIOD_S)

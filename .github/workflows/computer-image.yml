@@ -1,0 +1,63 @@
+# Publishes the Hermuse computer image that the plugin's bootstrap pulls
+# (computer/runtime.py REGISTRY_IMAGE): ghcr.io/yellow-stick/hermuse-computer:<version>,
+# <version> = `version:` of hermes-plugin/hermuse/plugin.yaml, for linux/amd64 and
+# linux/arm64. When the tag is missing the plugin builds the image locally instead.
+# The package must be public (GitHub → Packages → hermuse-computer → settings) so
+# Hermes hosts can pull it anonymously.
+name: Computer image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hermes-plugin/hermuse/computer/image/**
+      - hermes-plugin/hermuse/plugin.yaml
+      - .github/workflows/computer-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: computer-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the plugin version
+        id: version
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' hermes-plugin/hermuse/plugin.yaml | tr -d "\"' ")"
+          if [ -z "$version" ]; then
+            echo "no version in hermes-plugin/hermuse/plugin.yaml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: hermes-plugin/hermuse/computer/image
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/yellow-stick/hermuse-computer:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Hermuse computer: Chromium + XFCE streamed by screend
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

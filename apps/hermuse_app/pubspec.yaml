@@ -32,6 +32,7 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   integration_test:
     sdk: flutter
+  web_socket: ^1.0.1
 
 flutter:
   uses-material-design: true
@@ -39,5 +40,7 @@ flutter:
     - assets/images/hermuse-avatar.webp
     # Hermes plugin installed on the local instance (tool/sync_plugin_assets.dart).
     - assets/hermes-plugin/hermuse/
+    - assets/hermes-plugin/hermuse/computer/
+    - assets/hermes-plugin/hermuse/computer/image/
     - assets/hermes-plugin/hermuse/dashboard/
     - assets/hermes-plugin/hermuse/skills/hermuse/

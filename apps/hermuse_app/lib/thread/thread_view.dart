@@ -199,6 +199,7 @@ final class ThreadViewState extends State<ThreadView> {
                             selectedOfferId: widget.selectedOffers[message.id],
                             controller: widget.controller,
                             columnWidth: columnWidth,
+                            threadTitle: widget.thread.title,
                           ),
                         ),
                       ),

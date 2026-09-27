@@ -12,6 +12,7 @@ import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'add_instance.dart';
 import 'brand.dart';
+import 'computer_viewer.dart';
 import 'connections.dart';
 import 'feed.dart';
 import 'goals.dart';
@@ -484,24 +485,42 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       onCancelReply: controller.cancelReply,
     );
 
+    Component rail() =>
+        div(key: const ValueKey('rail'), classes: 'hermuse-rail-slot', [
+          HermuseRail(
+            instances: instances,
+            activeInstanceId: instance.id,
+            onSelectInstance: (id) => unawaited(_openInstance(id)),
+            onAddInstance: () =>
+                setState(() => _overlay = _Overlay.addInstance),
+            onOpenInstances: () =>
+                setState(() => _overlay = _Overlay.instances),
+            destination: _destination,
+            onDestination: (target) => setState(() => _destination = target),
+            chatsPanelOpen: chatsOpen,
+            onToggleChatsPanel: () =>
+                setState(() => _sidebarOverride = !chatsOpen),
+          ),
+        ]);
+
+    // The agent's computer takes everything right of the rail.
+    if (state.computerOpen) {
+      return div(classes: 'hermuse-shell', [
+        div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
+        rail(),
+        HermuseComputerViewer(
+          key: ValueKey('computer:${instance.id}'),
+          controller: controller,
+          instanceId: instance.id,
+        ),
+      ]);
+    }
+
     // Keys keep each column's DOM (and the panel's state) when a column
     // before it appears or goes.
     return div(classes: 'hermuse-shell', [
       div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
-      div(key: const ValueKey('rail'), classes: 'hermuse-rail-slot', [
-        HermuseRail(
-          instances: instances,
-          activeInstanceId: instance.id,
-          onSelectInstance: (id) => unawaited(_openInstance(id)),
-          onAddInstance: () => setState(() => _overlay = _Overlay.addInstance),
-          onOpenInstances: () => setState(() => _overlay = _Overlay.instances),
-          destination: _destination,
-          onDestination: (target) => setState(() => _destination = target),
-          chatsPanelOpen: chatsOpen,
-          onToggleChatsPanel: () =>
-              setState(() => _sidebarOverride = !chatsOpen),
-        ),
-      ]),
+      rail(),
       if (chatsOpen)
         HermuseSidebar(
           key: const ValueKey('chats-panel'),
@@ -616,6 +635,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           tab: _tab,
           onTab: (t) => setState(() => _tab = t),
           onClose: () => setState(() => _panelOverride = false),
+          onOpenComputer: controller.openComputer,
         ),
       if (profileOpen)
         div(

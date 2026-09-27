@@ -1,12 +1,14 @@
 """``hermes hermuse ...`` CLI subcommands (registered via ``ctx.register_cli_command``).
 
 Verbs: ``status`` (default), ``enable`` (register cron jobs), ``disable``
-(remove them), ``doctor`` (home/store/cron diagnostics).
+(remove them), ``doctor`` (home/store/cron diagnostics), ``computer
+setup|status|start|stop`` (the agent's computer; JSON on stdout).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -103,11 +105,52 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+# ``computer setup`` exit codes, read by the Hermuse desktop installer.
+_COMPUTER_EXIT = {"building": 0, "stopped": 0, "running": 0, "docker_missing": 3, "daemon_down": 4}
+
+
+def _computer_exit(status: dict) -> int:
+    return _COMPUTER_EXIT.get(status.get("state"), 1)
+
+
+def _cmd_computer(args: argparse.Namespace) -> int:
+    from .computer import runtime
+    from .computer.setup import setup
+
+    action = getattr(args, "computer_command", None) or "status"
+    home = _home()
+    if action == "setup":
+        result = setup(home)
+        print(json.dumps(result, indent=2))
+        return _computer_exit(result)
+    backend = runtime.get_runtime()
+    if action == "status":
+        result = backend.status(home)
+        print(json.dumps(result, indent=2))
+        return _computer_exit(result)
+    try:
+        if action == "start":
+            rt = backend.ensure_running(home)
+            print(json.dumps({k: rt.get(k) for k in ("container", "cdp_port", "screen_port",
+                                                      "image", "mode")}, indent=2))
+            return 0
+        if action == "stop":
+            backend.stop(home)
+            print(json.dumps(backend.status(home), indent=2))
+            return 0
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"unknown computer subcommand: {action}", file=sys.stderr)
+    return 2
+
+
 _COMMANDS = {
     "status": _cmd_status,
     "enable": _cmd_enable,
     "disable": _cmd_disable,
     "doctor": _cmd_doctor,
+    "computer": _cmd_computer,
 }
 
 
@@ -117,6 +160,14 @@ def register_cli(parser: argparse.ArgumentParser) -> None:
     subs.add_parser("enable", help="Register (or refresh) the Hermuse cron jobs")
     subs.add_parser("disable", help="Remove the Hermuse cron jobs")
     subs.add_parser("doctor", help="Diagnose the Hermuse store and cron wiring")
+    computer = subs.add_parser("computer", help="The agent's computer (Docker browser + desktop)")
+    computer_subs = computer.add_subparsers(dest="computer_command", required=False)
+    computer_subs.add_parser(
+        "setup", help="Point Hermes' browser tools at the computer and bootstrap it "
+                      "(Docker install when possible, image pull or build) in the background")
+    computer_subs.add_parser("status", help="Show the computer state (default)")
+    computer_subs.add_parser("start", help="Start the computer container")
+    computer_subs.add_parser("stop", help="Stop the computer container")
     parser.set_defaults(func=dispatch)
 
 

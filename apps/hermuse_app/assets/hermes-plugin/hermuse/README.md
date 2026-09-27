@@ -1,24 +1,38 @@
 # Hermuse plugin for Hermes
 
 Product layer on top of Hermes Agent: **Feed, Ideas, Goals, Library**
-(artifacts + system files), **Reflections**, and **proactive preferences**.
-Data lives as human-readable Markdown + JSON under `HERMES_HOME/hermuse/` so
-the user can read and edit it with any tool.
+(artifacts + system files), **Reflections**, **proactive preferences**, and the
+agent's **computer** (a Docker browser + desktop the user can watch and take
+over from Hermuse). Data lives as human-readable Markdown + JSON under
+`HERMES_HOME/hermuse/` so the user can read and edit it with any tool.
 
-Requires Hermes `>=0.21,<0.22` (see `requires_hermes` in `plugin.yaml`).
+Requires Hermes `>=0.21.5,<0.22` (see `requires_hermes` in `plugin.yaml`).
 
 ## Layout
 
 ```text
 hermes-plugin/hermuse/
-├── plugin.yaml            # agent-plugin manifest (kind: standalone, provides_tools)
-├── __init__.py            # register(ctx): 6 tools + skill + `hermes hermuse` CLI
+├── plugin.yaml            # agent-plugin manifest (kind: standalone, provides_tools,
+│                          #   provides_hooks, provides_browser_providers)
+├── __init__.py            # register(ctx): 6 tools + skill + `hermes hermuse` CLI +
+│                          #   `hermuse` browser provider + computer hooks + live
+│                          #   mount of the dashboard routes (no restart after install)
 ├── store.py               # stdlib-only file store (shared by tools + dashboard backend)
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
 ├── cron_specs.py          # feed/ideas/goals/reflection job specs + idempotent registration
-├── plugin_cli.py          # `hermes hermuse status|enable|disable|doctor`
+├── plugin_cli.py          # `hermes hermuse status|enable|disable|doctor|computer`
 ├── skills/hermuse/SKILL.md  # skill `hermuse:hermuse`: when to call each tool
+├── computer/              # the agent's computer (see "The agent's computer")
+│   ├── runtime.py         # ComputerRuntime seam + DockerComputerRuntime
+│   ├── bootstrap.py       # detached Docker install + image pull (or local build)
+│   ├── state.py           # stdlib-only state files + Take control lease + lifecycle lock
+│   ├── provider.py        # `hermuse` BrowserProvider (CDP URL of the computer's Chromium)
+│   ├── hooks.py           # pre_tool_call gate/readiness guard, transform_tool_result snapshots
+│   ├── setup.py           # Hermes browser config + starts the bootstrap
+│   └── image/             # Dockerfile, entrypoint.sh, cdp_relay.py (CDP 9222→9223),
+│                          #   screend.py (JPEG stream + input); published to GHCR by
+│                          #   .github/workflows/computer-image.yml
 ├── dashboard/
 │   ├── manifest.json      # dashboard manifest (hidden tab, api: plugin_api.py)
 │   ├── plugin_api.py      # FastAPI router mounted at /api/plugins/hermuse/
@@ -27,6 +41,35 @@ hermes-plugin/hermuse/
 ```
 
 ## Install
+
+### One click from Hermuse (Hermes on a server)
+
+The Hermuse app installs the plugin into a running Hermes dashboard through
+Hermes' own plugin API (session token or dashboard login), with no shell on
+the server:
+
+1. `POST /api/dashboard/agent-plugins/install`
+   `{"identifier": "yellow-stick/hermuse-agent/hermes-plugin/hermuse", "enable": true, "force": false}`.
+   Hermes' install scan rates the plugin **caution** because it can install
+   Docker with `sudo` (see "The agent's computer"), so this first call answers
+   `400` with a `detail` mentioning `caution verdict`; after the user confirms,
+   the app repeats it with `"force": true` (which also replaces an existing
+   install). A `detail` containing `already exists` means it is installed:
+   `POST /api/dashboard/agent-plugins/hermuse/enable` instead.
+2. Enabling loads the plugin into the dashboard process, and `register(ctx)`
+   mounts `/api/plugins/hermuse/*` there at once (Hermes itself only mounts
+   plugin backends when the dashboard starts). The app polls
+   `GET /api/plugins/hermuse/files` until it stops answering `404`; if it never
+   does, restarting the dashboard (`systemctl --user restart hermes-dashboard`,
+   or re-running `hermes dashboard`) finishes the install.
+3. `POST /api/plugins/hermuse/cron/enable`, then
+   `POST /api/plugins/hermuse/computer/setup`, which configures Hermes and starts
+   the computer's background bootstrap: `/computer/status` reports `building`
+   (`Installing Docker…`, `Downloading the computer image…` or
+   `Building the computer image…`) until the computer is `stopped` (ready to
+   start).
+
+### By hand
 
 ```bash
 # 1. Copy the plugin into the user plugins dir (tests/ is inert, may be excluded).
@@ -40,12 +83,16 @@ hermes plugins enable hermuse
 #    paused job stays paused.
 hermes hermuse enable
 
-# 4. Verify.
+# 4. Set up the agent's computer (see "The agent's computer").
+hermes hermuse computer setup
+
+# 5. Verify.
 hermes hermuse doctor
 hermes hermuse status
 ```
 
-Restart the gateway/dashboard after enabling so the new routes load.
+If a dashboard that was already running still answers `404` on
+`/api/plugins/hermuse/…` after enabling, restart it so the routes load.
 Uninstall: `hermes hermuse disable && hermes plugins disable hermuse`, then
 delete `~/.hermes/plugins/hermuse` (your data under `~/.hermes/hermuse/` is
 left untouched).
@@ -67,9 +114,10 @@ tool and to honour `PREFERENCES.md` before anything proactive.
 
 ## REST reference (auth: Hermes' existing `/api/` gate)
 
-Base: `/api/plugins/hermuse/`. All auth behaviour (session token header
+Base: `/api/plugins/hermuse/`. All HTTP auth behaviour (session token header
 `X-Hermes-Session-Token`, enabled-plugin gating) is enforced by Hermes core;
-this router adds none of its own.
+this router adds none of its own. The one WebSocket (`/computer/ws`, which
+that gate does not cover) takes a single-use ticket from `POST /computer/ticket`.
 
 | Method | Path | Body → Result |
 | --- | --- | --- |
@@ -96,6 +144,13 @@ this router adds none of its own.
 | `GET` | `/cron` | → `{"jobs": [{key, name, schedule, registered, job_id, enabled, next_run_at}]}` |
 | `POST` | `/cron/enable` | register/refresh the 4 jobs → `{"jobs": […]}` |
 | `POST` | `/cron/disable` | remove the 4 jobs → `{"removed": […]}` |
+| `GET` | `/computer/status` | → `{state, detail, control: agent\|human, mode: browser\|desktop}` |
+| `POST` | `/computer/setup` | configure Hermes + start the background bootstrap when Docker or the image is missing → `{state, detail}` |
+| `POST` | `/computer/start` / `/computer/stop` | → status shape; start failure → `409 {detail}` |
+| `GET` | `/computer/thumbnail` | → 640-wide JPEG of the screen / `409` when not running |
+| `GET` | `/computer/snapshots/{tool_call_id}` | → JPEG saved after that browser call / `400` bad id / `404` |
+| `POST` | `/computer/ticket` | → `{"ticket": …}` (30 s, single use) |
+| `WS` | `/computer/ws?ticket=&fps=1..10` | live stream + Take control (see below); closes `4403` bad origin, `4401` bad ticket, `4001` computer unavailable / stream ended |
 
 Shapes:
 
@@ -120,7 +175,9 @@ hermuse/
 ├── ideas/<id>.md  +  index.json
 ├── goals/<id>.md  +  index.json  # .md carries the appended timeline too
 ├── artifacts/files/<id>/<file>  +  index.json
-└── reflections/<date>.md  +  index.json
+├── reflections/<date>.md  +  index.json
+└── computer/                 # runtime.json, control.json, build.json + build.log,
+                              #   snapshots/<tool_call_id>.jpg (newest 200)
 ```
 
 Managed root files are created with sensible defaults on first load and never
@@ -145,6 +202,73 @@ is idempotent. Installing the plugin never starts background work on its own;
 registration is always an explicit `hermes hermuse enable` (or
 `POST /cron/enable`).
 
+## The agent's computer
+
+Runs on **Docker** on the Hermes host (Docker Engine on Linux, Docker Desktop
+on macOS/Windows). Each Hermes profile gets one long-lived container
+`hermuse-computer-<profile>` (`<profile>` = last segment of `HERMES_HOME`
+reduced to `[a-z0-9-]`) from the image `hermuse-computer:0.2.0`: Chromium with
+CDP on an XFCE desktop, streamed as JPEG frames by `screend` (X screen grab +
+Pillow JPEG, no ffmpeg). Its home (`/home/hermuse`: logins, cookies) is the
+Docker volume `hermuse-computer-<profile>-home`; ports are published on
+`127.0.0.1` only.
+
+```bash
+hermes hermuse computer setup   # config + background bootstrap; JSON on stdout
+hermes hermuse computer status  # {state, detail}
+hermes hermuse computer start   # create/start the container, wait for Chromium
+hermes hermuse computer stop
+```
+
+`setup` sets `browser.cloud_provider: hermuse`,
+`browser.auto_local_for_private_urls: false` and `browser.backend: off` (Hermes'
+built-in `browser_*` tools drive the computer's Chromium), then starts the
+**bootstrap** when something is missing: one detached process
+(`computer/bootstrap.py`, output in `computer/build.log`, pid and current
+`step` in `computer/build.json`) that
+
+1. installs Docker when it is missing, on Linux only and only when
+   `sudo -n true` succeeds: `apt-get install docker.io` (or the
+   get.docker.com script without apt), `systemctl enable --now docker`, and
+   adds the Hermes user to the `docker` group;
+2. pulls `ghcr.io/yellow-stick/hermuse-computer:0.2.0` (linux/amd64 and
+   linux/arm64, published by `.github/workflows/computer-image.yml`) and tags it
+   `hermuse-computer:0.2.0`;
+3. builds the image locally from `computer/image/` when the pull fails.
+
+Hermes processes started before the user joined the `docker` group reach the
+Docker socket through `sg docker -c …` until they restart. Re-running `setup`
+retries a failed bootstrap and does nothing while one runs or once the image
+exists. Exit codes: `0` for `building`/`stopped`/`running`, `3`
+`docker_missing`, `4` `daemon_down`, `1` otherwise (`image_missing`, `error`).
+
+States (`{state, detail}`), in the order they are checked:
+
+| State | Detail |
+| --- | --- |
+| `building` | the bootstrap runs: `Installing Docker…`, `Downloading the computer image…` or `Building the computer image…` |
+| `docker_missing` | the command to run when Hermuse cannot install Docker itself: on Linux `curl -fsSL https://get.docker.com \| sudo sh && sudo usermod -aG docker <user>`, elsewhere `Install Docker Desktop: https://docs.docker.com/get-started/get-docker/` |
+| `daemon_down` | the first line of the failing `docker version` |
+| `error` / `image_missing` | the image is absent: `Computer image build failed: <last line of build.log>` after a failed pull and build, otherwise not prepared yet |
+| `stopped` / `running` | the container is startable (absent, created or exited) / up |
+| `error` | any other Docker failure |
+
+Before every `browser_*` call the
+`pre_tool_call` hook blocks the tool while the user holds **Take control**, and
+starts a stopped computer (or explains why it cannot) so the agent never falls
+back to a browser the user cannot see. After every browser call the screen is
+saved to `snapshots/<tool_call_id>.jpg` for the chat's Browser card.
+
+Stream protocol (`/computer/ws`): binary messages are JPEG frames; text
+messages are `{"t":"geometry","w","h","mode"}` and
+`{"t":"state","control","mine","mode","tabs":[{id,url,title,active}]}`. The
+client sends `{"t":"take"}` / `{"t":"release"}`, `{"t":"mode","mode"}`,
+`{"t":"tab","action":"activate"|"close","id"}`, and input in frame
+coordinates — `move {x,y}`, `down`/`up {x,y,b}`, `wheel {x,y,dy}`,
+`key {k: X keysym, a: down|up}`, `text {s}` — which only reaches the computer
+from the viewer holding the lease (the latest `take` wins; closing the socket
+hands control back).
+
 ## Tests
 
 ```bash
@@ -152,6 +276,14 @@ cd hermes-plugin/hermuse
 ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
 
-38 tests: store writes/round-trips, idempotent defaults that never clobber
+Covers store writes/round-trips, idempotent defaults that never clobber
 edits, REST routes + `files/` traversal rejection, real-backend cron
-registration idempotence, and entry-point wiring (tools + skill + CLI).
+registration idempotence, entry-point wiring (tools + skill + CLI + browser
+provider + hooks) and the live mount of the routes into a running dashboard,
+and the computer: Take control lease, `pre_tool_call` gate and readiness
+guard, snapshots, Docker states against a scripted `docker` (incl. the
+`sg docker` wrapper), the bootstrap (Docker install through `sudo`, pull,
+local-build fallback and its reported error) run for real against a fake
+`docker` executable, the inter-process lifecycle lock and global deadlines,
+the provider's fail-safe session, and the ticketed WebSocket bridge against a
+fake `screend`.
