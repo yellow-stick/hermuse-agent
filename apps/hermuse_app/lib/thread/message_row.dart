@@ -324,6 +324,8 @@ final class _BlockView extends StatelessWidget {
         onOpen: controller.openComputer,
       ),
       NoticeBlock() => _NoticeView(block: block),
+      WaitBlock(:final text) => _WaitView(text: text),
+      CommandBlock() => _CommandView(block: block),
       FlightResultsBlock() => const SizedBox.shrink(),
     };
   }
@@ -444,6 +446,103 @@ final class _NoticeView extends StatelessWidget {
       style: YsType.small.flutter.copyWith(
         color: block.isError ? palette.errorColor : palette.contentMutedColor,
       ),
+    );
+  }
+}
+
+/// What a pending turn waits on: an API retry backoff, a slow provider.
+final class _WaitView extends StatelessWidget {
+  const _WaitView({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 18,
+            child: Center(child: YsSpinner(size: 12)),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              style: YsType.small.flutter.copyWith(
+                color: palette.contentMutedColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A slash command run on the server: the command, then its answer.
+final class _CommandView extends StatelessWidget {
+  const _CommandView({required this.block});
+
+  final CommandBlock block;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final small = YsType.small.flutter;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          label: block.running ? 'Running ${block.command}' : null,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 18,
+                child: Center(
+                  child: block.running
+                      ? const YsSpinner(size: 12)
+                      : YsIconWidget(
+                          block.isError ? YsIcon.close : YsIcon.check,
+                          size: 12,
+                          color: block.isError
+                              ? palette.errorColor
+                              : palette.successColor,
+                        ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  block.command,
+                  style: small.copyWith(
+                    color: palette.contentMutedColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (block.output.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            block.output,
+            style: small.copyWith(
+              color: block.isError ? palette.errorColor : palette.contentColor,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

@@ -150,6 +150,10 @@ class MessageRow extends StatelessComponent {
                         BrowserBlock() => .fragment([]),
                         NoticeBlock(:final text, :final isError) =>
                           HermuseNotice(text: text, isError: isError),
+                        WaitBlock(:final text) => HermuseWait(text: text),
+                        CommandBlock command => HermuseCommand(
+                          command: command,
+                        ),
                         FlightResultsBlock(:final title, :final offers) => div(
                           classes: 'hermuse-flights',
                           [
@@ -324,6 +328,23 @@ class MessageRow extends StatelessComponent {
         color: .variable('--content-muted'),
         raw: {'overflow-wrap': 'break-word'},
       ),
+      // Wait line of a pending turn (retry backoff, slow provider): wraps.
+      css('.hermuse-wait-text').styles(raw: {'overflow-wrap': 'break-word'}),
+      // Slash command row: the command over the server's answer, which
+      // keeps its line breaks (tables, lists).
+      css('.hermuse-command')
+          .styles(display: .flex, flexDirection: .column, gap: .all(4.px)),
+      css('.hermuse-command-name')
+          .styles(fontWeight: .w500, raw: {'overflow-wrap': 'anywhere'}),
+      css('.hermuse-tool-dot-error')
+          .styles(backgroundColor: .variable('--primary-2')),
+      css('.hermuse-command-output').styles(
+        margin: .zero,
+        fontSize: 13.px,
+        lineHeight: 18.px,
+        color: .variable('--content'),
+        raw: {'overflow-wrap': 'break-word', 'white-space': 'pre-wrap'},
+      ),
       css('.hermuse-notice-error').styles(color: .variable('--primary-2')),
       // Reaction chip overlapping the bubble's bottom edge.
       css('.hermuse-bubble-wrap').styles(
@@ -465,6 +486,53 @@ class HermuseNotice extends StatelessComponent {
     classes: isError ? 'hermuse-notice hermuse-notice-error' : 'hermuse-notice',
     [.text(text)],
   );
+}
+
+/// What a pending turn waits on (an API retry backoff, a slow provider):
+/// a pulsing dot and the line, announced as it changes.
+class HermuseWait extends StatelessComponent {
+  const HermuseWait({required this.text, super.key});
+
+  final String text;
+
+  @override
+  Component build(BuildContext context) => div(
+    classes: 'hermuse-tool',
+    attributes: {'role': 'status'},
+    [
+      div(classes: 'hermuse-tool-dot hermuse-tool-dot-running', []),
+      span(classes: 'hermuse-wait-text', [.text(text)]),
+    ],
+  );
+}
+
+/// A slash command run on the server: the command, then its answer.
+class HermuseCommand extends StatelessComponent {
+  const HermuseCommand({required this.command, super.key});
+
+  final CommandBlock command;
+
+  @override
+  Component build(BuildContext context) => div(classes: 'hermuse-command', [
+    div(classes: 'hermuse-tool', [
+      div(
+        classes: command.running
+            ? 'hermuse-tool-dot hermuse-tool-dot-running'
+            : command.isError
+            ? 'hermuse-tool-dot hermuse-tool-dot-error'
+            : 'hermuse-tool-dot',
+        [],
+      ),
+      span(classes: 'hermuse-command-name', [.text(command.command)]),
+    ]),
+    if (command.output.isNotEmpty)
+      p(
+        classes: command.isError
+            ? 'hermuse-command-output hermuse-notice-error'
+            : 'hermuse-command-output',
+        [.text(command.output)],
+      ),
+  ]);
 }
 
 /// Choice block: prompt + dashed options + optional custom answer field.

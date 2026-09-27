@@ -370,6 +370,318 @@ void main() {
     },
   );
 
+  test(
+    'an API retry shows its wait on the pending turn until content streams',
+    () async {
+      final chat = await open();
+      await chat.send('hello');
+      List<Block> turn() => chat.state.activeThread.messages.last.blocks;
+      void status(String text) => fake.emitEvent(
+        'thinking.delta',
+        sessionId: 'live-1',
+        payload: {'text': text},
+      );
+
+      fake.emitEvent('message.start', sessionId: 'live-1');
+      status('(◕‿◕) pondering...');
+      status('');
+      expect(turn(), isEmpty, reason: 'spinner chatter is not a status');
+
+      // agent/turn_recovery.py::compute_error_backoff after a 429.
+      status('⏳ rate limited — resets in ~13m, retrying in 600s (attempt 1/3)');
+      expect(
+        (turn().single as WaitBlock).text,
+        'Retrying in 10 min (attempt 1/3) — rate limited, resets in ~13m',
+      );
+
+      // The next attempt starts: its spinner frame retires the wait.
+      status('(⌐■_■) computing...');
+      expect(turn(), isEmpty);
+
+      status('⏳ waiting on provider — retrying in 45s (attempt 2/3)');
+      expect(
+        (turn().single as WaitBlock).text,
+        'Retrying in 45s (attempt 2/3) — waiting on provider',
+      );
+      status('⚠ no output from provider for 900s — reconnecting...');
+      expect(
+        (turn().single as WaitBlock).text,
+        'No output from provider for 900s — reconnecting...',
+      );
+
+      fake.emitEvent(
+        'message.delta',
+        sessionId: 'live-1',
+        payload: {'text': 'Hi'},
+      );
+      expect(turn().single, isA<TextBlock>());
+      expect(chat.state.activeThread.messages.last.plainText, 'Hi');
+    },
+  );
+
+  test('a turn ending during a retry wait drops the wait line', () async {
+    final chat = await open();
+    const retry = {
+      'text': '⏳ waiting on provider — retrying in 600s (attempt 1/3)',
+    };
+    Iterable<WaitBlock> waits() => chat.state.activeThread.messages
+        .expand((m) => m.blocks)
+        .whereType<WaitBlock>();
+
+    await chat.send('hello');
+    fake
+      ..emitEvent('message.start', sessionId: 'live-1')
+      ..emitEvent('thinking.delta', sessionId: 'live-1', payload: retry);
+    expect(waits(), hasLength(1));
+    await chat.interrupt();
+    fake.emitEvent(
+      'message.complete',
+      sessionId: 'live-1',
+      payload: {
+        'text':
+            'Operation interrupted: retrying API call after error '
+            '(retry 1/3).',
+        'status': 'interrupted',
+      },
+    );
+    expect(waits(), isEmpty);
+    expect(
+      (chat.state.activeThread.messages.last.blocks.last as NoticeBlock).text,
+      'Stopped',
+    );
+
+    await chat.send('again');
+    fake
+      ..emitEvent('message.start', sessionId: 'live-1')
+      ..emitEvent('thinking.delta', sessionId: 'live-1', payload: retry)
+      ..emitEvent(
+        'error',
+        sessionId: 'live-1',
+        payload: {'message': 'provider down'},
+      );
+    expect(waits(), isEmpty);
+    expect(chat.state.busy, isFalse);
+  });
+
+  group('slash commands', () {
+    setUp(() {
+      fake.on(
+        'commands.catalog',
+        (_) => {
+          'pairs': [
+            ['/model', 'Switch model'],
+            ['/goal', 'Set a goal'],
+            ['/pr-triage', 'Triage a pull request'],
+          ],
+          'canon': {'/model': '/model', '/m': '/model', '/goal': '/goal'},
+          'skills': {
+            '/pr-triage': {'usage': 0, 'origin': 'local'},
+          },
+          'skill_count': 1,
+          'warning': '',
+        },
+      );
+    });
+
+    CommandBlock lastRow(ChatController chat) =>
+        chat.state.activeThread.messages.last.blocks.single as CommandBlock;
+
+    test('a catalog command runs on the server as a notice row', () async {
+      fake.on(
+        'slash.exec',
+        (_) => {'output': 'Switched to claude-sonnet-4-6 (anthropic)'},
+      );
+      final chat = await open();
+      final before = chat.state.activeThread.messages.length;
+      final seen = <CommandBlock>[];
+      chat.addListener(() {
+        if (chat.state.activeThread.messages.last.blocks.lastOrNull
+            case final CommandBlock row) {
+          seen.add(row);
+        }
+      });
+
+      await chat.send('/model claude-sonnet-4-6');
+      expect(fake.calls.skip(1).map((c) => [c.method, c.params]), [
+        [
+          'commands.catalog',
+          {'session_id': 'live-1'},
+        ],
+        [
+          'slash.exec',
+          {'session_id': 'live-1', 'command': 'model claude-sonnet-4-6'},
+        ],
+      ]);
+      expect(seen.first.running, isTrue, reason: 'shown before the answer');
+      final messages = chat.state.activeThread.messages;
+      expect(messages, hasLength(before + 1), reason: 'no user bubble');
+      expect(messages.last.author, Author.agent);
+      final row = lastRow(chat);
+      expect(
+        (row.command, row.output, row.running, row.isError),
+        (
+          '/model claude-sonnet-4-6',
+          'Switched to claude-sonnet-4-6 (anthropic)',
+          false,
+          false,
+        ),
+      );
+      expect(chat.state.busy, isFalse);
+
+      // The switch announces the session's new model: the picker follows.
+      fake.emitEvent(
+        'session.info',
+        sessionId: 'live-1',
+        payload: {'model': 'claude-sonnet-4-6', 'provider': 'anthropic'},
+      );
+      expect(
+        chat.state.model,
+        const ChatModel(provider: 'anthropic', model: 'claude-sonnet-4-6'),
+      );
+    });
+
+    test('a new chat gets its session before its first command', () async {
+      fake.on('slash.exec', (_) => {'output': 'Current model: glm-5'});
+      final chat = await open(sessionId: '');
+      await chat.send('/model');
+      expect(fake.calls.map((c) => (c.method, c.params['session_id'])), [
+        ('commands.catalog', null),
+        ('session.create', null),
+        ('slash.exec', 'live-new'),
+      ]);
+      expect(chat.state.activeThreadId, 'stored-new');
+      expect(lastRow(chat).output, 'Current model: glm-5');
+    });
+
+    test('text the catalog does not know goes to the agent', () async {
+      final chat = await open();
+      await chat.send('/shrug hello');
+      expect(fake.calls.last.method, 'prompt.submit');
+      expect(fake.calls.last.params['text'], '/shrug hello');
+      final last = chat.state.activeThread.messages.last;
+      expect((last.author, last.plainText), (Author.user, '/shrug hello'));
+
+      // A path is prose, not a command: no catalog lookup.
+      final calls = fake.calls.length;
+      await chat.send('/etc/hosts is empty');
+      expect(fake.calls.skip(calls).map((c) => c.method), ['prompt.submit']);
+
+      // Without a catalog nothing is known to be a command.
+      fake.on(
+        'commands.catalog',
+        (_) => throw const FakeRpcError(5020, 'catalog failed'),
+      );
+      await chat.send('/model gpt-5');
+      expect(fake.calls.last.params['text'], '/model gpt-5');
+    });
+
+    test(
+      'a skill refused by slash.exec runs through command.dispatch',
+      () async {
+        fake
+          ..on(
+            'slash.exec',
+            (_) => throw const FakeRpcError(
+              4018,
+              'skill command: use command.dispatch for /pr-triage',
+            ),
+          )
+          ..on(
+            'command.dispatch',
+            (_) => {
+              'type': 'skill',
+              'name': 'pr-triage',
+              'message': '[skill instructions] triage PR 42',
+              'display': '/pr-triage 42',
+            },
+          );
+        final chat = await open();
+        await chat.send('/pr-triage 42');
+        expect(fake.calls.skip(1).map((c) => c.method), [
+          'commands.catalog',
+          'slash.exec',
+          'command.dispatch',
+          'prompt.submit',
+        ]);
+        expect(fake.calls.elementAt(3).params, {
+          'name': 'pr-triage',
+          'arg': '42',
+          'session_id': 'live-1',
+        });
+        expect(
+          fake.calls.last.params['text'],
+          '[skill instructions] triage PR 42',
+        );
+        // The bubble shows the invocation, never the skill's body.
+        final last = chat.state.activeThread.messages.last;
+        expect((last.author, last.plainText), (Author.user, '/pr-triage 42'));
+        expect(
+          chat.state.activeThread.messages
+              .expand((m) => m.blocks)
+              .whereType<CommandBlock>(),
+          isEmpty,
+        );
+        expect(chat.state.busy, isTrue);
+      },
+    );
+
+    test('a command that starts a turn keeps its notice', () async {
+      fake.on(
+        'slash.exec',
+        (_) => {
+          'type': 'send',
+          'notice': '⊙ Goal set (20-turn budget): ship it',
+          'message': 'ship it',
+        },
+      );
+      final chat = await open();
+      await chat.send('/goal ship it');
+      final messages = chat.state.activeThread.messages;
+      final row = messages[messages.length - 2].blocks.single as CommandBlock;
+      expect(row.output, '⊙ Goal set (20-turn budget): ship it');
+      expect(
+        (messages.last.author, messages.last.plainText),
+        (Author.user, 'ship it'),
+      );
+      expect(fake.calls.last.params, {
+        'session_id': 'live-1',
+        'text': 'ship it',
+      });
+    });
+
+    test('an alias runs its target with the same argument', () async {
+      final commands = <Object?>[];
+      fake.on('slash.exec', (params) {
+        commands.add(params['command']);
+        return params['command'] == 'm gpt-5'
+            ? {'type': 'alias', 'target': 'model'}
+            : {'output': 'Switched to gpt-5'};
+      });
+      final chat = await open();
+      await chat.send('/m gpt-5');
+      expect(commands, ['m gpt-5', 'model gpt-5']);
+      expect(lastRow(chat).output, 'Switched to gpt-5');
+    });
+
+    test('a failed command shows its error without re-dispatching', () async {
+      fake.on(
+        'slash.exec',
+        (_) => throw const FakeRpcError(5030, 'slash worker timed out'),
+      );
+      final chat = await open();
+      await chat.send('/model gpt-5');
+      expect(
+        fake.calls.map((c) => c.method),
+        isNot(contains('command.dispatch')),
+      );
+      final row = lastRow(chat);
+      expect(
+        (row.output, row.isError, row.running),
+        ('slash worker timed out', true, false),
+      );
+    });
+  });
+
   test('reply quotes the target; blank input is ignored', () async {
     final chat = await open();
     var notified = 0;

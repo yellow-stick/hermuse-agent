@@ -120,6 +120,41 @@ final class NoticeBlock extends Block {
   final bool isError;
 }
 
+/// What a pending turn is waiting on (an API retry backoff, a slow
+/// provider), last in its bubble until content streams or the turn ends.
+final class WaitBlock extends Block {
+  const WaitBlock(this.text);
+  final String text;
+}
+
+/// A slash command run on the server (`/model …`) and what it answered: a
+/// row of the thread, not a message to the agent.
+final class CommandBlock extends Block {
+  const CommandBlock({
+    required this.command,
+    this.output = '',
+    this.running = true,
+    this.isError = false,
+  });
+
+  /// The command as typed.
+  final String command;
+
+  /// The server's answer once done.
+  final String output;
+  final bool running;
+
+  /// [output] is the error that stopped the command.
+  final bool isError;
+
+  CommandBlock done(String output, {bool isError = false}) => CommandBlock(
+    command: command,
+    output: output,
+    running: false,
+    isError: isError,
+  );
+}
+
 /// A structured card listing flight offers.
 final class FlightResultsBlock extends Block {
   const FlightResultsBlock({required this.title, required this.offers});
@@ -219,13 +254,14 @@ final class Message {
     replyToId: replyToId,
   );
 
-  /// The answer as readable plain text (copy, reply quotes): reasoning and
-  /// tool activity are not part of what was said.
+  /// The answer as readable plain text (copy, reply quotes): reasoning,
+  /// tool activity and a pending turn's wait are not part of what was said.
   String get plainText => [
     for (final block in blocks)
       if (block is! ReasoningBlock &&
           block is! ToolCallBlock &&
-          block is! BrowserBlock)
+          block is! BrowserBlock &&
+          block is! WaitBlock)
         switch (block) {
           TextBlock(:final text) => text,
           BulletsBlock(:final items) => items.map((i) => '• $i').join('\n'),
@@ -242,6 +278,9 @@ final class Message {
             summary.isEmpty ? name : '$name: $summary',
           BrowserBlock(:final step) => step,
           NoticeBlock(:final text) => text,
+          WaitBlock(:final text) => text,
+          CommandBlock(:final command, :final output) =>
+            output.isEmpty ? command : '$command\n$output',
         },
   ].join('\n\n');
 }
