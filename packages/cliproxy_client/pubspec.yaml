@@ -1,0 +1,15 @@
+name: cliproxy_client
+description: CLIProxyAPI management client — subscription OAuth bridge for Hermes. Pure Dart.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  http: ^1.6.0
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.26.0

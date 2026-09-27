@@ -1,0 +1,15 @@
+{
+  "name": "hermuse",
+  "label": "Hermuse",
+  "description": "Hermuse product layer: Feed, Ideas, Goals, Library artifacts, Reflections and proactive preferences (backend API; UI served by the Hermuse app).",
+  "icon": "Sparkles",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/hermuse",
+    "position": "end",
+    "hidden": true
+  },
+  "slots": [],
+  "entry": "index.js",
+  "api": "plugin_api.py"
+}

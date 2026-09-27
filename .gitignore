@@ -1,0 +1,15 @@
+.dart_tool/
+build/
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.DS_Store
+coverage/
+
+# Local renders and references (tests, brand previews, design reference
+# captures with personal data). Regenerated on demand, never committed.
+.artifacts/
+
+# Python caches (Hermes plugin)
+__pycache__/
+.pytest_cache/

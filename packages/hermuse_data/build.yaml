@@ -1,0 +1,15 @@
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          databases:
+            hermuse: lib/src/database.dart
+          schema_dir: drift_schemas/
+          test_dir: test/drift/
+          sql:
+            dialect: sqlite
+            options:
+              version: "3.45"
+              modules:
+                - fts5

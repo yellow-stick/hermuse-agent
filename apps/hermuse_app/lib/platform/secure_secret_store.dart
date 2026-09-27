@@ -1,0 +1,36 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:hermes_client/hermes_client.dart';
+
+/// [SecretStore] over the platform keystore, namespaced per instance.
+///
+/// Keys are stored as `hermes/<instanceId>/<key>` and are never written
+/// anywhere else. Keystore failures propagate to the caller: the app shows a
+/// blocking error screen instead of falling back to plaintext.
+final class SecureSecretStore implements SecretStore {
+  SecureSecretStore([FlutterSecureStorage? storage])
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  final FlutterSecureStorage _storage;
+
+  static String _key(String instanceId, String key) =>
+      'hermes/$instanceId/$key';
+
+  @override
+  Future<String?> read(String instanceId, String key) =>
+      _storage.read(key: _key(instanceId, key));
+
+  @override
+  Future<void> write(String instanceId, String key, String value) =>
+      _storage.write(key: _key(instanceId, key), value: value);
+
+  @override
+  Future<void> delete(String instanceId) async {
+    final all = await _storage.readAll();
+    final prefix = 'hermes/$instanceId/';
+    for (final key in all.keys) {
+      if (key.startsWith(prefix)) {
+        await _storage.delete(key: key);
+      }
+    }
+  }
+}

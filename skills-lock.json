@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "jaspr-fundamentals": {
+      "source": "rodydavis/signals.dart",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/jaspr-fundamentals/SKILL.md",
+      "computedHash": "e1bf4c1520abdf6c3037b6b1dd53eb1c0ea89f6457e896a065dc418bf6d86406"
+    },
+    "jaspr-pre-rendering-and-hydration": {
+      "source": "rodydavis/signals.dart",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/jaspr-pre-rendering-and-hydration/SKILL.md",
+      "computedHash": "e1c76a5879cb3003dec40f3f336cd913a243f23a362969a238e9a26259155e3b"
+    },
+    "jaspr-styling": {
+      "source": "rodydavis/signals.dart",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/jaspr-styling/SKILL.md",
+      "computedHash": "ac664bbc2e93535bb77a1634171df95c17a8f2f586fa2a7da63693ad10706450"
+    }
+  }
+}

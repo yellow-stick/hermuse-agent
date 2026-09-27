@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Hermuse Agent",
+  "short_name": "Hermuse",
+  "description": "Your personal agent. It takes things off your plate.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#181819",
+  "theme_color": "#181819",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

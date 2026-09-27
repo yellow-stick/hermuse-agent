@@ -1,0 +1,17 @@
+name: hermes_client
+description: Hermes Agent client — instances, secrets, dashboard REST + WebSocket JSON-RPC transport. Pure Dart.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  hermes_contract: ^0.1.0
+  http: ^1.6.0
+  web_socket: ^1.0.1
+
+dev_dependencies:
+  lints: ^6.1.0
+  test: ^1.26.0

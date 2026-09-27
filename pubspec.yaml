@@ -1,0 +1,43 @@
+name: hermuse_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - packages/*
+  - apps/*
+
+dev_dependencies:
+  melos: ^8.9.0
+
+melos:
+  scripts:
+    analyze:
+      description: Static analysis of every workspace package.
+      exec: dart analyze --fatal-infos .
+    format:check:
+      description: Fail when any package is not dart-format clean.
+      exec: dart format --output=none --set-exit-if-changed .
+    test:dart:
+      description: Unit tests of pure Dart packages.
+      exec: dart test
+      packageFilters:
+        flutter: false
+        dirExists: test
+        ignore: [hermuse_web]
+    test:flutter:
+      description: Widget tests of Flutter packages.
+      exec: flutter test
+      packageFilters:
+        flutter: true
+        dirExists: test
+    test:
+      description: All tests.
+      run: melos run test:dart --no-select && melos run test:flutter --no-select
+
+# jaspr_builder 0.23.5 pins analyzer ^12.1.0 while drift_dev/riverpod_generator
+# (and build_runner >=2.15.2) need >=13.3. jaspr_builder only uses the stable
+# element API and builds fine on 13.x (verified with `jaspr build`).
+dependency_overrides:
+  analyzer: ^13.3.0

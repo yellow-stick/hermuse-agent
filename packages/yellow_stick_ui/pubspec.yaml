@@ -1,0 +1,32 @@
+name: yellow_stick_ui
+description: Yellow Stick UI for Flutter — headless-style components rendering the yellow_stick_ui_core tokens.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_svg: ^2.3.0
+  path_parsing: ^1.1.0
+  yellow_stick_ui_core: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: fonts/Inter-SemiBold.ttf
+          weight: 600

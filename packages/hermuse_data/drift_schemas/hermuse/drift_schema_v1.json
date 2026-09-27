@@ -1,0 +1,463 @@
+{
+  "_meta": {
+    "description": "This file contains a serialized version of schema entities for drift.",
+    "version": "1.3.0"
+  },
+  "options": {
+    "store_date_time_values_as_text": false
+  },
+  "entities": [
+    {
+      "id": 0,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "instances",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "id",
+            "getter_name": "id",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "label",
+            "getter_name": "label",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL UNIQUE COLLATE NOCASE",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "unique"
+            ]
+          },
+          {
+            "name": "kind",
+            "getter_name": "kind",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "base_url",
+            "getter_name": "baseUrl",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "auth",
+            "getter_name": "auth",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "profile",
+            "getter_name": "profile",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "is_primary",
+            "getter_name": "isPrimary",
+            "moor_type": "bool",
+            "nullable": false,
+            "customConstraints": "NOT NULL DEFAULT FALSE",
+            "default_dart": "const CustomExpression('FALSE')",
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "position",
+            "getter_name": "position",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 1,
+      "references": [
+        0
+      ],
+      "type": "table",
+      "data": {
+        "name": "sessions",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "instance_id",
+            "getter_name": "instanceId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL REFERENCES instances(id)ON DELETE CASCADE",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              {
+                "foreign_key": {
+                  "to": {
+                    "table": "instances",
+                    "column": "id"
+                  },
+                  "initially_deferred": false,
+                  "on_update": null,
+                  "on_delete": "cascade"
+                }
+              }
+            ]
+          },
+          {
+            "name": "session_id",
+            "getter_name": "sessionId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "title",
+            "getter_name": "title",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL DEFAULT ''",
+            "default_dart": "const CustomExpression('\\'\\'')",
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "parent_id",
+            "getter_name": "parentId",
+            "moor_type": "string",
+            "nullable": true,
+            "customConstraints": "",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "updated_at",
+            "getter_name": "updatedAt",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": [
+          "PRIMARY KEY(instance_id, session_id)"
+        ],
+        "explicit_pk": [
+          "instance_id",
+          "session_id"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "references": [
+        1
+      ],
+      "type": "table",
+      "data": {
+        "name": "messages",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "instance_id",
+            "getter_name": "instanceId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "session_id",
+            "getter_name": "sessionId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "message_id",
+            "getter_name": "messageId",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "author",
+            "getter_name": "author",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "body_text",
+            "getter_name": "bodyText",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          },
+          {
+            "name": "created_at",
+            "getter_name": "createdAt",
+            "moor_type": "int",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": [
+          "PRIMARY KEY(instance_id, session_id, message_id)",
+          "FOREIGN KEY(instance_id, session_id)REFERENCES sessions(instance_id, session_id)ON DELETE CASCADE"
+        ],
+        "explicit_pk": [
+          "instance_id",
+          "session_id",
+          "message_id"
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "messages_fts",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "body_text",
+            "getter_name": "bodyText",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": true,
+        "create_virtual_stmt": "CREATE VIRTUAL TABLE \"messages_fts\" USING fts5(body_text, content = 'messages', content_rowid = 'rowid')",
+        "without_rowid": false,
+        "constraints": []
+      }
+    },
+    {
+      "id": 4,
+      "references": [
+        2,
+        3
+      ],
+      "type": "trigger",
+      "data": {
+        "on": 2,
+        "references_in_body": [
+          2,
+          3
+        ],
+        "name": "messages_fts_insert",
+        "sql": "CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN\n  INSERT INTO messages_fts (rowid, body_text) VALUES (new.rowid, new.body_text);\nEND;"
+      }
+    },
+    {
+      "id": 5,
+      "references": [
+        2,
+        3
+      ],
+      "type": "trigger",
+      "data": {
+        "on": 2,
+        "references_in_body": [
+          2,
+          3
+        ],
+        "name": "messages_fts_delete",
+        "sql": "CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN\n  INSERT INTO messages_fts (messages_fts, rowid, body_text)\n    VALUES ('delete', old.rowid, old.body_text);\nEND;"
+      }
+    },
+    {
+      "id": 6,
+      "references": [
+        2,
+        3
+      ],
+      "type": "trigger",
+      "data": {
+        "on": 2,
+        "references_in_body": [
+          2,
+          3
+        ],
+        "name": "messages_fts_update",
+        "sql": "CREATE TRIGGER messages_fts_update AFTER UPDATE ON messages BEGIN\n  INSERT INTO messages_fts (messages_fts, rowid, body_text)\n    VALUES ('delete', old.rowid, old.body_text);\n  INSERT INTO messages_fts (rowid, body_text) VALUES (new.rowid, new.body_text);\nEND;"
+      }
+    },
+    {
+      "id": 7,
+      "references": [],
+      "type": "table",
+      "data": {
+        "name": "settings",
+        "was_declared_in_moor": true,
+        "columns": [
+          {
+            "name": "key",
+            "getter_name": "key",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL PRIMARY KEY",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": [
+              "primary-key"
+            ]
+          },
+          {
+            "name": "value",
+            "getter_name": "value",
+            "moor_type": "string",
+            "nullable": false,
+            "customConstraints": "NOT NULL",
+            "default_dart": null,
+            "default_client_dart": null,
+            "dsl_features": []
+          }
+        ],
+        "is_virtual": false,
+        "without_rowid": false,
+        "constraints": []
+      }
+    }
+  ],
+  "fixed_sql": [
+    {
+      "name": "instances",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"instances\" (\"id\" TEXT NOT NULL PRIMARY KEY, \"label\" TEXT NOT NULL UNIQUE COLLATE NOCASE, \"kind\" TEXT NOT NULL, \"base_url\" TEXT NOT NULL, \"auth\" TEXT NOT NULL, \"profile\" TEXT, \"is_primary\" INTEGER NOT NULL DEFAULT FALSE, \"position\" INTEGER NOT NULL);"
+        }
+      ]
+    },
+    {
+      "name": "sessions",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"sessions\" (\"instance_id\" TEXT NOT NULL REFERENCES instances(id)ON DELETE CASCADE, \"session_id\" TEXT NOT NULL, \"title\" TEXT NOT NULL DEFAULT '', \"parent_id\" TEXT, \"updated_at\" INTEGER NOT NULL, PRIMARY KEY(instance_id, session_id));"
+        }
+      ]
+    },
+    {
+      "name": "messages",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"messages\" (\"instance_id\" TEXT NOT NULL, \"session_id\" TEXT NOT NULL, \"message_id\" TEXT NOT NULL, \"author\" TEXT NOT NULL, \"body_text\" TEXT NOT NULL, \"created_at\" INTEGER NOT NULL, PRIMARY KEY(instance_id, session_id, message_id), FOREIGN KEY(instance_id, session_id)REFERENCES sessions(instance_id, session_id)ON DELETE CASCADE);"
+        }
+      ]
+    },
+    {
+      "name": "messages_fts",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE VIRTUAL TABLE IF NOT EXISTS \"messages_fts\" USING fts5(body_text, content = 'messages', content_rowid = 'rowid');"
+        }
+      ]
+    },
+    {
+      "name": "messages_fts_insert",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN INSERT INTO messages_fts (\"rowid\", body_text) VALUES (new.\"rowid\", new.body_text);END"
+        }
+      ]
+    },
+    {
+      "name": "messages_fts_delete",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN INSERT INTO messages_fts (messages_fts, \"rowid\", body_text) VALUES ('delete', old.\"rowid\", old.body_text);END"
+        }
+      ]
+    },
+    {
+      "name": "messages_fts_update",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TRIGGER messages_fts_update AFTER UPDATE ON messages BEGIN INSERT INTO messages_fts (messages_fts, \"rowid\", body_text) VALUES ('delete', old.\"rowid\", old.body_text);INSERT INTO messages_fts (\"rowid\", body_text) VALUES (new.\"rowid\", new.body_text);END"
+        }
+      ]
+    },
+    {
+      "name": "settings",
+      "sql": [
+        {
+          "dialect": "sqlite",
+          "sql": "CREATE TABLE IF NOT EXISTS \"settings\" (\"key\" TEXT NOT NULL PRIMARY KEY, \"value\" TEXT NOT NULL);"
+        }
+      ]
+    }
+  ]
+}

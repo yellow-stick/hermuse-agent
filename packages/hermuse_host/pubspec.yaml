@@ -1,0 +1,19 @@
+name: hermuse_host
+description: Desktop-only host services — Hermes install, supervision and the CLIProxyAPI sidecar. dart:io only.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  cliproxy_client: ^0.1.0
+  crypto: ^3.0.7
+  hermes_client: ^0.1.0
+  http: ^1.6.0
+
+dev_dependencies:
+  archive: ^4.3.0
+  lints: ^6.1.0
+  test: ^1.26.0

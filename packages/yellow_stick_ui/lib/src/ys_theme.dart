@@ -1,0 +1,65 @@
+import 'package:flutter/widgets.dart';
+import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+/// Flutter [Color] view of a core [YsPalette].
+///
+/// Components read roles from here, never hex literals.
+extension YsFlutterPalette on YsPalette {
+  Color get canvasColor => Color(canvas.value);
+  Color get paperColor => Color(paper.value);
+  Color get paperClearColor => Color(paperClear.value);
+  Color get neutralAmbientColor => Color(neutralAmbient.value);
+  Color get neutralFilmColor => Color(neutralFilm.value);
+  Color get contentColor => Color(content.value);
+  Color get contentMutedColor => Color(contentMuted.value);
+  Color get contentSubtleColor => Color(contentSubtle.value);
+  Color get primaryColor => Color(primary.value);
+  Color get primary2Color => Color(primary2.value);
+  Color get primaryMutedColor => Color(primaryMuted.value);
+  Color get primaryContentColor => Color(primaryContent.value);
+  Color get lineColor => Color(line.value);
+  Color get backdropColor => Color(backdrop.value);
+  Color get successColor => Color(success.value);
+  Color get errorColor => Color(error.value);
+  Color get logoSurfaceColor => Color(logoSurface.value);
+  Color get avatarSurfaceColor => Color(avatarSurface.value);
+}
+
+extension YsFlutterType on YsTextStyle {
+  /// Converts a core text style to a Flutter [TextStyle] in Inter.
+  TextStyle get flutter => TextStyle(
+    fontFamily: YsType.family,
+    package: 'yellow_stick_ui',
+    fontSize: size,
+    height: heightFactor,
+    fontWeight: switch (weight) {
+      YsWeight.regular => FontWeight.w400,
+      YsWeight.medium => FontWeight.w500,
+      YsWeight.semibold => FontWeight.w600,
+    },
+    leadingDistribution: TextLeadingDistribution.even,
+  );
+}
+
+/// Provides the [YsPalette] to the widget subtree.
+final class YsTheme extends InheritedWidget {
+  const YsTheme({required this.palette, required super.child, super.key});
+
+  final YsPalette palette;
+
+  static YsPalette of(BuildContext context) {
+    final theme = context.dependOnInheritedWidgetOfExactType<YsTheme>();
+    assert(theme != null, 'No YsTheme found in context');
+    return theme!.palette;
+  }
+
+  /// Reads the palette without registering a dependency.
+  static YsPalette read(BuildContext context) {
+    final element = context.getElementForInheritedWidgetOfExactType<YsTheme>();
+    assert(element != null, 'No YsTheme found in context');
+    return (element!.widget as YsTheme).palette;
+  }
+
+  @override
+  bool updateShouldNotify(YsTheme oldWidget) => palette != oldWidget.palette;
+}
