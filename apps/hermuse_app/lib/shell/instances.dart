@@ -835,115 +835,15 @@ final class _Field extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: YsType.label.flutter.copyWith(color: palette.contentColor),
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 44,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.canvasColor,
-              borderRadius: BorderRadius.circular(YsRadius.row),
-              border: Border.all(color: palette.lineColor, width: ysHairline),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: obscure
-                  ? _ObscuredInput(
-                      controller: controller,
-                      placeholder: placeholder,
-                      semanticLabel: semanticLabel,
-                      onChanged: onChanged,
-                      onSubmitted: onSubmitted,
-                    )
-                  : YsTextField(
-                      controller: controller,
-                      placeholder: placeholder,
-                      semanticLabel: semanticLabel,
-                      onChanged: onChanged,
-                      onSubmitted: onSubmitted,
-                    ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Password field in the kit's input style (`YsTextField` has no obscure).
-final class _ObscuredInput extends StatefulWidget {
-  const _ObscuredInput({
-    required this.controller,
-    required this.placeholder,
-    required this.semanticLabel,
-    this.onChanged,
-    this.onSubmitted,
-  });
-
-  final TextEditingController controller;
-  final String placeholder;
-  final String semanticLabel;
-  final ValueChanged<String>? onChanged;
-  final ValueChanged<String>? onSubmitted;
-
-  @override
-  State<_ObscuredInput> createState() => _ObscuredInputState();
-}
-
-final class _ObscuredInputState extends State<_ObscuredInput> {
-  late final FocusNode _focus = FocusNode();
-
-  @override
-  void dispose() {
-    _focus.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    final empty = widget.controller.text.isEmpty;
-    return Stack(
-      children: [
-        EditableText(
-          controller: widget.controller,
-          focusNode: _focus,
-          style: YsType.input.flutter.copyWith(color: palette.contentColor),
-          cursorColor: palette.primaryColor,
-          backgroundCursorColor: palette.contentMutedColor,
-          selectionColor: palette.primaryMutedColor,
-          keyboardType: TextInputType.visiblePassword,
-          obscureText: true,
-          maxLines: 1,
-          onChanged: (v) {
-            widget.onChanged?.call(v);
-            setState(() {});
-          },
-          onSubmitted: widget.onSubmitted,
-        ),
-        if (empty)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Text(
-                widget.placeholder,
-                style: YsType.input.flutter.copyWith(
-                  color: palette.contentSubtleColor,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => YsField(
+    label: label,
+    child: YsInputBox(
+      controller: controller,
+      placeholder: placeholder,
+      semanticLabel: semanticLabel,
+      obscure: obscure,
+      onChanged: onChanged,
+      onSubmitted: onSubmitted,
+    ),
+  );
 }

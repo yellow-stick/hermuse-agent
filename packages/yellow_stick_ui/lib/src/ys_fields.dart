@@ -306,43 +306,48 @@ final class _YsInputBoxState extends State<YsInputBox> {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Stack(
-            children: [
-              EditableText(
-                controller: widget.controller,
-                focusNode: _focus,
-                autofocus: widget.autofocus,
-                style: widget.textStyle.flutter.copyWith(
-                  color: palette.contentColor,
+          // The box is taller than one text line: centre the line so the
+          // text, cursor and placeholder share the box's centre.
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Stack(
+              children: [
+                EditableText(
+                  controller: widget.controller,
+                  focusNode: _focus,
+                  autofocus: widget.autofocus,
+                  style: widget.textStyle.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                  cursorColor: palette.primaryColor,
+                  backgroundCursorColor: palette.contentMutedColor,
+                  selectionColor: palette.primaryMutedColor,
+                  keyboardType: widget.obscure
+                      ? TextInputType.visiblePassword
+                      : TextInputType.text,
+                  obscureText: widget.obscure,
+                  maxLines: 1,
+                  onChanged: widget.onChanged,
+                  onSubmitted: widget.onSubmitted,
                 ),
-                cursorColor: palette.primaryColor,
-                backgroundCursorColor: palette.contentMutedColor,
-                selectionColor: palette.primaryMutedColor,
-                keyboardType: widget.obscure
-                    ? TextInputType.visiblePassword
-                    : TextInputType.text,
-                obscureText: widget.obscure,
-                maxLines: 1,
-                onChanged: widget.onChanged,
-                onSubmitted: widget.onSubmitted,
-              ),
-              if (empty && widget.placeholder.isNotEmpty)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        widget.placeholder,
-                        style: widget.textStyle.flutter.copyWith(
-                          color: palette.contentSubtleColor,
+                if (empty && widget.placeholder.isNotEmpty)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.placeholder,
+                          style: widget.textStyle.flutter.copyWith(
+                            color: palette.contentSubtleColor,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
