@@ -499,7 +499,6 @@ final class _Composer extends StatelessWidget {
                             semanticLabel: 'Stop',
                             tooltip: 'Stop',
                             icon: YsIcon.stop,
-                            iconSize: 14,
                           )
                         : hasText
                         ? _RoundAction(
@@ -533,14 +532,12 @@ final class _RoundAction extends StatelessWidget {
     required this.semanticLabel,
     required this.icon,
     this.tooltip,
-    this.iconSize = 18,
   });
 
   final VoidCallback onPressed;
   final String semanticLabel;
   final YsIcon icon;
   final String? tooltip;
-  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -561,7 +558,7 @@ final class _RoundAction extends StatelessWidget {
         child: Center(
           child: YsIconWidget(
             icon,
-            size: iconSize,
+            size: 18,
             color: palette.primaryContentColor,
           ),
         ),
