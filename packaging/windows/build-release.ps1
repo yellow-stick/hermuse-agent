@@ -55,9 +55,11 @@ if ($flutter.frameworkVersion -ne (Get-LockValue 'flutter.version') -or
   Stop-Hermuse "Flutter on PATH is $($flutter.frameworkVersion) ($($flutter.frameworkRevision)), not $(Get-LockValue 'flutter.version') ($(Get-LockValue 'flutter.commit'))"
 }
 
-$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source
-if (-not $iscc) { $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }
-if (-not (Test-Path -LiteralPath $iscc)) { Stop-Hermuse "Inno Setup's ISCC.exe not found" }
+# The Inno Setup install itself: a package manager shim on PATH (Chocolatey)
+# carries no version to check.
+$iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+if (-not (Test-Path -LiteralPath $iscc)) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source }
+if (-not $iscc) { Stop-Hermuse "Inno Setup's ISCC.exe not found" }
 $isccInfo = (Get-Item -LiteralPath $iscc).VersionInfo
 $innoVersion = "$($isccInfo.FileMajorPart).$($isccInfo.FileMinorPart).$($isccInfo.FileBuildPart)"
 if ($innoVersion -ne (Get-LockValue 'windows.inno_setup.version')) {
