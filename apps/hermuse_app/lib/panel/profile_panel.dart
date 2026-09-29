@@ -136,7 +136,10 @@ final class ProfilePanelState extends State<ProfilePanel> {
   Widget _tabBody() {
     switch (_tab) {
       case PanelTab.activity:
-        return _ActivityList(items: widget.activity);
+        // Nothing happened yet: the tab's empty state, not a lone "Today".
+        return widget.activity.isEmpty
+            ? _TabEmptyState(tab: _tab)
+            : _ActivityList(items: widget.activity);
       case PanelTab.approvals:
         return widget.approvals.isEmpty
             ? _TabEmptyState(tab: _tab)
