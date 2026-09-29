@@ -468,6 +468,9 @@ ui_connections() {
 # that folds the row again).
 ui_bridge_connect() {
   ui_connections || return 1
+  # The page keeps its scroll offset: the search field is at its very top.
+  gui_scroll up 60
+  sleep 1
   ui_click "$UI_SEARCH_CONNECTIONS" 30 any || return 1
   xdotool type --delay 40 "$UI_BRIDGE_CARD"
   sleep 2
@@ -1564,7 +1567,10 @@ scenario_adopt() { # <compatible|foreign>
     # A user-run upstream install at the pin, outside the app. Git never
     # prompts and gives up on a stalled transfer (the script retries clones).
     local script=/tmp/hermes-install.sh fixture_rc=1
-    if curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$PIN_COMMIT/scripts/install.sh" -o "$script" &&
+    # raw.githubusercontent.com answers HTTP 429 while many legs fetch at once.
+    if curl -fsSL --retry 10 --retry-max-time 900 --retry-all-errors \
+      "https://raw.githubusercontent.com/NousResearch/hermes-agent/$PIN_COMMIT/scripts/install.sh" -o "$script" \
+      2>"$EVID/logs/upstream-script-download.log" &&
       chmod 0755 "$script"; then
       in_session upstream-install "$(T 3600)" \
         "HERMES_HOME='$HERMES_HOME' GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=120 '$script' --commit '$PIN_COMMIT' --dir '$install_dir' --hermes-home '$HERMES_HOME' --skip-setup --skip-browser --skip-computer-use --non-interactive >'$STATE/out/upstream-install.log' 2>&1"

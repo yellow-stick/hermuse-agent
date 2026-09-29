@@ -455,7 +455,7 @@ def cmd_computer(args: argparse.Namespace) -> None:
     ws = WebSocket.connect(backend.port, f"/api/plugins/hermuse/computer/ws?{query}", timeout=60)
     state: dict[str, Any] = {}
     geometry: dict[str, Any] = {}
-    frames = {"count": 0}
+    frames: dict[str, Any] = {"count": 0, "last": b""}
 
     def pump(until: Any, timeout: float, save_frame: Optional[str] = None) -> bool:
         deadline = time.monotonic() + timeout
@@ -466,6 +466,8 @@ def cmd_computer(args: argparse.Namespace) -> None:
                 break
             if kind == "binary":
                 frames["count"] += 1
+                if data[:2] == b"\xff\xd8":
+                    frames["last"] = data
                 if save_frame and data[:2] == b"\xff\xd8":
                     with open(os.path.join(args.out, save_frame), "wb") as handle:
                         handle.write(data)
@@ -537,7 +539,14 @@ def cmd_computer(args: argparse.Namespace) -> None:
             ws.send_json({"t": "wheel", "x": width // 2, "y": height // 2, "dy": 5})
             ok = step("scroll", pump(lambda: re.search(r"\|s=[1-9]", title()) is not None, 30), title())
         if ok:
-            ok = step("frame-after-input", pump(lambda: True, 15, save_frame="frame-after-input.jpg"))
+            # Frames are sent only when the picture changes: the latest one the
+            # input produced (typed text, click, scroll) is the proof.
+            pump(lambda: False, 3)
+            changed = frames["count"] > seen and bool(frames["last"])
+            if changed:
+                with open(os.path.join(args.out, "frame-after-input.jpg"), "wb") as handle:
+                    handle.write(frames["last"])
+            ok = step("frame-after-input", changed, {"frames_since_take": frames["count"] - seen})
         if ok:
             ws.send_json({"t": "release"})
             ok = step("release-control", pump(lambda: state.get("mine") is False, 20),
