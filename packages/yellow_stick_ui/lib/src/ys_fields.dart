@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_button.dart';
 import 'ys_icon_widget.dart';
 import 'ys_menu.dart';
 import 'ys_pressable.dart';
@@ -637,26 +638,17 @@ final class _YsDialogState extends State<YsDialog> {
   }
 }
 
-/// Close (✕) icon button for dialog headers.
+/// Close (✕) icon button for dialog headers: the kit icon button (hover
+/// wash, focus ring), 32 px like the web dialog's.
 final class YsButtonIconClose extends StatelessWidget {
   const YsButtonIconClose(this.onClose, {super.key});
 
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context) => YsPressable(
+  Widget build(BuildContext context) => YsButton.icon(
+    icon: YsIcon.close,
     onPressed: onClose,
     semanticLabel: 'Close',
-    builder: (context, state) => SizedBox(
-      width: 32,
-      height: 32,
-      child: Center(
-        child: YsIconWidget(
-          YsIcon.close,
-          size: 18,
-          color: YsTheme.of(context).contentMutedColor,
-        ),
-      ),
-    ),
   );
 }
