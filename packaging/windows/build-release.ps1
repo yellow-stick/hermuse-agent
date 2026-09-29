@@ -60,11 +60,6 @@ if ($flutter.frameworkVersion -ne (Get-LockValue 'flutter.version') -or
 $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
 if (-not (Test-Path -LiteralPath $iscc)) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue)?.Source }
 if (-not $iscc) { Stop-Hermuse "Inno Setup's ISCC.exe not found" }
-$isccInfo = (Get-Item -LiteralPath $iscc).VersionInfo
-$innoVersion = "$($isccInfo.FileMajorPart).$($isccInfo.FileMinorPart).$($isccInfo.FileBuildPart)"
-if ($innoVersion -ne (Get-LockValue 'windows.inno_setup.version')) {
-  Stop-Hermuse "Inno Setup $innoVersion at $iscc is not the pinned $(Get-LockValue 'windows.inno_setup.version')"
-}
 $vs = Get-VisualStudio
 
 $signingVariables = @(@($env:WINDOWS_SIGNING_ENDPOINT, $env:WINDOWS_SIGNING_ACCOUNT, $env:WINDOWS_SIGNING_PROFILE) |
@@ -339,8 +334,17 @@ try {
     [IO.Path]::GetFullPath($SignScript) + '$q $f'
   }
   $isccArguments += [IO.Path]::GetFullPath($InnoScript)
-  Write-HermuseLog "Inno Setup $innoVersion"
-  Invoke-Native $iscc $isccArguments
+  Write-HermuseLog "Inno Setup ($iscc)"
+  # ISCC.exe has no version resource: its log names the compiler engine.
+  $isccLog = @(& $iscc @isccArguments 2>&1 | ForEach-Object { "$_" })
+  $isccExit = $LASTEXITCODE
+  $isccLog | Out-Host
+  if ($isccExit -ne 0) { Stop-Hermuse "ISCC failed (exit $isccExit)" }
+  $engine = @($isccLog | Select-String -Pattern 'Compiler engine version: Inno Setup (\S+)')
+  $innoVersion = if ($engine.Count -gt 0) { $engine[0].Matches[0].Groups[1].Value } else { 'unknown' }
+  if ($innoVersion -ne (Get-LockValue 'windows.inno_setup.version')) {
+    Stop-Hermuse "Inno Setup $innoVersion at $iscc is not the pinned $(Get-LockValue 'windows.inno_setup.version')"
+  }
   $setup = Join-Path $out $versions.SetupName
   if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { Stop-Hermuse "ISCC did not write $setup" }
   if ($signing -ne 'none') { Assert-Signature $setup }
