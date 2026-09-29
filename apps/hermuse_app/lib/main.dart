@@ -27,7 +27,7 @@ Future<void> main() async {
   final host = isDesktop
       ? LocalHermesHost.system(
           secrets,
-          installJournalPath: Platform.isWindows ? null : journalPath,
+          installJournalPath: journalPath,
           setupAssistant: Platform.isLinux,
         )
       : null;
