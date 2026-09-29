@@ -97,30 +97,22 @@ final class _MessageRowState extends State<MessageRow> {
       child: GestureDetector(
         onLongPress: () => setState(() => _hovered = !_hovered),
         behavior: HitTestBehavior.translucent,
+        // The bubble hugs its content: the hover actions sit right beside
+        // it (web `.hermuse-msg-inner`), not at the far edge of the column.
         child: _isUser
             ? Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   if (_hovered) ...[actions, const SizedBox(width: 8)],
-                  Flexible(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: withReaction,
-                    ),
-                  ),
+                  Flexible(child: withReaction),
                 ],
               )
             : Row(
                 mainAxisAlignment: MainAxisAlignment.start,
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Flexible(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: withReaction,
-                    ),
-                  ),
+                  Flexible(child: withReaction),
                   if (_hovered) ...[const SizedBox(width: 8), actions],
                 ],
               ),
@@ -246,6 +238,7 @@ final class _BubbleShell extends StatelessWidget {
     final isUser = message.author == Author.user;
     var choiceIndex = -1;
     return Align(
+      widthFactor: 1,
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxWidth),
