@@ -271,13 +271,13 @@ final class ThreadViewState extends State<ThreadView> {
                       ),
                     if (widget.connection != ChatConnection.ready)
                       const SizedBox(height: 8),
-                    if (widget.replyTo != null)
-                      if (widget.instanceId case final instanceId?)
-                        _ModelPicker(
-                          instanceId: instanceId,
-                          controller: widget.controller,
-                        ),
-                    if (widget.instanceId != null) const SizedBox(height: 8),
+                    // Above the composer whenever models are known (web
+                    // `.hermuse-composer-column`), not only while replying.
+                    if (widget.instanceId case final instanceId?)
+                      _ModelPicker(
+                        instanceId: instanceId,
+                        controller: widget.controller,
+                      ),
                     // Flush on the composer: the quote reads as part of it.
                     if (widget.replyTo != null)
                       _ReplyPreview(
@@ -789,45 +789,48 @@ final class _ModelPicker extends ConsumerWidget {
               entry.providerId == current!.provider &&
               entry.modelId == current.model,
         );
-    return Row(
-      children: [
-        Text(
-          'Model',
-          style: YsType.small.flutter.copyWith(
-            color: palette.contentMutedColor,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: SizedBox(
-            height: 36,
-            child: YsSelect(
-              value: known ? value : '',
-              options: [
-                ('', 'Instance default'),
-                for (final model in all)
-                  (
-                    '${model.providerId}/${model.modelId}',
-                    '${model.providerName} · ${model.modelId}',
-                  ),
-              ],
-              onChanged: (v) {
-                if (v.isEmpty) return;
-                final slash = v.indexOf('/');
-                unawaited(
-                  controller.setModel(
-                    ChatModel(
-                      provider: v.substring(0, slash),
-                      model: v.substring(slash + 1),
-                    ),
-                  ),
-                );
-              },
-              semanticLabel: 'Thread model',
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            'Model',
+            style: YsType.small.flutter.copyWith(
+              color: palette.contentMutedColor,
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 8),
+          Expanded(
+            child: SizedBox(
+              height: 36,
+              child: YsSelect(
+                value: known ? value : '',
+                options: [
+                  ('', 'Instance default'),
+                  for (final model in all)
+                    (
+                      '${model.providerId}/${model.modelId}',
+                      '${model.providerName} · ${model.modelId}',
+                    ),
+                ],
+                onChanged: (v) {
+                  if (v.isEmpty) return;
+                  final slash = v.indexOf('/');
+                  unawaited(
+                    controller.setModel(
+                      ChatModel(
+                        provider: v.substring(0, slash),
+                        model: v.substring(slash + 1),
+                      ),
+                    ),
+                  );
+                },
+                semanticLabel: 'Thread model',
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
