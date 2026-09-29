@@ -12,15 +12,8 @@ void main() {
         final supervisor = CliproxySupervisor(
           secrets: MemorySecretStore(),
           hermesHome: home.path,
-          locateBinary: () async => const CliproxyBinary(
-            path: '/sidecar/cliproxy',
-            entry: CliproxyLockEntry(
-              asset: 'asset',
-              archiveSha256: 'a',
-              binary: 'cliproxy',
-              binarySha256: 'b',
-            ),
-          ),
+          locateBinary: () async =>
+              const CliproxyBinary(path: '/sidecar/cliproxy', sha256: 'b'),
           supervisorFactory:
               ({required executable, required args, environment}) => Supervisor(
                 executable: Platform.resolvedExecutable,

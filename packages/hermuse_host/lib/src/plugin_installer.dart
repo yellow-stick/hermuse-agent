@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'detector.dart';
 import 'errors.dart';
+import 'host_environment.dart';
 
 /// Outcome of `hermes hermuse computer setup`: the agent's browser runs in
 /// a Docker container Hermuse cannot install itself.
@@ -39,8 +40,9 @@ final class HermusePluginInstall {
   /// Combined stdout of `hermes plugins enable hermuse`.
   final String enableOutput;
 
-  /// The agent's computer step; never fails the install.
-  final ComputerSetup computerSetup;
+  /// The agent's computer step; never fails the install. Null when the
+  /// install was asked not to run it (`setupComputer: false`).
+  final ComputerSetup? computerSetup;
 }
 
 /// Installs the Hermuse product-layer plugin into a LOCAL instance's
@@ -49,9 +51,15 @@ final class HermusePluginInstall {
 /// Steps mirror the plugin README: recursive copy of the `hermes-plugin/hermuse`
 /// source tree (excluding `tests/`), then `hermes plugins enable hermuse`
 /// and `hermes hermuse computer setup` with `HERMES_HOME` pointed at the
-/// instance home. The dashboard/gateway must restart afterwards for the new
-/// routes to load (owned by the caller: [HermesSupervisor.restart] on a
-/// supervised instance).
+/// instance home; the computer setup also gets `HERMES_DESKTOP=1`, which
+/// keeps the plugin from bootstrapping Docker with sudo on its own. Both run
+/// with [hostEnvironment], never the app's own environment. The computer
+/// setup is skipped with `setupComputer: false`, when the caller sets the
+/// computer up through the restarted backend instead (the Linux setup
+/// assistant, whose backend alone targets the Docker engine it chose). The
+/// dashboard/gateway must restart afterwards for the new routes to load
+/// (owned by the caller: [HermesSupervisor.restart] on a supervised
+/// instance).
 ///
 /// Safety: an existing `plugins/hermuse` dir whose `plugin.yaml` does NOT
 /// describe the Hermuse plugin is never touched unless [overwrite] is true;
@@ -69,8 +77,12 @@ final class HermusePluginInstaller {
   }) : _pluginSourceDir = pluginSourceDir,
        _runProcess =
            runProcess ??
-           ((executable, args, {environment}) =>
-               Process.run(executable, args, environment: environment));
+           ((executable, args, {environment}) => Process.run(
+             executable,
+             args,
+             includeParentEnvironment: false,
+             environment: {...hostEnvironment(), ...?environment},
+           ));
 
   final String _pluginSourceDir;
   final Future<ProcessResult> Function(
@@ -84,11 +96,16 @@ final class HermusePluginInstaller {
   static const pluginName = 'hermuse';
 
   /// Installs + enables the plugin for the instance at [hermesHome] using
-  /// the [hermesExecutable] launcher.
+  /// the [hermesExecutable] launcher, then runs the computer setup unless
+  /// [setupComputer] is false. [environment] is merged over
+  /// [hostEnvironment] for every command (see
+  /// [DetectedHermes.runtimeEnvironment]).
   Future<HermusePluginInstall> install({
     required String hermesHome,
     required String hermesExecutable,
     bool overwrite = false,
+    bool setupComputer = true,
+    Map<String, String> environment = const {},
   }) async {
     final source = Directory(_pluginSourceDir);
     if (!await source.exists()) {
@@ -125,7 +142,7 @@ final class HermusePluginInstaller {
     final enable = await _runProcess(
       hermesExecutable,
       ['plugins', 'enable', pluginName],
-      environment: {'HERMES_HOME': hermesHome},
+      environment: {...environment, 'HERMES_HOME': hermesHome},
     );
     if (enable.exitCode != 0) {
       throw InstallFailed(
@@ -138,7 +155,9 @@ final class HermusePluginInstaller {
       pluginDir: target.path,
       overwrote: overwrote,
       enableOutput: '${enable.stdout}'.trim(),
-      computerSetup: await _setupComputer(hermesHome, hermesExecutable),
+      computerSetup: setupComputer
+          ? await _setupComputer(hermesHome, hermesExecutable, environment)
+          : null,
     );
   }
 
@@ -147,12 +166,17 @@ final class HermusePluginInstaller {
   Future<ComputerSetup> _setupComputer(
     String hermesHome,
     String hermesExecutable,
+    Map<String, String> environment,
   ) async {
     try {
       final setup = await _runProcess(
         hermesExecutable,
         ['hermuse', 'computer', 'setup'],
-        environment: {'HERMES_HOME': hermesHome},
+        environment: {
+          ...environment,
+          'HERMES_HOME': hermesHome,
+          'HERMES_DESKTOP': '1',
+        },
       );
       return switch (setup.exitCode) {
         0 => ComputerSetup.ready,
@@ -215,14 +239,18 @@ Future<String?> findBundledPluginSource() async {
   return null;
 }
 
-/// Convenience: install into a [DetectedHermes] home.
+/// Convenience: install into a [DetectedHermes] home, with the install's
+/// [DetectedHermes.runtimeEnvironment].
 extension HermusePluginInstallerOnDetection on HermusePluginInstaller {
   Future<HermusePluginInstall> installFor(
     DetectedHermes hermes, {
     bool overwrite = false,
+    bool setupComputer = true,
   }) => install(
     hermesHome: hermes.home,
     hermesExecutable: hermes.executable,
     overwrite: overwrite,
+    setupComputer: setupComputer,
+    environment: hermes.runtimeEnvironment(),
   );
 }

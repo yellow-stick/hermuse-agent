@@ -166,6 +166,30 @@ tool/serve-web.sh                               # jaspr serve, http://localhost:
 cd apps/hermuse_web && jaspr build              # static output in build/jaspr
 ```
 
+The desktop subscription bridge runs the CLIProxyAPI binary pinned in
+`packages/hermuse_host/cliproxy.lock`. A development build verifies it in the
+package tree: fetch it once for your platform (`linux-amd64`, `macos-arm64`,
+…) and tell the app where that tree is. Release builds embed the binary and
+its digest instead.
+
+```bash
+cd packages/hermuse_host && dart run tool/fetch_cliproxy.dart --platform linux-amd64 --frozen-lockfile
+cd apps/hermuse_app && flutter run -d linux \
+  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
+```
+
+On Linux the app first prepares the computer (keyring, Hermes build tools,
+Docker) with `packaging/linux/hermuse-linux-setup`. A release build embeds the
+helper and its digest; a development build uses the checkout's copy only when
+told where the checkout is, otherwise the preparation screen reports the
+helper as unavailable:
+
+```bash
+cd apps/hermuse_app && flutter run -d linux \
+  --dart-define=HERMUSE_WORKSPACE_ROOT=$(git rev-parse --show-toplevel) \
+  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
+```
+
 ### Hermes plugin
 
 `hermes-plugin/hermuse` adds the product layer to Hermes: six agent tools, the
