@@ -70,6 +70,10 @@ $UiConnectTitle = 'Connect to a Hermes'
 $UiLocalChoice = 'Install Hermes on this computer'
 $UiKeystoreError = 'Secure storage unavailable'
 $UiRetryStage = 'Retry this stage'
+# A failed stage's hint ('Stage "<name>" failed; fix the cause, then retry
+# just this stage.') and the progress line of running stages (a regex).
+$UiRetryHint = 'fix the cause'
+$UiStageProgress = 'step [0-9]+ of [0-9]+'
 $UiEnablePlugin = 'Enable the Hermuse plugin'
 $UiInstallPlugin = 'Install the plugin'
 $UiBackToChat = 'Back to chat'
@@ -180,7 +184,9 @@ function Read-Json([string]$File) {
 # Starts the app through its Start menu shortcut (ShellExecute, as the Start
 # menu does) with a new user's PATH and without the runner's own variables
 # (CI, GITHUB_*, RUNNER_*: a user session has none), and waits for its
-# window, then maximized.
+# window, then maximized. It keeps this PowerShell 7's PSModulePath, as when
+# a terminal or `winget install` starts the app: PowerShell 7's modules must
+# not reach the app's Windows PowerShell children (install.ps1).
 function Start-App([string]$Label) {
   $saved = @{}
   foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI|GITHUB_.*|RUNNER_.*|ACTIONS_.*|ImageOS|ImageVersion)$' } |
@@ -210,12 +216,14 @@ function Stop-App([int]$TimeoutSec = (T 300)) {
 }
 
 # A failure the app reports on its install screen (a stage that lost the
-# network, say): a user reads the error and tries again, with its retry
-# button when the app offers one, else (a failure before the first stage)
-# with Cancel and the local choice again. The screen is read at most every
-# minute; at most $UserRetries tries, 3 minutes apart, each kept as evidence.
-# An error still shown after them ends the wait: $script:RetryGaveUp names
-# its screenshot.
+# network, say): a user reads the error and tries again, with the stage's
+# retry button (under the stage list: the click scrolls to it), else (a
+# failure before the first stage) with Cancel and the local choice again. An
+# error word in the log of running stages is no failure. The screen is read
+# at most every minute; at most $UserRetries tries, 3 minutes apart, each
+# clicked one kept as evidence (a failure the automation could not act on
+# counts too). An error still shown after them ends the wait:
+# $script:RetryGaveUp names its screenshot.
 $UserRetries = 3
 $script:RetryLooked = -1000
 $script:RetryClicked = -1000
@@ -228,7 +236,8 @@ function Invoke-RetryWhenOffered([string]$Id) {
   $png = Save-Shot 'retry-offered'
   if (-not $png) { return }
   $text = (D text $png) -join "`n"
-  if ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b') {
+  $stageFailed = $text -match "(?i)$([regex]::Escape($UiRetryHint))"
+  if (-not $stageFailed -and ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b' -or $text -match "(?i)$UiStageProgress")) {
     Remove-Item $png -ErrorAction SilentlyContinue
     return
   }
@@ -236,21 +245,15 @@ function Invoke-RetryWhenOffered([string]$Id) {
     $script:RetryGaveUp = $png
     return
   }
-  $xy = D locate $png $UiRetryStage
-  if ($LASTEXITCODE -eq 0 -and $xy) {
-    $parts = "$xy".Trim() -split ' '
-    D pointer $parts[0] $parts[1] | Out-Null
-    $how = "clicked '$UiRetryStage'"
-  } else {
-    $xy = D locate $png $UiCancel
-    if ($LASTEXITCODE -ne 0 -or -not $xy) { return }
-    $parts = "$xy".Trim() -split ' '
-    D pointer $parts[0] $parts[1] | Out-Null
-    if (-not (Invoke-UiClick $UiLocalChoice 60)) { return }
+  $script:Retries++
+  $how = $null
+  if ($stageFailed) {
+    if (Invoke-UiClick $UiRetryStage 60) { $how = "clicked '$UiRetryStage'" }
+  } elseif ((Invoke-UiClick $UiCancel 30) -and (Invoke-UiClick $UiLocalChoice 60)) {
     $how = "no stage had started: clicked '$UiCancel', then '$UiLocalChoice' again"
   }
-  $script:Retries++
-  $script:RetryClicked = $now
+  if (-not $how) { return }
+  $script:RetryClicked = [int]$Started.Elapsed.TotalSeconds
   Add-Check $Id "user-retry-$($script:Retries)" 'pass' "the app reported an error; $how, as a user does" @($png)
 }
 

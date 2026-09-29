@@ -310,15 +310,18 @@ elif IS_MAC:
 
     def window_maximize(title: str) -> bool:
         # The visible frame (below the menu bar, above the Dock), as the
-        # green zoom button fills it.
+        # green zoom button fills it. AppKit's frames start at the bottom
+        # left of the main screen, System Events' at its top left.
         try:
             frame = _osascript("use AppleScript version \"2.4\"\nuse framework \"AppKit\"\nuse scripting additions\n"
-                               "set s to (current application's NSScreen's screens()'s objectAtIndex:0)\n"
-                               "set f to s's visibleFrame()\nset full to s's frame()\n"
-                               "return ((item 1 of item 1 of f) as integer as text) & \" \" & "
-                               "(((item 2 of item 2 of full) - (item 2 of item 1 of f) - (item 2 of item 2 of f)) "
-                               "as integer as text) & \" \" & ((item 1 of item 2 of f) as integer as text) & \" \" & "
-                               "((item 2 of item 2 of f) as integer as text)")
+                               "set mainScreen to (current application's NSScreen's screens()'s objectAtIndex:0)\n"
+                               "set visibleArea to mainScreen's visibleFrame()\n"
+                               "set screenArea to mainScreen's frame()\n"
+                               "return ((item 1 of item 1 of visibleArea) as integer as text) & \" \" & "
+                               "(((item 2 of item 2 of screenArea) - (item 2 of item 1 of visibleArea) - "
+                               "(item 2 of item 2 of visibleArea)) as integer as text) & \" \" & "
+                               "((item 1 of item 2 of visibleArea) as integer as text) & \" \" & "
+                               "((item 2 of item 2 of visibleArea) as integer as text)")
             x, y, w, h = (int(v) for v in frame.split())
             _osascript(_window_script(title, f"        set frontmost of p to true\n"
                                              f"        set position of w to {{{x}, {y}}}\n"
@@ -641,7 +644,8 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
     """Screen centres of the icon rail items, top to bottom (icon-only: their
     labels are tooltips, out of reach of OCR). The rail is the first <rail>
     points of the window below its title bar; each item is a band of rows
-    holding bright icon pixels."""
+    holding bright icon pixels, whose own gaps (a bulb and its base, stacked
+    shapes, the lines of a menu icon) are narrower than 12 points."""
     client = client_rect(title)
     if client is None:
         return []
@@ -649,6 +653,7 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
     png = TMP / "rail-screen.png"
     screenshot(png)
     scale = point_scale(png)
+    gap = 12 * scale
     crop = f"{int(rail * scale)}x{int(height * scale)}+{int(x * scale)}+{int(top * scale)}"
     proc = run([MAGICK, str(png), "-alpha", "off", "-crop", crop, "+repage", "-colorspace", "Gray", "-threshold", "55%",
                 "-scale", f"1x{int(height * scale)}!", "-depth", "8", "txt:-"])
@@ -662,7 +667,7 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
             start = row
         if on:
             last = row
-        if not on and start >= 0 and row - last > 3:
+        if not on and start >= 0 and row - last > gap:
             items.append((x + rail // 2, int(top + (start + last) / 2 / scale)))
             start = -1
     if start >= 0:
