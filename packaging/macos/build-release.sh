@@ -418,7 +418,8 @@ jq -n \
               team_id: (if $signed then $team else null end), hardened_runtime: true,
               notarized: $notarized, stapled: $stapled,
               reason: (if $reason == "" then null else $reason end)},
-    toolchain: {flutter: $lock[0].flutter, xcode: {version: $xcode, build: $xcode_build},
+    toolchain: {flutter: ($lock[0].flutter | {version, channel, commit, dart, archive: .archives["macos-arm64"]}),
+                xcode: {version: $xcode, build: $xcode_build},
                 macos: {version: $macos, build: $macos_build}},
     artifacts: [{name: $dmg, sha256: $dmg_sha, size: $dmg_size}]
   }' >"$dist/macos/VERSION.json"
