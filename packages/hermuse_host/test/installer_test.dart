@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:test/test.dart';
 
@@ -554,23 +555,166 @@ void main() {
       });
     });
 
-    test('InstallerSource mirrors the Desktop resolution order', () {
-      const source = InstallerSource(isWindows: false);
-      expect(source.scriptName, 'install.sh');
-      expect(
-        source.downloadUri().toString(),
-        'https://raw.githubusercontent.com/NousResearch/hermes-agent/'
-        '$hermesReleaseCommit/scripts/install.sh',
+    group('installer script', () {
+      const raw = 'raw.githubusercontent.com';
+      const api = 'api.github.com';
+      final genuine = utf8.encode('#!/bin/bash\necho pinned\n');
+      final tampered = utf8.encode('#!/bin/bash\necho tampered\n');
+      final source = InstallerSource(
+        isWindows: false,
+        commit: '0123456789abcdef0123456789abcdef01234567',
+        sha256: '${crypto.sha256.convert(genuine)}',
       );
-      expect(
-        source.cachePath('/h'),
-        '/h/bootstrap-cache/install-$hermesReleaseCommit.sh',
+      final downloads = <String>[];
+      final waits = <Duration>[];
+      final ran = <String>[];
+      late String hermesHome;
+      late String cached;
+
+      setUp(() {
+        hermesHome = '${root.path}/hermes-home';
+        cached = source.cachePath(hermesHome);
+        downloads.clear();
+        waits.clear();
+        ran.clear();
+      });
+
+      HermesInstaller installer(Future<List<int>> Function(Uri uri) serve) =>
+          HermesInstaller(
+            hermesHome: hermesHome,
+            installDir: '$hermesHome/hermes-agent',
+            source: source,
+            environment: const {'PATH': '/usr/bin'},
+            isWindows: false,
+            isMacOS: false,
+            download: (uri) {
+              downloads.add(uri.host);
+              return serve(uri);
+            },
+            sleep: (delay) async => waits.add(delay),
+            runScript: (executable, args, {environment, onLine}) async {
+              ran.add(args.first);
+              return ProcessResult(0, 0, posixManifest, '');
+            },
+          );
+
+      test('a rate-limited host falls back to the next one, whose verified '
+          'bytes are cached and run', () async {
+        final manifest = await installer(
+          (uri) async => uri.host == raw
+              ? throw const ScriptDownloadError('HTTP 429', transient: true)
+              : genuine,
+        ).manifest();
+        expect(manifest.stages, hasLength(10));
+        expect(downloads, [raw, api]);
+        expect(waits, isEmpty);
+        expect(ran, [cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+      });
+
+      test(
+        'bytes without the pinned digest are neither cached nor run',
+        () async {
+          await expectLater(
+            installer((_) async => tampered).manifest(),
+            throwsA(
+              isA<InstallerUnavailable>().having(
+                (e) => e.message,
+                'message',
+                allOf(contains('$raw: served SHA-256'), contains(api)),
+              ),
+            ),
+          );
+          expect(waits, isEmpty);
+          expect(ran, isEmpty);
+          expect(File(cached).existsSync(), isFalse);
+        },
       );
-      expect(
-        source.installedAgentScript('/h'),
-        '/h/hermes-agent/scripts/install.sh',
-      );
-      expect(const InstallerSource(isWindows: true).scriptName, 'install.ps1');
+
+      test('a refused download is tried again no sooner than its server '
+          'asked', () async {
+        var refusals = 0;
+        await installer((uri) async {
+          if (uri.host == api) {
+            throw const ScriptDownloadError('HTTP 404', transient: false);
+          }
+          if (refusals++ == 0) {
+            throw const ScriptDownloadError(
+              'HTTP 429',
+              transient: true,
+              retryAfter: Duration(seconds: 90),
+            );
+          }
+          return genuine;
+        }).manifest();
+        expect(waits, [const Duration(seconds: 90)]);
+        expect(downloads, [raw, api, raw]);
+        expect(ran, [cached]);
+      });
+
+      test('a host that stays unavailable is given up, and every failure is '
+          'reported', () async {
+        await expectLater(
+          installer(
+            (uri) async => throw uri.host == raw
+                ? const ScriptDownloadError('HTTP 429', transient: true)
+                : const ScriptDownloadError(
+                    'HTTP 403',
+                    transient: true,
+                    retryAfter: Duration(minutes: 50),
+                  ),
+          ).manifest(),
+          throwsA(
+            isA<InstallerUnavailable>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('$raw: HTTP 429'), contains('$api: HTTP 403')),
+            ),
+          ),
+        );
+        // An exhausted hourly quota is not waited for; the rate-limited
+        // host is tried again after every wait.
+        expect(downloads.where((host) => host == api), hasLength(1));
+        expect(waits, isNotEmpty);
+        expect(
+          downloads.where((host) => host == raw),
+          hasLength(waits.length + 1),
+        );
+        expect(ran, isEmpty);
+      });
+
+      test('the cached copy runs while its bytes match and is replaced '
+          'otherwise', () async {
+        File(cached)
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(genuine);
+        await installer((_) async => fail('downloaded')).manifest();
+        expect(downloads, isEmpty);
+        File(cached).writeAsBytesSync(tampered);
+        await installer((_) async => genuine).manifest();
+        expect(downloads, [raw]);
+        expect(ran, [cached, cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+      });
+
+      test('the checkout of a previous install refills the cache offline '
+          'when it has the pinned script', () async {
+        final installed = File(source.installedAgentScript(hermesHome))
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(tampered);
+        await installer((_) async => genuine).manifest();
+        expect(downloads, [raw]);
+        File(cached).deleteSync();
+        installed.writeAsBytesSync(genuine);
+        await installer(
+          (_) async =>
+              throw const ScriptDownloadError('offline', transient: true),
+        ).manifest();
+        expect(downloads, [raw]);
+        expect(ran, [cached, cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+        expect(installed.readAsBytesSync(), genuine);
+      });
     });
   });
 

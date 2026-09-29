@@ -72,6 +72,12 @@ replace the file with the newer one.
 
 Open Hermuse Agent and choose **Install Hermes on this computer**.
 
+On every system the installer is the official script of Hermes Agent 0.21.5
+(`install.sh`, or `install.ps1` on Windows). Hermuse Agent downloads it from
+GitHub (`raw.githubusercontent.com`, else `api.github.com`), tries again for
+about a minute and a half while GitHub is busy, and runs it only if its SHA-256
+matches the one built into the app.
+
 ### On Linux
 
 Hermuse Agent first checks this computer and shows **Prepare this computer**
