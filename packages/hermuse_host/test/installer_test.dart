@@ -16,6 +16,11 @@ Hermes Agent Installer
 {"protocol_version":1,"stages":[{"name":"uv","title":"Installing uv package manager","category":"prereqs","needs_user_input":false},{"name":"configure","title":"Configuring API keys and models","category":"post-install","needs_user_input":true}]}
 ''';
 
+/// `install.ps1 -Manifest` at the pinned commit, as it prints it.
+const windowsManifest = '''
+{"protocol_version":1,"stages":[{"needs_user_input":false,"title":"Installing uv package manager","category":"prereqs","name":"uv"},{"needs_user_input":false,"title":"Installing Git","category":"prereqs","name":"git"},{"needs_user_input":false,"title":"Detecting Node.js","category":"prereqs","name":"node"},{"needs_user_input":false,"title":"Installing ripgrep and ffmpeg","category":"prereqs","name":"system-packages"},{"needs_user_input":false,"title":"Cloning Hermes repository","category":"install","name":"repository"},{"needs_user_input":false,"title":"Verifying Python 3.11","category":"prereqs","name":"python"},{"needs_user_input":false,"title":"Creating Python virtual environment","category":"install","name":"venv"},{"needs_user_input":false,"title":"Installing Python dependencies","category":"install","name":"dependencies"},{"needs_user_input":false,"title":"Installing Node.js dependencies","category":"install","name":"node-deps"},{"needs_user_input":false,"title":"Adding Hermes to PATH","category":"finalize","name":"path"},{"needs_user_input":false,"title":"Writing configuration templates","category":"finalize","name":"config-templates"},{"needs_user_input":false,"title":"Installing messaging platform SDKs","category":"finalize","name":"platform-sdks"},{"needs_user_input":false,"title":"Marking install complete","category":"finalize","name":"bootstrap-marker"},{"needs_user_input":true,"title":"Configuring API keys and models","category":"post-install","name":"configure"},{"needs_user_input":true,"title":"Starting messaging gateway","category":"post-install","name":"gateway"}]}
+''';
+
 void main() {
   group('manifest parsing', () {
     test('parses the real install.sh manifest', () {
@@ -377,6 +382,88 @@ void main() {
       );
     });
 
+    group('on Windows', () {
+      test('stages pin the commit and the install dir in install.ps1 '
+          'syntax, keep the host environment and close the journal', () async {
+        const environment = {
+          'Path': r'C:\Windows\system32',
+          'LOCALAPPDATA': r'C:\Users\t\AppData\Local',
+        };
+        await drain(script.installer(windows: true, environment: environment));
+        final (args, stageEnvironment) = script.stageCalls['dependencies']!;
+        expect(
+          args,
+          containsAllInOrder([
+            '-File',
+            script.windowsScript,
+            '-Stage',
+            'dependencies',
+            '-Commit',
+            hermesReleaseCommit,
+            '-ForceCommit',
+            '-HermesHome',
+            script.hermesHome,
+            '-InstallDir',
+            script.installDir,
+            '-SkipComputerUse',
+            '-NonInteractive',
+            '-Json',
+          ]),
+        );
+        expect(stageEnvironment, {
+          ...environment,
+          'HERMES_HOME': script.hermesHome,
+        });
+        // The setup wizard and the gateway belong to the app's onboarding.
+        expect(script.stagesRun, isNot(contains('configure')));
+        expect(script.stagesRun, isNot(contains('gateway')));
+        expect(script.stagesRun.last, 'bootstrap-marker');
+        final closed = (await InstallJournal.read(script.journalPath))!;
+        expect(closed.finished, isTrue);
+        expect(closed.runtimeHome, isNull);
+        expect(Directory('${script.hermesHome}/runtime').existsSync(), isFalse);
+      });
+
+      test(
+        'a missing bootstrap marker reopens bootstrap-marker only',
+        () async {
+          script.writesMarker = false;
+          await expectLater(
+            drain(script.installer(windows: true)),
+            throwsA(
+              isA<InstallFailed>().having(
+                (e) => e.stage,
+                'stage',
+                'bootstrap-marker',
+              ),
+            ),
+          );
+          final open = (await InstallJournal.read(script.journalPath))!;
+          expect(open.finished, isFalse);
+          expect(open.currentStage, 'bootstrap-marker');
+
+          script.writesMarker = true;
+          script.stagesRun.clear();
+          await drain(script.installer(windows: true));
+          expect(script.stagesRun, ['bootstrap-marker']);
+          expect(
+            (await InstallJournal.read(script.journalPath))!.finished,
+            isTrue,
+          );
+        },
+      );
+
+      test('the hermes.cmd launcher of a relocatable venv validates', () async {
+        script.windowsLaunchers = {'hermes.cmd'};
+        await drain(script.installer(windows: true));
+        expect(script.versionCalls, ['${script.windowsBin}\\hermes.cmd']);
+        expect(
+          (await InstallJournal.read(script.journalPath))!.finished,
+          isTrue,
+        );
+      });
+    });
+
     test('checkPrerequisites reports the tools missing from PATH', () async {
       HermesInstaller withTools(Set<String> present) => HermesInstaller(
         hermesHome: '/h',
@@ -496,11 +583,12 @@ void main() {
   });
 }
 
-/// Stands in for `install.sh`: answers `--manifest`, runs stages by
-/// recording them and producing the side effects validation reads (the
-/// checkout's `HEAD`, the bootstrap marker), and answers `--version` for
-/// the managed launcher and `xcode-select -p` for a Mac with the Command
-/// Line Tools. Paths live in a real temporary directory.
+/// Stands in for `install.sh` and `install.ps1`: answers `--manifest` /
+/// `-Manifest`, runs stages by recording them and producing the side
+/// effects validation reads (the checkout's `HEAD`, the bootstrap marker),
+/// and answers `--version` for the installed launcher and `xcode-select -p`
+/// for a Mac with the Command Line Tools. Paths live in a real temporary
+/// directory.
 final class FakeInstallerScript {
   FakeInstallerScript(this.root);
 
@@ -509,10 +597,15 @@ final class FakeInstallerScript {
   String get installDir => '$hermesHome/hermes-agent';
   String get journalPath => '$root/support/hermes-install.json';
   String get launcher => '$hermesHome/runtime/.local/bin/hermes';
+  String get windowsScript => '$root/install.ps1';
+  String get windowsBin => '$hermesHome\\bin';
   static const _developerDir = '/Library/Developer/CommandLineTools';
 
   final stagesRun = <String>[];
   final stageCalls = <String, (List<String>, Map<String, String>)>{};
+
+  /// Launchers that answered `--version`.
+  final versionCalls = <String>[];
 
   /// Result frame per stage; stages absent here succeed.
   final frames = <String, String>{};
@@ -525,24 +618,32 @@ final class FakeInstallerScript {
   /// Commit the `repository` stage checks out.
   String head = hermesReleaseCommit;
   bool launcherAnswers = true;
+  bool writesMarker = true;
+
+  /// The launchers the Windows `path` stage stages in [windowsBin].
+  Set<String> windowsLaunchers = {'hermes.exe'};
 
   HermesInstaller installer({
     Map<String, String> environment = const {'PATH': '/usr/bin'},
     bool journaled = true,
     bool macOS = false,
+    bool windows = false,
   }) => HermesInstaller(
     hermesHome: hermesHome,
     installDir: installDir,
     journalPath: journaled ? journalPath : null,
-    source: const InstallerSource(
-      isWindows: false,
-      localScript: '/fake/install.sh',
+    source: InstallerSource(
+      isWindows: windows,
+      localScript: windows ? windowsScript : '/fake/install.sh',
     ),
     environment: environment,
-    isWindows: false,
+    isWindows: windows,
     isMacOS: macOS,
     fileExists: (path) async =>
-        path == '/fake/install.sh' || path == '$_developerDir/usr/bin/git',
+        path == '/fake/install.sh' ||
+        path == windowsScript ||
+        path == '$_developerDir/usr/bin/git' ||
+        windowsLaunchers.any((name) => path == '$windowsBin\\$name'),
     which: (_) async => '/usr/bin/tool',
     runScript: _run,
   );
@@ -556,7 +657,8 @@ final class FakeInstallerScript {
     if (executable == '/usr/bin/xcode-select') {
       return ProcessResult(0, 0, '$_developerDir\n', '');
     }
-    if (executable == launcher) {
+    if (executable == launcher || executable.startsWith('$windowsBin\\')) {
+      versionCalls.add(executable);
       return launcherAnswers
           ? ProcessResult(0, 0, 'Hermes Agent v0.21.5 (2026.9.24)\n', '')
           : ProcessResult(0, 1, '', 'No such file or directory');
@@ -564,7 +666,13 @@ final class FakeInstallerScript {
     if (args.contains('--manifest')) {
       return ProcessResult(0, 0, posixManifest, '');
     }
-    final name = args[args.indexOf('--stage') + 1];
+    if (args.contains('-Manifest')) {
+      return ProcessResult(0, 0, windowsManifest, '');
+    }
+    final windows = args.contains('-Stage');
+    String argument(String posix, String ps1) =>
+        args[args.indexOf(windows ? ps1 : posix) + 1];
+    final name = argument('--stage', '-Stage');
     stagesRun.add(name);
     stageCalls[name] = (args, environment ?? const {});
     await onStage?.call(name);
@@ -574,11 +682,11 @@ final class FakeInstallerScript {
       case 'repository':
         await Directory('$installDir/.git').create(recursive: true);
         await File('$installDir/.git/HEAD').writeAsString('$head\n');
-      case 'complete':
+      case 'complete' || 'bootstrap-marker' when writesMarker:
         await File('$installDir/.hermes-bootstrap-complete').writeAsString(
           jsonEncode({
             'schemaVersion': 1,
-            'pinnedCommit': args[args.indexOf('--commit') + 1],
+            'pinnedCommit': argument('--commit', '-Commit'),
             'pinnedBranch': 'main',
             'completedAt': '2026-09-29T08:00:00.000Z',
           }),

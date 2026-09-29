@@ -286,14 +286,21 @@ const _powerShellPrefix = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File'];
 /// `PATH` starts with its tool directories. No launcher, Node or Python
 /// lands in the user's `~/.local` and no shell rc file of theirs is edited.
 ///
-/// With a [journalPath] (Linux, macOS) the install is the app's own: an
-/// [InstallJournal] is written before the first stage, a fresh install
-/// refuses an existing [installDir] the app does not own, stages also get
-/// `--force-commit` (a re-run `repository` stage re-pins the app's own
+/// Windows stages (`install.ps1`) get the same pin and skips in its own
+/// syntax: `-Commit`, `-HermesHome`, `-InstallDir` and `-SkipComputerUse`
+/// (the script has no browser skip). They run in the host environment:
+/// `install.ps1` keeps everything under `HERMES_HOME` (uv, PortableGit, Node,
+/// the `bin\hermes.exe` launcher) and records its PATH additions in the
+/// user's environment itself.
+///
+/// With a [journalPath] the install is the app's own: an [InstallJournal]
+/// is written before the first stage, a fresh install refuses an existing
+/// [installDir] the app does not own, stages also get `--force-commit` /
+/// `-ForceCommit` (a re-run `repository` stage re-pins the app's own
 /// checkout), [run] skips the stages that already succeeded and re-runs the
 /// interrupted one, and the journal only closes once the result validates:
 /// the checkout's `HEAD` and `<installDir>/.hermes-bootstrap-complete` name
-/// the pinned commit and the managed launcher answers `--version`.
+/// the pinned commit and the installed launcher answers `--version`.
 final class HermesInstaller {
   HermesInstaller({
     required this.hermesHome,
@@ -314,22 +321,16 @@ final class HermesInstaller {
     this._which,
     bool? isWindows,
     bool? isMacOS,
-  }) : source = source ?? InstallerSource(isWindows: isWindows ?? false),
+  }) : source =
+           source ??
+           InstallerSource(isWindows: isWindows ?? Platform.isWindows),
        _environment = environment ?? hostEnvironment(),
        _download = download ?? _downloadDefault,
        _runScript = runScript ?? _runScriptDefault,
        _fileExists = fileExists ?? ((path) => File(path).exists()),
        _writeFile = writeFile ?? _writeFileDefault,
        _isWindows = isWindows ?? Platform.isWindows,
-       _isMacOS = isMacOS ?? Platform.isMacOS {
-    if (journalPath != null && _isWindows) {
-      throw ArgumentError.value(
-        journalPath,
-        'journalPath',
-        'install journals are not kept on Windows',
-      );
-    }
-  }
+       _isMacOS = isMacOS ?? Platform.isMacOS;
 
   final String hermesHome;
   final String installDir;
@@ -473,8 +474,9 @@ final class HermesInstaller {
   /// Runs every manifest stage in order, streaming [InstallProgress]; the
   /// [InstallLog] lines of a stage arrive while it runs.
   ///
-  /// Stages in [skip] are not invoked at all (default `{'setup','gateway'}`,
-  /// whose interactive concerns the app's own onboarding owns); they are
+  /// Stages in [skip] are not invoked at all (default `setup` and
+  /// `configure`, the POSIX and Windows setup wizards, and `gateway`, whose
+  /// interactive concerns the app's own onboarding owns); they are
   /// reported as [InstallStageFinished] with a synthetic skipped frame, like
   /// the stages the journal records as done
   /// ([InstallStageFinished.previouslyCompleted]). Stages flagged
@@ -484,7 +486,7 @@ final class HermesInstaller {
   /// the stage to run again. A stage already running when the listener
   /// cancels still completes (and is journaled); no later stage starts.
   Stream<InstallProgress> run({
-    Set<String> skip = const {'setup', 'gateway'},
+    Set<String> skip = const {'setup', 'configure', 'gateway'},
   }) async* {
     final check = await checkPrerequisites();
     if (!check.ok) {
@@ -590,6 +592,14 @@ final class HermesInstaller {
           script,
           '-Stage',
           name,
+          '-Commit',
+          source.commit,
+          if (owned) '-ForceCommit',
+          '-HermesHome',
+          hermesHome,
+          '-InstallDir',
+          installDir,
+          '-SkipComputerUse',
           '-NonInteractive',
           '-Json',
         ]
@@ -669,11 +679,16 @@ final class HermesInstaller {
     return journal;
   }
 
-  /// The launcher a validated install answers `--version` with.
-  String get _launcher => _runtime.launcher;
+  /// The launchers a validated install may answer `--version` with, in
+  /// lookup order: the [ManagedRuntime] one on POSIX; on Windows the
+  /// `path` stage's `<hermesHome>\bin\hermes.exe`, or `hermes.cmd` for a
+  /// relocatable venv (`Install-HermesCommandLaunchers`).
+  List<String> get _launchers => _isWindows
+      ? ['$hermesHome\\bin\\hermes.exe', '$hermesHome\\bin\\hermes.cmd']
+      : [_runtime.launcher];
 
   /// The stage writing `<installDir>/.hermes-bootstrap-complete`.
-  static const _markerStage = 'complete';
+  String get _markerStage => _isWindows ? 'bootstrap-marker' : 'complete';
 
   /// Validates the finished install and closes [journal], or reopens the
   /// stage a defect traces back to and throws [InstallFailed] for it.
@@ -682,7 +697,7 @@ final class HermesInstaller {
     final commit = source.commit;
     final head = await _readTrimmed('$installDir/.git/HEAD');
     final marker = await _markerCommit();
-    final launcher = _launcher;
+    final launcher = await _existingLauncher();
     final (String, String)? defect = head != commit
         ? (
             'repository',
@@ -706,8 +721,8 @@ final class HermesInstaller {
     await journal.asFinished().write(path);
   }
 
-  /// `pinnedCommit` of the bootstrap marker the `complete` stage writes
-  /// (`write_bootstrap_marker`, schema 1), or null.
+  /// `pinnedCommit` of the bootstrap marker the marker stage writes
+  /// (`write_bootstrap_marker` / `Write-BootstrapMarker`, schema 1), or null.
   Future<String?> _markerCommit() async {
     final content = await _readTrimmed(
       '$installDir/.hermes-bootstrap-complete',
@@ -723,6 +738,16 @@ final class HermesInstaller {
     }
   }
 
+  /// The first of [_launchers] that exists, else the first one (whose
+  /// `--version` then fails).
+  Future<String> _existingLauncher() async {
+    final launchers = _launchers;
+    for (final launcher in launchers) {
+      if (await _fileExists(launcher)) return launcher;
+    }
+    return launchers.first;
+  }
+
   Future<bool> _answersVersion(String launcher) async {
     try {
       final result = await _runScript(
@@ -731,7 +756,7 @@ final class HermesInstaller {
         environment: {
           ..._environment,
           'HERMES_HOME': hermesHome,
-          'PATH': _runtime.prefixPath(_environment['PATH']),
+          if (!_isWindows) 'PATH': _runtime.prefixPath(_environment['PATH']),
         },
       ).timeout(const Duration(seconds: 30));
       return result.exitCode == 0 && '${result.stdout}'.trim().isNotEmpty;

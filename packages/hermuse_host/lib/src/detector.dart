@@ -27,6 +27,8 @@ final class DetectedHermes {
     required this.version,
     required this.home,
     this.managed = false,
+    this.windows = false,
+    this.gitBash,
   });
 
   /// Absolute path of the `hermes` launcher that answered `--version`.
@@ -40,8 +42,17 @@ final class DetectedHermes {
   final String home;
 
   /// Whether [executable] is the launcher of the runtime Hermuse installed
-  /// ([ManagedRuntime.launcher]) rather than an install the user made.
+  /// ([ManagedRuntime.launcher], POSIX) rather than an install the user
+  /// made. Always false on Windows, where `install.ps1` has no private
+  /// runtime.
   final bool managed;
+
+  /// Whether this is a Windows install (`install.ps1` layout).
+  final bool windows;
+
+  /// Windows: the `bash.exe` of the PortableGit `install.ps1` unpacks to
+  /// `<home>\git` when the machine had no Git, else null.
+  final String? gitBash;
 
   /// The release [version] names (`0.21.5`, `0.22.0rc1`, …), or null when
   /// the line carries none.
@@ -60,15 +71,56 @@ final class DetectedHermes {
     return patch > 5 || !_preReleasePattern.hasMatch(match[4]!);
   }
 
-  /// Entries a child process of this install needs over [hostEnvironment]:
-  /// a managed install reaches its launcher, Node and uv through
+  /// Entries a child process of this install needs over [hostEnvironment]
+  /// ([host] defaults to it).
+  ///
+  /// POSIX: a managed install reaches its launcher, Node and uv through
   /// [ManagedRuntime.binDirs] ahead of the host `PATH` (the real `HOME` is
   /// kept); an install the user made runs with the host environment as is.
-  /// [host] defaults to [hostEnvironment].
+  ///
+  /// Windows: `install.ps1` records its tools in the user's registry
+  /// environment, which a process started before the install (this app,
+  /// when it ran the install itself) does not see. Children get the
+  /// `<home>\bin` launchers and uv and the portable Node in `<home>\node`
+  /// ahead of the host `Path` (as Hermes Desktop's `backend-env.ts` does),
+  /// the PortableGit `cmd` directory after it, `HERMES_GIT_BASH_PATH` =
+  /// [gitBash] and `PYTHONUTF8=1`, each unless the host already sets it.
   Map<String, String> runtimeEnvironment([Map<String, String>? host]) {
+    if (windows) return _windowsEnvironment(host ?? hostEnvironment());
     if (!managed) return const {};
     final hostPath = (host ?? hostEnvironment())['PATH'];
     return {'PATH': ManagedRuntime(home).prefixPath(hostPath)};
+  }
+
+  Map<String, String> _windowsEnvironment(Map<String, String> host) {
+    // Windows names are case-insensitive: keep the host's spelling (`Path`)
+    // so the merged environment holds a single entry.
+    String nameOf(String name) => host.keys.firstWhere(
+      (key) => key.toUpperCase() == name,
+      orElse: () => name,
+    );
+    final pathName = nameOf('PATH');
+    final entries = <String>[];
+    final seen = <String>{};
+    void add(String entry) {
+      final trimmed = entry.trim();
+      if (trimmed.isNotEmpty && seen.add(trimmed.toLowerCase())) {
+        entries.add(trimmed);
+      }
+    }
+
+    add('$home\\bin');
+    add('$home\\node');
+    (host[pathName] ?? '').split(';').forEach(add);
+    final bash = gitBash;
+    if (bash != null) add('$home\\git\\cmd');
+    final gitBashName = nameOf('HERMES_GIT_BASH_PATH');
+    final utf8Name = nameOf('PYTHONUTF8');
+    return {
+      pathName: entries.join(';'),
+      if (bash != null && (host[gitBashName] ?? '').isEmpty) gitBashName: bash,
+      if (!host.containsKey(utf8Name)) utf8Name: '1',
+    };
   }
 }
 
@@ -190,8 +242,24 @@ final class HermesDetector {
           version: version,
           home: hermesHome,
           managed: candidate == managedLauncher,
+          windows: _isWindows,
+          gitBash: _isWindows ? await _portableGitBash() : null,
         );
       }
+    }
+    return null;
+  }
+
+  /// Windows: the `bash.exe` of the PortableGit `install.ps1` unpacks under
+  /// [hermesHome] (the two layouts its `Set-GitBashEnvVar` checks first),
+  /// or null.
+  Future<String?> _portableGitBash() async {
+    final git = _join(hermesHome, 'git');
+    for (final bash in [
+      _join(git, 'bin\\bash.exe'),
+      _join(git, 'usr\\bin\\bash.exe'),
+    ]) {
+      if (await _fileExists(bash)) return bash;
     }
     return null;
   }
