@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:io';
 
 /// Variables the AppImage `AppRun` rewrites to load the bundled GTK runtime.
@@ -62,11 +63,15 @@ const _appImageOnly = {
 /// login shell ([withSystemPath] of [macOSSystemPaths]): opened from the
 /// Finder or the Dock, the app inherits launchd's
 /// `/usr/bin:/bin:/usr/sbin:/sbin` only, without `/usr/local/bin` where
-/// Docker Desktop installs `docker`.
+/// Docker Desktop installs `docker`. On Windows it loses `PSModulePath`
+/// ([withoutPowerShellModulePath]).
 Map<String, String> hostEnvironment([Map<String, String>? environment]) {
   final current = environment ?? Platform.environment;
   if (environment == null && Platform.isMacOS) {
     return withSystemPath(current, _macOSSystemPaths ??= macOSSystemPaths());
+  }
+  if (environment == null && Platform.isWindows) {
+    return withoutPowerShellModulePath(current);
   }
   if (!current.containsKey(_savedMarker)) return current;
   final host = <String, String>{
@@ -135,3 +140,24 @@ Map<String, String> withSystemPath(
     'PATH': [if (path.isNotEmpty) path, ...missing].join(':'),
   };
 }
+
+/// [environment] without `PSModulePath`, with Windows' case-insensitive
+/// names (as [Platform.environment] there).
+///
+/// The variable is PowerShell's per-process state. A PowerShell 7 parent (a
+/// terminal, `winget install`) prepends its own module directories, and a
+/// Windows PowerShell child then loads PowerShell 7's modules and fails:
+/// `install.ps1` runs in `powershell.exe`, whose uv installer stops on
+/// "the 'Get-ExecutionPolicy' command was found in the module
+/// 'Microsoft.PowerShell.Security', but the module could not be loaded".
+/// Without it every PowerShell builds its module path from the user's and
+/// the machine's settings, as in a new session.
+Map<String, String> withoutPowerShellModulePath(
+  Map<String, String> environment,
+) =>
+    LinkedHashMap<String, String>(
+        equals: (a, b) => a.toUpperCase() == b.toUpperCase(),
+        hashCode: (name) => name.toUpperCase().hashCode,
+      )
+      ..addAll(environment)
+      ..remove('PSModulePath');
