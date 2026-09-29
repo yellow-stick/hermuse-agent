@@ -25,13 +25,11 @@ Future<void> main() async {
       '${support.path}${Platform.pathSeparator}'
       'hermes-install.json';
   final host = isDesktop
-      ? Platform.isLinux
-            ? LocalHermesHost.system(
-                secrets,
-                installJournalPath: journalPath,
-                setupAssistant: true,
-              )
-            : LocalHermesHost.system(secrets)
+      ? LocalHermesHost.system(
+          secrets,
+          installJournalPath: Platform.isWindows ? null : journalPath,
+          setupAssistant: Platform.isLinux,
+        )
       : null;
   final container = ProviderContainer(
     overrides: [
@@ -67,11 +65,11 @@ Future<void> main() async {
   );
 }
 
-/// Touches the keystore: a locked or missing keyring surfaces as a blocking
-/// error screen.
+/// A real write, read and delete of a probe secret: a locked, missing or
+/// refused keystore surfaces as a blocking error screen.
 Future<Object?> _probeKeystore(SecureSecretStore secrets) async {
   try {
-    await secrets.read('__probe__', '__probe__');
+    await verifySecretStore(secrets);
     return null;
   } on Object catch (e) {
     return e;

@@ -10,9 +10,22 @@ import 'package:hermes_client/hermes_client.dart';
 /// Keys are stored as `hermes/<instanceId>/<key>` and are never written
 /// anywhere else. Keystore failures propagate to the caller: the app shows a
 /// blocking error screen instead of falling back to plaintext.
+///
+/// On macOS the items live in the login keychain under the app's own
+/// service name. The data protection keychain would need a provisioning
+/// profile (`keychain-access-groups`), which neither the Developer ID
+/// release nor an unsigned build carries; the login keychain grants access
+/// by code signature instead.
 final class SecureSecretStore implements SecretStore {
   SecureSecretStore([FlutterSecureStorage? storage])
-    : _storage = storage ?? const FlutterSecureStorage();
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            mOptions: MacOsOptions(
+              accountName: 'com.yellowstick.hermuseApp',
+              usesDataProtectionKeychain: false,
+            ),
+          );
 
   final FlutterSecureStorage _storage;
 
