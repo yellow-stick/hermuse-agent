@@ -417,6 +417,7 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
             semanticLabel: 'Goal title',
           ),
         ),
+        const SizedBox(height: 12),
         YsField(
           label: 'Why',
           child: YsTextBox(
@@ -427,6 +428,7 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
             maxHeight: 200,
           ),
         ),
+        const SizedBox(height: 12),
         YsField(
           label: 'Target date (optional)',
           child: YsInputBox(
