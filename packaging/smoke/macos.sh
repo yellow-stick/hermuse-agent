@@ -352,7 +352,7 @@ c1_launch() {
   local png text
   png=$(shot welcome)
   D text "$png" >"$EVID/logs/ocr-welcome.txt" 2>&1
-  text=$(D text "$png" --title-bar "$WINDOW_TITLE" --height 28 2>&1)
+  text=$(D text "$png" --title-bar "$WINDOW_TITLE" 2>&1)
   printf '%s\n' "$text" >"$EVID/logs/ocr-title-bar.txt"
   pass_or_fail "$id" window-title "$(grep -qi 'hermuse agent' <<<"$text" && echo 0 || echo 1)" \
     "window '$WINDOW_TITLE' (window server) with 'Hermuse Agent' read by OCR in its title bar" "$png" \

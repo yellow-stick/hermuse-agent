@@ -325,7 +325,7 @@ function Test-Launch {
   }
   $png = Save-Shot 'welcome'
   D text $png *> (Join-Path $Logs 'ocr-welcome.txt')
-  $title = (D text $png --title-bar $WindowTitle --height 31) -join "`n"
+  $title = (D text $png --title-bar $WindowTitle) -join "`n"
   Set-Content -Path (Join-Path $Logs 'ocr-title-bar.txt') -Value $title
   Add-Verdict $id 'window-title' ($title -match '(?i)hermuse agent') `
     "window '$WindowTitle' (window manager) with 'Hermuse Agent' read by OCR in its title bar" @($png, (Join-Path $Logs 'ocr-title-bar.txt'))

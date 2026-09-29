@@ -168,6 +168,16 @@ if IS_WIN:
                 return hwnd
         return None
 
+    def client_rect(title: str) -> Optional[tuple[int, int, int, int]]:
+        """The window's client area (below the title bar) in screen pixels."""
+        hwnd = _hwnd(title)
+        if hwnd is None:
+            return None
+        rect, origin = wintypes.RECT(), wintypes.POINT(0, 0)
+        if not user32.GetClientRect(hwnd, ctypes.byref(rect)) or not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+            return None
+        return origin.x, origin.y, rect.right, rect.bottom
+
     def window_maximize(title: str) -> bool:
         hwnd = _hwnd(title)
         if hwnd is None:
@@ -287,6 +297,16 @@ elif IS_MAC:
             return None
         parts = out.split()
         return tuple(int(float(p)) for p in parts) if len(parts) == 4 else None  # type: ignore[return-value]
+
+    TITLE_BAR = 28  # points of a standard NSWindow title bar
+
+    def client_rect(title: str) -> Optional[tuple[int, int, int, int]]:
+        """The window's content area (below the title bar) in screen points."""
+        rect = window_rect(title)
+        if rect is None:
+            return None
+        x, y, w, h = rect
+        return x, y + TITLE_BAR, w, h - TITLE_BAR
 
     def window_maximize(title: str) -> bool:
         # The visible frame (below the menu bar, above the Dock), as the
@@ -489,15 +509,16 @@ def screen_text(png: Path, crop: str = "") -> str:
     return "\n".join(dict.fromkeys(lines))
 
 
-def window_strip(png: Path, title: str, height: int) -> str:
-    """Crop geometry (screenshot pixels) of the top <height> points of a window:
-    its title bar."""
-    rect = window_rect(title)
-    if rect is None:
+def title_bar_crop(png: Path, title: str) -> str:
+    """Crop geometry (screenshot pixels) of a window's title bar: from the top
+    of the window (clamped to the screen) to the top of its client area."""
+    rect, client = window_rect(title), client_rect(title)
+    if rect is None or client is None:
         raise OSError(f"no window titled {title!r}")
     scale = point_scale(png)
-    x, y, w, _ = rect
-    return f"{int(w * scale)}x{int(height * scale)}+{max(0, int(x * scale))}+{max(0, int(y * scale))}"
+    top = max(0, rect[1])
+    return (f"{int(client[2] * scale)}x{int(max(1, client[1] - top) * scale)}"
+            f"+{max(0, int(client[0] * scale))}+{int(top * scale)}")
 
 
 # --- GUI commands ----------------------------------------------------------------
@@ -517,7 +538,7 @@ def cmd_locate(args: argparse.Namespace) -> None:
 
 def cmd_text(args: argparse.Namespace) -> None:
     png = Path(args.png)
-    crop = window_strip(png, args.title_bar, args.height) if args.title_bar else args.crop
+    crop = title_bar_crop(png, args.title_bar) if args.title_bar else args.crop
     print(screen_text(png, crop))
 
 
@@ -600,15 +621,13 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
     labels are tooltips, out of reach of OCR). The rail is the first <rail>
     points of the window below its title bar; each item is a band of rows
     holding bright icon pixels."""
-    rect = window_rect(title)
-    if rect is None:
+    client = client_rect(title)
+    if client is None:
         return []
-    x, y, w, h = rect
+    x, top, _, height = client
     png = TMP / "rail-screen.png"
     screenshot(png)
     scale = point_scale(png)
-    top = y + (28 if IS_MAC else 31)
-    height = h - (top - y)
     crop = f"{int(rail * scale)}x{int(height * scale)}+{int(x * scale)}+{int(top * scale)}"
     proc = run([MAGICK, str(png), "-alpha", "off", "-crop", crop, "+repage", "-colorspace", "Gray", "-threshold", "55%",
                 "-scale", f"1x{int(height * scale)}!", "-depth", "8", "txt:-"])
@@ -1082,7 +1101,6 @@ def main() -> None:
     p.add_argument("png")
     p.add_argument("--crop", default="", help="WxH+X+Y in screenshot pixels")
     p.add_argument("--title-bar", default="", help="only the title bar of this window")
-    p.add_argument("--height", type=int, default=30, help="title bar height in points")
     p.set_defaults(run=cmd_text)
     for name, run_fn, modes, default in (("click", cmd_click, ("line", "any", "filled"), "line"),
                                          ("wait-text", cmd_wait_text, ("line", "any"), "any")):
