@@ -33,6 +33,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   web_socket: ^1.0.1
+  flutter_secure_storage_platform_interface: ^2.1.1
 
 flutter:
   uses-material-design: true
