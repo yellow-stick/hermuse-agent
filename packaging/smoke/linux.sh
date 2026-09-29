@@ -384,6 +384,8 @@ app_launch() { # <label> [raw shell command]
     "cd '$cwd' && HERMES_HOME='$HERMES_HOME' setsid -f $command >>'$STATE/out/app-$label.log' 2>&1 </dev/null" ||
     return 1
   gui_window "^${WINDOW_TITLE}\$" "$(T 180)" >/dev/null || return 1
+  # Maximized, as a user does with a long setup page (still scrollable).
+  wmctrl -r "$WINDOW_TITLE" -b add,maximized_vert,maximized_horz 2>/dev/null
   APP_PID=$(app_pid)
   [ -n "$APP_PID" ] || return 1
   APP_DIR=$(dirname "$(readlink -f "/proc/$APP_PID/exe")")
@@ -399,6 +401,26 @@ app_close() { # [timeout-s]: a running install stage or APT transaction finishes
 
 ui_click() { # <label> <timeout-s> [line|any]: 0 clicked, 1 not found
   gui_click "$@" >/dev/null
+}
+
+# Clicks an item of the icon rail: 1-based from the top (Chat, Feed, Ideas,
+# Goals, Library) or `last` (Settings, at the bottom).
+ui_rail() { # <n|last>
+  local wid xy
+  local -a items
+  wid=$(gui_window "^${WINDOW_TITLE}\$" 5) || return 1
+  mapfile -t items < <(gui_rail_items "$wid")
+  [ "${#items[@]}" -ge 6 ] || return 1
+  if [ "$1" = last ]; then xy=${items[-1]}; else xy=${items[$(($1 - 1))]}; fi
+  # shellcheck disable=SC2086 # "x y"
+  xdotool mousemove --sync $xy click 1
+  sleep 2
+}
+
+# Settings (bottom of the rail) lists the instances, each with its Connections.
+ui_connections() {
+  ui_click "$UI_BACK_TO_CHAT" 10 || true
+  ui_click "$UI_CONNECTIONS" 5 || { ui_rail last && ui_click "$UI_CONNECTIONS" 60; }
 }
 
 # Waits for the gate and clicks through it; polkit dialogs are handled by the
@@ -538,14 +560,16 @@ install_artifact() { # <id>
   printf 'install fuse /bin/false\n' >/etc/modprobe.d/hermuse-smoke-no-fuse.conf
   modprobe -r fuse 2>/dev/null
   rm -f /dev/fuse
-  local ok=0 found=()
+  local ok=0 found=() kept=''
   command -v fusermount >/dev/null && found+=(fusermount)
   command -v fusermount3 >/dev/null && found+=(fusermount3)
   [ -e /dev/fuse ] && found+=(/dev/fuse)
-  ldconfig -p | grep -q 'libfuse\.so\.2' && found+=(libfuse.so.2)
+  # A library the boot chain keeps (grub-common depends on libfuse2 on
+  # Debian 12) cannot mount anything without the helpers and the device.
+  ldconfig -p | grep -q 'libfuse\.so\.2' && kept='; libfuse.so.2 kept for the boot chain, unusable'
   [ ${#found[@]} -eq 0 ] || ok=1
   pass_or_fail "$id" no-fuse "$ok" \
-    "FUSE unusable: no fusermount/fusermount3, no /dev/fuse, no libfuse2 (purged: ${fuse[*]:-none}${diverted[*]:+; diverted: ${diverted[*]}})${found[*]:+; still present: ${found[*]}}" \
+    "FUSE unusable: no fusermount/fusermount3, no /dev/fuse (purged: ${fuse[*]:-none}${diverted[*]:+; diverted: ${diverted[*]}})$kept${found[*]:+; still present: ${found[*]}}" \
     "$EVID/logs/apt-purge-fuse.log"
   tester_mkdir "$TESTER_HOME/Applications"
   APPIMAGE_PATH=$TESTER_HOME/Applications/$(basename "$APPIMAGE_FILE")
@@ -949,8 +973,8 @@ c5_plugin() {
   local feed goals
   # After the preparation the app opens the local instance's onboarding.
   ui_click "$UI_BACK_TO_CHAT" 30 || true
-  ui_click "$UI_FEED" 60 && feed=$(gui_wait_text "$UI_FEED" 30)
-  ui_click "$UI_GOALS" 60 && goals=$(gui_wait_text "$UI_GOALS" 30)
+  ui_rail 2 && feed=$(gui_wait_text "$UI_FEED" 30)
+  ui_rail 4 && goals=$(gui_wait_text "$UI_GOALS" 30)
   check "$id" feed-goals-ui manual-gate \
     "confirm Feed and Goals load, and the 4 registered jobs are not shown as executed" \
     "${feed:-$(gui_shot feed-missing)}" "${goals:-$(gui_shot goals-missing)}"
@@ -1021,7 +1045,7 @@ c7_computer() { # [engine-owner root|tester]
 c6_bridge() {
   local id=c6-bridge
   local config=$HERMES_HOME/cliproxy/config.yaml
-  if ui_click "$UI_CONNECTIONS" 60 && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
+  if ui_connections && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
     if wait_until "$(T 120)" 3 test -s "$config" &&
       wait_until "$(T 120)" 3 python3 "$SMOKE_DIR/guest/probe.py" cliproxy --config "$config" \
         --expect-exe "$APP_DIR/lib/cliproxy" >"$EVID/probe/cliproxy.json" 2>&1; then
@@ -1067,7 +1091,7 @@ c6_bad_hash() {
     app_launch bad-hash "'$TESTER_HOME/bad-hash/squashfs-root/AppRun'" || return 1
   fi
   local shot=''
-  if ui_click "$UI_CONNECTIONS" 60 && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
+  if ui_connections && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
     sleep 20
     shot=$(gui_shot bad-hash-refused)
   fi

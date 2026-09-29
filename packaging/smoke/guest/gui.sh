@@ -37,9 +37,12 @@ gui_shot() { # <name>
 # text of a dark window next to the black root window. Coordinates stay in
 # the upscaled space.
 gui_ocr() { # <png> -> TSV on stdout
-  local base="$GUI_TMP/ocr" invert=()
-  [ "$(convert "$1" -colorspace Gray -format '%[fx:mean<0.5?1:0]' info: 2>/dev/null)" = 1 ] && invert=(-negate)
-  convert "$1" -colorspace Gray -resize 200% "${invert[@]}" "$base.png" 2>/dev/null || return 1
+  local base="$GUI_TMP/ocr" tone=(-colorspace Gray)
+  # Dark UI: the brightness channel (max of R, G, B) keeps coloured text such
+  # as a red warning as light as white text, then the negation.
+  [ "$(convert "$1" -colorspace Gray -format '%[fx:mean<0.5?1:0]' info: 2>/dev/null)" = 1 ] &&
+    tone=(-colorspace HSB -channel B -separate +channel -negate)
+  convert "$1" "${tone[@]}" -resize 200% "$base.png" 2>/dev/null || return 1
   tesseract "$base.png" "$base" --psm 11 tsv >/dev/null 2>&1 || return 1
   cat "$base.tsv"
 }
@@ -155,7 +158,7 @@ gui_locate_filled() { # <png> <phrase>
 # the phrase inside a longer line (a list row). Prints the screenshot taken
 # just before the click.
 gui_click() { # <phrase> <timeout-s> [line|any]
-  local phrase=$1 deadline=$((SECONDS + $2)) mode=${3:-line} shot xy
+  local phrase=$1 deadline=$((SECONDS + $2)) mode=${3:-line} shot xy tries=0
   while :; do
     shot=$(gui_shot "click-$phrase") || return 1
     if xy=$(gui_locate "$shot" "$phrase" "$mode") || xy=$(gui_locate_filled "$shot" "$phrase"); then
@@ -167,7 +170,10 @@ gui_click() { # <phrase> <timeout-s> [line|any]
     fi
     rm -f "$shot"
     [ "$SECONDS" -lt "$deadline" ] || break
-    sleep 3
+    # A long page hides its lower buttons: scroll down, now and then back up.
+    tries=$((tries + 1))
+    if [ $((tries % 4)) -eq 0 ]; then gui_scroll up 30; else gui_scroll down 5; fi
+    sleep 2
   done
   gui_shot "missing-$phrase" >/dev/null
   return 1
@@ -200,8 +206,41 @@ gui_window_by_class() { # <class-regex> [timeout-s]
   done
 }
 
+# Screen centres "x y" of the items of the app's icon rail, top to bottom
+# (icon-only: its labels are tooltips, out of reach of OCR). The rail is the
+# first <width> pixels of the window; each item is a band of rows holding
+# bright icon pixels.
+gui_rail_items() { # <window-id> [rail-width]
+  local rail=${2:-72} shot="$GUI_TMP/rail.png" WINDOW X Y WIDTH HEIGHT SCREEN
+  eval "$(xdotool getwindowgeometry --shell "$1" 2>/dev/null)" || return 1
+  [ -n "${HEIGHT:-}" ] || return 1
+  import -window root -crop "${rail}x${HEIGHT}+${X}+${Y}" +repage "$shot" 2>/dev/null || return 1
+  convert "$shot" -colorspace Gray -threshold 55% -scale "1x${HEIGHT}!" -depth 8 txt:- 2>/dev/null |
+    awk -v x="$((X + rail / 2))" -v y0="$Y" '
+      NR > 1 {
+        split($1, p, /[,:]/)
+        on = ($0 !~ /#000000/)
+        if (on && start < 0) start = p[2]
+        if (on) last = p[2]
+        if (!on && start >= 0 && p[2] - last > 3) { printf "%d %d\n", x, y0 + (start + last) / 2; start = -1 }
+      }
+      BEGIN { start = -1 }
+      END { if (start >= 0) printf "%d %d\n", x, y0 + (start + last) / 2 }'
+}
+
 gui_focus() { # <window-id>
   xdotool windowactivate --sync "$1" >/dev/null 2>&1 || xdotool windowfocus --sync "$1" >/dev/null 2>&1
+}
+
+# Mouse wheel over the middle of the active window (a dialog scrolls under
+# the pointer).
+gui_scroll() { # up|down <notches>
+  # shellcheck disable=SC2034 # WINDOW and SCREEN are set by the eval
+  local button=5 WINDOW X Y WIDTH HEIGHT SCREEN
+  [ "$1" = up ] && button=4
+  eval "$(xdotool getactivewindow getwindowgeometry --shell 2>/dev/null)" || return 0
+  [ -n "${WIDTH:-}" ] || return 0
+  xdotool mousemove --sync $((X + WIDTH / 2)) $((Y + HEIGHT / 2)) click --repeat "$2" --delay 60 "$button"
 }
 
 # Answers the real polkit-gnome authentication dialog: accept types the

@@ -20,7 +20,7 @@ fi
 
 (umask 077 && : >"$XAUTHORITY")
 xauth -q -f "$XAUTHORITY" add "$display" . "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-Xvfb "$display" -screen 0 1600x1000x24 -dpi 96 -auth "$XAUTHORITY" -nolisten tcp >"$out/xvfb.log" 2>&1 &
+Xvfb "$display" -screen 0 1920x1080x24 -dpi 96 -auth "$XAUTHORITY" -nolisten tcp >"$out/xvfb.log" 2>&1 &
 tries=0
 until xdpyinfo >/dev/null 2>&1; do
   tries=$((tries + 1))
