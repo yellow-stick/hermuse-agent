@@ -73,15 +73,19 @@ void main() {
       expect(exe, '/bin/hermes');
       expect(environment?['HERMES_HOME'], home.path);
       commands.add(args);
-      if (args.first == 'hermuse') {
+      if (args case ['hermuse', 'computer', ...]) {
         return ProcessResult(2, computerExit, '{"state": "building"}', '');
+      }
+      if (args case ['hermuse', 'enable']) {
+        return ProcessResult(3, 0, '[feed] created: 1a2b', '');
       }
       expect(args, ['plugins', 'enable', 'hermuse']);
       return ProcessResult(1, 0, 'enabled hermuse', '');
     }
 
     test(
-      'copies the tree minus tests, enables, sets up the computer',
+      'copies the tree minus tests, enables, registers the jobs, sets up the '
+      'computer',
       () async {
         final installer = HermusePluginInstaller(
           pluginSourceDir: source.path,
@@ -102,6 +106,7 @@ void main() {
         expect(Directory('${result.pluginDir}/tests').existsSync(), isFalse);
         expect(commands, [
           ['plugins', 'enable', 'hermuse'],
+          ['hermuse', 'enable'],
           ['hermuse', 'computer', 'setup'],
         ]);
         expect(result.computerSetup, ComputerSetup.ready);
@@ -129,7 +134,7 @@ void main() {
       final unlaunchable = HermusePluginInstaller(
         pluginSourceDir: source.path,
         runProcess: (exe, args, {environment}) async {
-          if (args.first == 'hermuse') {
+          if (args case ['hermuse', 'computer', ...]) {
             throw const ProcessException('/bin/hermes', [], 'killed');
           }
           return ProcessResult(1, 0, '', '');
@@ -198,6 +203,34 @@ void main() {
         ),
       );
     });
+
+    test(
+      'a failed job registration fails the install with its output',
+      () async {
+        final installer = HermusePluginInstaller(
+          pluginSourceDir: source.path,
+          runProcess: (exe, args, {environment}) async =>
+              args.first == 'plugins'
+              ? ProcessResult(1, 0, 'enabled hermuse', '')
+              : ProcessResult(2, 1, '', 'cron store locked'),
+        );
+        await expectLater(
+          installer.install(
+            hermesHome: home.path,
+            hermesExecutable: '/bin/hermes',
+          ),
+          throwsA(
+            isA<InstallFailed>()
+                .having((e) => e.stage, 'stage', 'plugin-schedule')
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('cron store locked'),
+                ),
+          ),
+        );
+      },
+    );
 
     test('missing source tree is a prerequisite error', () async {
       final installer = HermusePluginInstaller(

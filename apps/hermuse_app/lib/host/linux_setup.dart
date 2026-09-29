@@ -755,7 +755,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       await _services.installPlugin(registry);
       // The backend restarted on a new port.
       _reconnectLocal();
-      await _withLocalRest(_enablePlugin);
+      await _withLocalRest(_pluginMounted);
       _pluginInstalled = true;
       if (_stopped()) return;
     }
@@ -938,19 +938,18 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     if (before != null && before != instance.baseUrl) _reconnectLocal();
   }
 
-  /// Waits for the plugin routes of the restarted backend, then turns the
-  /// Hermuse schedule on (idempotent: the jobs are refreshed, not doubled).
-  Future<void> _enablePlugin(HermesRestClient rest) async {
+  /// Waits for the plugin routes of the restarted backend (the plugin
+  /// install registered the Hermuse jobs).
+  Future<void> _pluginMounted(HermesRestClient rest) async {
     for (var attempt = 1; ; attempt++) {
       try {
         await rest.getJson('$hermusePluginRoute/files');
-        break;
+        return;
       } on HermesHttpError catch (e) {
         if (e.statusCode != 404 || attempt >= 20) rethrow;
       }
       await Future<void>.delayed(_services.pollInterval);
     }
-    await rest.postJson('$hermusePluginRoute/cron/enable', const {});
   }
 
   /// [_computer] until the agent's computer is ready. When Docker does not
