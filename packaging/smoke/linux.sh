@@ -373,6 +373,15 @@ app_command() { # [extra args...] -> shell words
   for arg; do printf " '%s'" "$arg"; done
 }
 
+window_maximized() {
+  # shellcheck disable=SC2034 # WINDOW X Y SCREEN are set by the eval
+  local wid WINDOW X Y WIDTH HEIGHT SCREEN
+  wid=$(gui_window "^${WINDOW_TITLE}\$" 0) || return 1
+  eval "$(xdotool getwindowgeometry --shell "$wid" 2>/dev/null)" || return 1
+  # shellcheck disable=SC2153 # set by the eval
+  [ "${WIDTH:-0}" -ge 1800 ] && [ "${HEIGHT:-0}" -ge 950 ]
+}
+
 # Starts the app inside the session from a fresh arbitrary directory and waits
 # for its window. The app gets only HERMES_HOME on top of the session env.
 app_launch() { # <label> [raw shell command]
@@ -384,8 +393,12 @@ app_launch() { # <label> [raw shell command]
     "cd '$cwd' && HERMES_HOME='$HERMES_HOME' setsid -f $command >>'$STATE/out/app-$label.log' 2>&1 </dev/null" ||
     return 1
   gui_window "^${WINDOW_TITLE}\$" "$(T 180)" >/dev/null || return 1
-  # Maximized, as a user does with a long setup page (still scrollable).
+  # Maximized, as a user does with a long setup page (still scrollable). The
+  # next screenshot must see the final layout: a click computed on the small
+  # window would land beside the button once the window grows.
   wmctrl -r "$WINDOW_TITLE" -b add,maximized_vert,maximized_horz 2>/dev/null
+  wait_until 20 1 window_maximized || log "the window did not maximize"
+  sleep 3
   APP_PID=$(app_pid)
   [ -n "$APP_PID" ] || return 1
   APP_DIR=$(dirname "$(readlink -f "/proc/$APP_PID/exe")")
