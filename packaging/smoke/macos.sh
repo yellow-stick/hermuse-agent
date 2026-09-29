@@ -62,7 +62,8 @@ UI_CONNECT='Connect'
 UI_CANCEL='Cancel'
 UI_FEED='Feed'
 UI_GOALS='Goals'
-UI_DOCKER_NOTICE='Install Docker'
+UI_OPEN_COMPUTER='Open computer'
+UI_DOCKER_MISSING='Docker is not installed'
 # macOS's own prompt when a process of the app first reaches for the local
 # network (not the app's copy): the second line of its title ('Allow
 # "Hermuse Agent" to find' / 'devices on local networks?'), OCR reads lines.
@@ -613,6 +614,7 @@ c5_plugin() {
   if app_launch plugin-restart && wait_until "$(T 600)" 5 backend_up; then
     rest GET /api/plugins/hermuse/cron "$EVID/probe/cron-2.json"
     ok=0
+    [ "$(cron_ids "$EVID/probe/cron-2.json" | grep -c .)" = 4 ] || ok=1
     [ "$(cron_ids "$EVID/probe/cron-1.json")" = "$(cron_ids "$EVID/probe/cron-2.json")" ] || ok=1
     [ "$(jq '.jobs | length' "$jobs" 2>/dev/null || echo 0)" = "$total_before" ] || ok=1
     pass_or_fail "$id" enable-idempotent "$ok" "same 4 job ids and no new job after a restart" "$EVID/probe/cron-2.json"
@@ -672,19 +674,20 @@ c6_bridge() {
     "$EVID/logs/cliproxy-auth-files.txt"
 }
 
+# The agent's computer needs Docker, which the runner lacks: the plugin reports
+# it, and so does the computer viewer the chat's profile panel opens.
 c7_computer() {
-  local id=c7-computer png
+  local id=c7-computer png=''
   rest GET /api/plugins/hermuse/computer/status "$EVID/probe/computer-status.json"
   pass_or_fail "$id" docker-missing-reported \
     "$(jq -e '.body.state == "docker_missing"' "$EVID/probe/computer-status.json" >/dev/null 2>&1 && echo 0 || echo 1)" \
     "no Docker on the runner: the plugin reports '$(jq -r '.body.state // "?"' "$EVID/probe/computer-status.json")'" \
     "$EVID/probe/computer-status.json"
-  ui_click "$UI_BACK_TO_CHAT" 10 >/dev/null || true
-  D rail 2 "$WINDOW_TITLE" >/dev/null 2>&1
-  png=$(ui_wait "$UI_DOCKER_NOTICE" 30) || png=$(shot docker-notice-missing)
+  D rail 1 "$WINDOW_TITLE" >/dev/null 2>&1
+  ui_click "$UI_OPEN_COMPUTER" 30 >/dev/null && png=$(ui_wait "$UI_DOCKER_MISSING" 60)
   check "$id" computer manual-gate \
-    "the hosted macOS arm64 runner has no nested virtualization, so no Docker: confirm the Docker notice here, then attest the agent's computer (image pull, doctor, frames, take control) on a real Mac" \
-    "$png" "$EVID/probe/computer-status.json"
+    "the hosted macOS arm64 runner has no nested virtualization, so no Docker: confirm the agent's computer reports Docker missing here, then attest it (image pull, doctor, frames, take control) on a real Mac" \
+    "${png:-$(shot computer-viewer-missing)}" "$EVID/probe/computer-status.json"
 }
 
 scenario_fresh() {
@@ -696,8 +699,8 @@ scenario_fresh() {
   c4_hermes || return 1
   c3_keyring
   c5_plugin || return 1
-  c6_bridge
   c7_computer
+  c6_bridge
 }
 
 main() {

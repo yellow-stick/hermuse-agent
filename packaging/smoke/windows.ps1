@@ -84,7 +84,8 @@ $UiConnect = 'Connect'
 $UiCancel = 'Cancel'
 $UiFeed = 'Feed'
 $UiGoals = 'Goals'
-$UiDockerNotice = 'Install Docker'
+$UiOpenComputer = 'Open computer'
+$UiDockerMissing = 'Docker is not installed'
 
 # --- setup ----------------------------------------------------------------------
 
@@ -305,6 +306,22 @@ function Test-Base {
   Add-Check $id 'runner-image' 'pass' `
     "hosted image tools on the runner PATH: $($extras -join ', ') (the app starts with a new user's PATH, without them)" `
     @((Join-Path $Logs 'tools.txt'))
+  # The image's Docker (Windows containers) puts docker.exe in System32, on
+  # every PATH. A new Windows 11 user has no Docker (phase 1 reports it
+  # missing): the smoke stops its service and renames its CLI.
+  & {
+    Get-Service docker -ErrorAction SilentlyContinue | Stop-Service -Force
+    foreach ($cli in @(Get-Command docker -All -CommandType Application -ErrorAction SilentlyContinue)) {
+      "hiding $($cli.Source)"
+      Rename-Item -LiteralPath $cli.Source -NewName 'docker.exe.hidden-by-smoke'
+    }
+    Get-Service docker -ErrorAction SilentlyContinue | Format-List Name, Status
+  } *> (Join-Path $Logs 'docker-hidden.txt')
+  $visible = @(@($UserPath -split ';' | Where-Object { $_ -and (Test-Path (Join-Path $_ 'docker.exe')) }) +
+    @(Get-Command docker -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source))
+  Add-Verdict $id 'no-docker' ($visible.Count -eq 0) `
+    "the image's Docker (Windows containers, System32\docker.exe) hidden from the app$(if ($visible) { '; still found: ' + ($visible -join ', ') })" `
+    @((Join-Path $Logs 'docker-hidden.txt'))
 }
 
 function Test-Launch {
@@ -498,7 +515,9 @@ function Test-Plugin {
     $cron2 = Join-Path $Probe 'cron-2.json'
     Invoke-Rest GET /api/plugins/hermuse/cron $cron2 | Out-Null
     $after = Read-Json $jobsFile
-    $same = ((Get-CronIds $cron1) -join ',') -eq ((Get-CronIds $cron2) -join ',') -and (@($after.jobs).Count -eq $totalBefore)
+    $totalAfter = if ($after) { @($after.jobs).Count } else { 0 }
+    $same = @(Get-CronIds $cron2).Count -eq 4 -and ((Get-CronIds $cron1) -join ',') -eq ((Get-CronIds $cron2) -join ',') -and
+      $totalAfter -eq $totalBefore
     Add-Verdict $id 'enable-idempotent' $same 'same 4 job ids and no new job after a restart' @($cron2)
   } else {
     Add-Check $id 'enable-idempotent' 'fail' 'no backend after a restart' @((Save-Shot 'restart-no-backend'))
@@ -557,19 +576,20 @@ function Test-Bridge {
     @((Join-Path $Logs 'cliproxy-auth-files.txt'))
 }
 
+# The agent's computer needs Docker, which the runner lacks: the plugin reports
+# it, and so does the computer viewer the chat's profile panel opens.
 function Test-Computer {
   $id = 'c7-computer'
   $status = Join-Path $Probe 'computer-status.json'
   Invoke-Rest GET /api/plugins/hermuse/computer/status $status | Out-Null
   $state = (Read-Json $status).body.state
   Add-Verdict $id 'docker-missing-reported' ($state -eq 'docker_missing') "no Docker on the runner: the plugin reports '$state'" @($status)
-  Invoke-UiClick $UiBackToChat 10 | Out-Null
-  D rail 2 $WindowTitle *> $null
-  $png = Wait-UiText $UiDockerNotice 30
-  if (-not $png) { $png = Save-Shot 'docker-notice-missing' }
+  D rail 1 $WindowTitle *> $null
+  $png = if (Invoke-UiClick $UiOpenComputer 30) { Wait-UiText $UiDockerMissing 60 }
+  if (-not $png) { $png = Save-Shot 'computer-viewer-missing' }
   Add-Check $id 'computer' 'manual-gate' `
-    ("the hosted Windows runner has no nested virtualization for a Docker engine (phase 2: WSL2 + docker.io): confirm the Docker " +
-    "notice here, then attest the agent's computer (image pull, doctor, frames, take control) on a real Windows 11 machine") @($png, $status)
+    ("the hosted Windows runner has no nested virtualization for a Docker engine (phase 2: WSL2 + docker.io): confirm the agent's " +
+    "computer reports Docker missing here, then attest it (image pull, doctor, frames, take control) on a real Windows 11 machine") @($png, $status)
 }
 
 function Test-Lifecycle {
@@ -628,8 +648,8 @@ function Invoke-Fresh {
   if (-not (Test-Hermes)) { return }
   Test-Keyring
   if (-not (Test-Plugin)) { return }
-  Test-Bridge
   Test-Computer
+  Test-Bridge
   Test-Lifecycle
 }
 
