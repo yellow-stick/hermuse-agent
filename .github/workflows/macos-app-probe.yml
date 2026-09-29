@@ -104,7 +104,7 @@ jobs:
 
       - name: Install from the dmg and launch like a user
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$PROBE/1-launch"
           mkdir -p "$out"
           dmg=$(ls dist/Hermuse-Agent-*-macos-arm64.dmg)
@@ -139,7 +139,7 @@ jobs:
 
       - name: Missing Command Line Tools (DEVELOPER_DIR without tools)
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$PROBE/2-clt"
           mkdir -p "$out"
           click_text() { # <text> <shot>: clicks the centre of the OCR line equal to <text>
@@ -172,7 +172,7 @@ jobs:
 
       - name: Install Hermes from the packaged app
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$PROBE/3-hermes"
           mkdir -p "$out"
           click_text() {
@@ -226,7 +226,7 @@ jobs:
 
       - name: Locked keychain (no plaintext fallback)
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           out="$PROBE/4-locked-keychain"
           mkdir -p "$out"
           pkill -x "Hermuse Agent"; sleep 5
