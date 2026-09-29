@@ -99,25 +99,43 @@ gui_wait_text() { # <phrase> <timeout-s> [line|any]
   return 1
 }
 
+# OCR of a cropped button: the phrase's words, in order, plus at most
+# one-character artifacts of the rounded, antialiased edges ("f", ")", "|").
+gui_label_matches() { # <ocr-text> <phrase>
+  awk -v got="$1" -v phrase="$2" 'BEGIN {
+    n = split(tolower(phrase), raw, " ")
+    for (j = 1; j <= n; j++) { gsub(/[^a-z0-9]/, "", raw[j]); if (raw[j] != "") want[++m] = raw[j] }
+    k = split(tolower(got), raw, /[ \t\n\f]+/)
+    for (j = 1; j <= k; j++) { gsub(/[^a-z0-9]/, "", raw[j]); if (raw[j] != "") tok[++t] = raw[j] }
+    for (s = 1; m > 0 && s + m - 1 <= t; s++) {
+      ok = 1
+      for (j = 1; j <= m; j++) if (tok[s + j - 1] != want[j]) { ok = 0; break }
+      for (j = 1; ok && j <= t; j++) if ((j < s || j >= s + m) && length(tok[j]) > 1) ok = 0
+      if (ok) exit 0
+    }
+    exit 1
+  }'
+}
+
 # Filled accent buttons (dark label on a saturated, bright fill) are missed by
 # the full-screen OCR pass of a dark UI. Each saturated bright region of
 # button size is cropped and read alone as one line.
 gui_locate_filled() { # <png> <phrase>
-  local shot=$1 want box w h x y crop="$GUI_TMP/filled" text
-  want=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+  local shot=$1 box w h x y crop="$GUI_TMP/filled" text
   convert "$shot" -colorspace HSB -separate \( -clone 1 -threshold 40% \) \( -clone 2 -threshold 50% \) \
     -delete 0-2 -compose multiply -composite "$crop-mask.png" 2>/dev/null || return 1
   while read -r box; do
     IFS='x+' read -r w h x y <<<"$box"
     [ "$w" -ge 40 ] && [ "$w" -le 600 ] && [ "$h" -ge 20 ] && [ "$h" -le 120 ] || continue
-    # Rounded corners leave background in the box: flood them white from the
-    # four corners (the label is enclosed by the fill, so it is not reached).
-    convert "$shot" -crop "${w}x${h}+${x}+${y}" +repage -fuzz 20% -fill white \
+    # Rounded corners leave background in the box: flood it white from the
+    # four corners (the label is enclosed by the fill, so it is not reached),
+    # then shave the antialiased border.
+    convert "$shot" -crop "${w}x${h}+${x}+${y}" +repage -fuzz 40% -fill white \
       -draw 'color 0,0 floodfill' -draw "color $((w - 1)),0 floodfill" \
       -draw "color 0,$((h - 1)) floodfill" -draw "color $((w - 1)),$((h - 1)) floodfill" \
-      -colorspace Gray -resize 300% -normalize "$crop.png" 2>/dev/null || continue
-    text=$(tesseract "$crop.png" - --psm 7 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
-    if [ -n "$text" ] && [ "$text" = "$want" ]; then
+      -shave 2x2 -colorspace Gray -resize 300% -normalize "$crop.png" 2>/dev/null || continue
+    text=$(tesseract "$crop.png" - --psm 7 2>/dev/null)
+    if gui_label_matches "$text" "$2"; then
       printf '%d %d\n' $((x + w / 2)) $((y + h / 2))
       return 0
     fi
