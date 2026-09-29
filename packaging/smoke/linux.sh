@@ -64,6 +64,7 @@ UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_PREPARE='Prepare'
 UI_CHECK_AGAIN='Check again'
 UI_CONNECTIONS='Connections'
+UI_SEARCH_CONNECTIONS='Search connections'
 UI_BRIDGE_CARD='Meta (bridge)'
 UI_CONNECT='Connect'
 UI_OPEN_LINK='Open link'
@@ -139,6 +140,7 @@ APPIMAGE_PATH=''
 DEB_EXEC=''
 TESTER_UID=''
 KEYRING_WATCHER_PID=''
+C4_INTERRUPTED=''
 SPOOL_SEQ=0
 declare -A CRITERION=()
 EXPECTED=()
@@ -270,10 +272,12 @@ hermes_cli() { # <args...> the managed launcher, as the supervisor runs it
     "$launcher" "$@"
 }
 
-# Runs <script> inside the tty1 graphical session (see guest/session.sh).
+# Runs <script> inside the tty1 graphical session (see guest/session.sh). A
+# job that times out is killed (its process group) after its process tree is
+# kept as evidence, so the session goes on with the next job.
 in_session() { # <name> <timeout-s> <script>
   SPOOL_SEQ=$((SPOOL_SEQ + 1))
-  local job
+  local job pid
   job=$(printf '%04d-%s' "$SPOOL_SEQ" "$(gui_slug "$1")")
   # shellcheck disable=SC2016 # expanded by the session shell
   printf 'set -u\ncd "$HOME" || exit 1\n%s\n' "$3" >"$STATE/spool/.$job"
@@ -281,6 +285,9 @@ in_session() { # <name> <timeout-s> <script>
   mv "$STATE/spool/.$job" "$STATE/spool/$job.sh"
   if ! wait_until "$2" 1 test -e "$STATE/out/$job.rc"; then
     log "session job $job timed out"
+    ps -eo pid,ppid,pgid,etime,stat,args --forest >"$EVID/logs/timeout-$job-ps.txt" 2>&1
+    pid=$(cat "$STATE/out/$job.pid" 2>/dev/null)
+    [ -n "$pid" ] && kill -TERM -- "-$pid" 2>/dev/null
     return 124
   fi
   return "$(cat "$STATE/out/$job.rc")"
@@ -329,14 +336,21 @@ EOF
 
 # A fresh login of the tester (e.g. after a user-side install): the tty1
 # session ends, getty logs the tester in again, session.sh comes back up.
+# getty stays stopped until the old session is gone: it would otherwise log
+# the tester in again at once, next to the old session and its X server.
 session_restart() {
   local session
+  systemctl stop getty@tty1.service
   rm -f "$STATE/out/ready"
   for session in $(loginctl show-user "$TESTER" -p Sessions --value 2>/dev/null); do
     loginctl terminate-session "$session"
   done
-  sleep 3
-  systemctl restart getty@tty1.service
+  if ! wait_until 60 1 not pgrep -u "$TESTER" -x Xvfb; then
+    log "the previous session's Xvfb outlived the session: killing it"
+    pkill -KILL -u "$TESTER" -x Xvfb
+    wait_until 10 1 not pgrep -u "$TESTER" -x Xvfb
+  fi
+  systemctl start getty@tty1.service
   wait_until "$(T 180)" 2 test -e "$STATE/out/ready"
 }
 
@@ -412,8 +426,18 @@ app_close() { # [timeout-s]: a running install stage or APT transaction finishes
   wait_until "${1:-$(T 300)}" 2 app_gone
 }
 
-ui_click() { # <label> <timeout-s> [line|any]: 0 clicked, 1 not found
+ui_click() { # <label> <timeout-s> [line|any|filled]: 0 clicked, 1 not found
   gui_click "$@" >/dev/null
+}
+
+# The pointer to the middle of the window: a hovered rail item shows its
+# tooltip, which covers the top of the rail and of the page.
+ui_pointer_away() { # <window-id>
+  # shellcheck disable=SC2034 # WINDOW and SCREEN are set by the eval
+  local WINDOW X Y WIDTH HEIGHT SCREEN
+  eval "$(xdotool getwindowgeometry --shell "$1" 2>/dev/null)" || return 0
+  [ -n "${WIDTH:-}" ] && xdotool mousemove --sync $((X + WIDTH / 2)) $((Y + HEIGHT / 2))
+  sleep 1
 }
 
 # Clicks an item of the icon rail: 1-based from the top (Chat, Feed, Ideas,
@@ -422,12 +446,14 @@ ui_rail() { # <n|last>
   local wid xy
   local -a items
   wid=$(gui_window "^${WINDOW_TITLE}\$" 5) || return 1
+  ui_pointer_away "$wid"
   mapfile -t items < <(gui_rail_items "$wid")
   [ "${#items[@]}" -ge 6 ] || return 1
   if [ "$1" = last ]; then xy=${items[-1]}; else xy=${items[$(($1 - 1))]}; fi
   # shellcheck disable=SC2086 # "x y"
   xdotool mousemove --sync $xy click 1
-  sleep 2
+  sleep 1
+  ui_pointer_away "$wid"
 }
 
 # Settings (bottom of the rail) lists the instances, each with its Connections.
@@ -436,11 +462,55 @@ ui_connections() {
   ui_click "$UI_CONNECTIONS" 5 || { ui_rail last && ui_click "$UI_CONNECTIONS" 60; }
 }
 
+# Connections > the bridge card > its Connect button. The provider list is
+# long: its search field brings the card up. A click opens the row, whose
+# body holds the filled Connect button (the row's own "Connect" is a label
+# that folds the row again).
+ui_bridge_connect() {
+  ui_connections || return 1
+  ui_click "$UI_SEARCH_CONNECTIONS" 30 any || return 1
+  xdotool type --delay 40 "$UI_BRIDGE_CARD"
+  sleep 2
+  ui_click "$UI_BRIDGE_CARD" 30 any && ui_click "$UI_CONNECT" 30 filled
+}
+
 # Waits for the gate and clicks through it; polkit dialogs are handled by the
 # caller. Returns 1 when neither gate button shows up.
 ui_prepare() {
   ui_click "$UI_LOCAL_CHOICE" "$(T 30)" || true
   ui_click "$UI_PREPARE" "$(T 90)" || ui_click "$UI_CHECK_AGAIN" 10
+}
+
+# A transient failure the app reports with its retry button, e.g. HTTP 429
+# from raw.githubusercontent.com while many legs fetch at once: a user reads
+# the error and clicks the button. The screen is read at most every minute,
+# the button clicked at most every 3 minutes; each click is kept as evidence.
+RETRY_LOOKED=-1000 RETRY_CLICKED=-1000
+retry_when_offered() { # <id>
+  [ $((SECONDS - RETRY_LOOKED)) -ge 60 ] && [ $((SECONDS - RETRY_CLICKED)) -ge 180 ] || return 0
+  RETRY_LOOKED=$SECONDS
+  local shot xy label words
+  shot=$(gui_shot retry-offered) || return 0
+  words=$(gui_ocr "$shot" | awk -F'\t' 'NR > 1 && $12 != "" { w = tolower($12); gsub(/[^a-z]/, "", w); print w }')
+  if grep -qxE 'cannot|failed|error|unable' <<<"$words"; then
+    for label in "$UI_RETRY_STAGE" "$UI_CHECK_AGAIN"; do
+      xy=$(gui_locate "$shot" "$label" line) || continue
+      # shellcheck disable=SC2086 # "x y"
+      xdotool mousemove --sync $xy click 1
+      RETRY_CLICKED=$SECONDS
+      check "$1" user-retry pass "the app reported an error with '$label': clicked it, as a user does" "$shot"
+      return 0
+    done
+  fi
+  rm -f "$shot"
+}
+
+ready_or_retry() { # <id> <predicate...>: the predicate, else maybe the app's retry button
+  local id=$1
+  shift
+  "$@" && return 0
+  retry_when_offered "$id"
+  return 1
 }
 
 backend_up() { python3 "$SMOKE_DIR/guest/probe.py" backend >"$EVID/probe/backend.json" 2>&1; }
@@ -619,8 +689,14 @@ window_checks() { # <id> <label>
   pass_or_fail "$id" "window-$label" "$ok" "'$WINDOW_TITLE' mapped, WM_CLASS carries $APP_ID" "$props"
   sleep 5
   shot=$(gui_shot "window-$label")
-  if gui_locate "$shot" Hermuse any >/dev/null; then
-    check "$id" "window-content-$label" pass "rendered UI text 'Hermuse' read back by OCR" "$shot"
+  # The first-run screens name Hermuse; the shell of a prepared instance
+  # shows the local instance card instead.
+  local phrase read_back=''
+  for phrase in Hermuse 'This computer' 'Open computer'; do
+    gui_locate "$shot" "$phrase" any >/dev/null && read_back=$phrase && break
+  done
+  if [ -n "$read_back" ]; then
+    check "$id" "window-content-$label" pass "rendered UI text '$read_back' read back by OCR" "$shot"
   else
     check "$id" "window-content-$label" manual-gate "window content not recognised by OCR: review the screenshot" "$shot"
   fi
@@ -659,6 +735,9 @@ c1_launch() {
 
 c2_prepare() {
   local id=c2-prepare
+  # The real shell files, before anything is installed (see c4).
+  sha_of "$TESTER_HOME/.bashrc" >"$EVID/logs/rc-before.txt"
+  sha_of "$TESTER_HOME/.profile" >>"$EVID/logs/rc-before.txt"
   helper_plan "$EVID/logs/helper-plan-before.jsonl"
   check "$id" helper-plan-before pass "missing: $(jq -r 'select(.event == "missing") | .package' \
     "$EVID/logs/helper-plan-before.jsonl" 2>/dev/null | tr '\n' ' ')" "$EVID/logs/helper-plan-before.jsonl"
@@ -731,19 +810,43 @@ c2_prepare() {
     check "$id" close-during-apt fail "APT never ran after consent" "$(gui_shot no-apt)"
     return 1
   fi
-  # 4. Relaunch and resume: remaining operations only.
+  # 4. Relaunch: the local choice again, then the gate for what is left or,
+  # with nothing left, the Hermes install at once (its journal appears). c4
+  # interrupts that install: nothing else may run in between.
   if ! app_launch after-apt; then
     check "$id" relaunch fail "no window on relaunch"
     return 1
   fi
   ui_click "$UI_LOCAL_CHOICE" 20 || true
-  ui_click "$UI_CHECK_AGAIN" "$(T 60)" || ui_click "$UI_PREPARE" 10 || true
-  if gui_polkit accept "$SECRETS/tester-password" 60; then
-    check "$id" second-consent pass "remaining privileged operations authorised on resume"
-  fi
+  # The gate buttons also retry a failure the app reports (a transient HTTP
+  # 429 while fetching the installer): minutes may pass before the install.
+  local deadline=$((SECONDS + $(T 900))) xy
+  while ! find_journal >/dev/null; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      check "$id" resume fail "neither the gate nor the Hermes install after the relaunch" "$(gui_shot resume-missing)"
+      return 1
+    fi
+    shot=$(gui_shot resume) || return 1
+    if xy=$(gui_locate "$shot" "$UI_PREPARE" line) || xy=$(gui_locate_filled "$shot" "$UI_PREPARE") ||
+      xy=$(gui_locate "$shot" "$UI_CHECK_AGAIN" line); then
+      # shellcheck disable=SC2086 # "x y"
+      xdotool mousemove --sync $xy click 1
+      if gui_polkit accept "$SECRETS/tester-password" "$(T 45)"; then
+        check "$id" second-consent pass "remaining privileged operations authorised on resume" "$shot"
+      fi
+    else
+      rm -f "$shot"
+    fi
+    sleep 2
+  done
+}
+
+# After c4 interrupted the install: the preparation left nothing missing and
+# removed nothing.
+c2_dependencies() {
+  local id=c2-prepare ok=0
   wait_until "$(T 900)" 10 deps_ready
   helper_plan "$EVID/logs/helper-plan-after.jsonl"
-  ok=0
   jq -se 'any(.[]; .event == "missing")' "$EVID/logs/helper-plan-after.jsonl" >/dev/null 2>&1 && ok=1
   pass_or_fail "$id" dependencies-satisfied "$ok" "bundled helper plan reports nothing missing" \
     "$EVID/logs/helper-plan-after.jsonl"
@@ -865,11 +968,11 @@ journal_finished() {
   jq -e '.finished == true' "$journal" >/dev/null
 }
 
-c4_hermes_fresh() {
+# The install c2's relaunch started is closed mid-stage as soon as a stage
+# runs after two completed ones (the whole install can take 2-3 minutes).
+c4_hermes_interrupt() {
   local id=c4-hermes journal ok
-  sha_of "$TESTER_HOME/.bashrc" >"$EVID/logs/rc-before.txt"
-  sha_of "$TESTER_HOME/.profile" >>"$EVID/logs/rc-before.txt"
-  if ! wait_until "$(T 1800)" 5 journal_in_stage; then
+  if ! wait_until "$(T 1800)" 1 ready_or_retry "$id" journal_in_stage; then
     check "$id" journal fail "no install journal with a running stage under $APP_SUPPORT" "$(gui_shot no-journal)"
     return 1
   fi
@@ -880,21 +983,24 @@ c4_hermes_fresh() {
     '.hermes_home == $home and .commit == $pin and .install_dir == ($home + "/hermes-agent")' \
     "$journal" >/dev/null || ok=1
   pass_or_fail "$id" journal "$ok" "journal written before the stages, pinned to $PIN_COMMIT" "$EVID/logs/journal-at-close.json"
-  local interrupted
-  interrupted=$(jq -r '.current_stage' "$journal")
+  C4_INTERRUPTED=$(jq -r '.current_stage' "$journal")
   # The running stage (python-deps or node-deps can take minutes) completes first.
   if app_close "$(T 1800)"; then
-    check "$id" close-mid-stage pass "closing during '$interrupted' let the stage finish, then the app exited"
+    check "$id" close-mid-stage pass "closing during '$C4_INTERRUPTED' let the stage finish, then the app exited"
   else
-    check "$id" close-mid-stage fail "the app did not exit after closing during '$interrupted'"
+    check "$id" close-mid-stage fail "the app did not exit after closing during '$C4_INTERRUPTED'"
   fi
   jq . "$journal" >"$EVID/logs/journal-after-close.json" 2>/dev/null
+}
+
+c4_hermes_resume() {
+  local id=c4-hermes journal ok interrupted=$C4_INTERRUPTED
   if ! app_launch resume; then
     check "$id" resume fail "no window on relaunch after closing during stage $interrupted"
     return 1
   fi
   ui_click "$UI_CHECK_AGAIN" "$(T 60)" || ui_click "$UI_RETRY_STAGE" 10 || true
-  if ! wait_until "$(T 3600)" 10 journal_finished; then
+  if ! wait_until "$(T 3600)" 10 ready_or_retry "$id" journal_finished; then
     check "$id" resume fail "the journal never finished after closing during '$interrupted'" "$(gui_shot resume-stuck)"
     return 1
   fi
@@ -1016,9 +1122,43 @@ docker_as() { # <root|tester> <docker args...>
   if [ "$who" = root ]; then docker "$@"; else tester_run docker "$@"; fi
 }
 
+# The computer as seen from inside its container (evidence only): its log
+# (screend reports input errors there), which X window has the keyboard
+# focus, the window list, the X extensions and the whole desktop, not only
+# the Chromium crop the viewer streams.
+computer_diagnostics() { # <root|tester> <container> <label>
+  local owner=$1 name=$2 label=$3
+  mkdir -p "$EVID/probe/computer"
+  docker_as "$owner" logs --tail 300 "$name" >"$EVID/logs/computer-log-$label.txt" 2>&1
+  # shellcheck disable=SC2016 # expanded in the container
+  docker_as "$owner" exec -e DISPLAY=:1 "$name" sh -c '
+    echo "## focus"; focus=$(xdotool getwindowfocus 2>&1); echo "$focus"; xprop -id "$focus" WM_CLASS WM_NAME 2>&1
+    echo "## chromium windows"; xdotool search --onlyvisible --class chromium 2>&1
+    echo "## windows"; xwininfo -root -children 2>&1 | head -n 60
+    echo "## extensions"; xdpyinfo 2>&1 | sed -n "/number of extensions/,/default screen number/p"' \
+    >"$EVID/logs/computer-x11-$label.txt" 2>&1
+  docker_as "$owner" exec "$name" python3 -c \
+    'import sys; from PIL import ImageGrab; ImageGrab.grab(xdisplay=":1").save(sys.stdout.buffer, "PNG")' \
+    >"$EVID/probe/computer/desktop-$label.png" 2>/dev/null || rm -f "$EVID/probe/computer/desktop-$label.png"
+}
+
+# The plugin names the container after the HERMES_HOME basename.
+computer_container() {
+  printf 'hermuse-computer-%s\n' "$(basename "$HERMES_HOME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g')"
+}
+
+computer_on_engine() { # <root|tester>: running, and its container runs on that engine
+  local name listed
+  name=$(computer_container)
+  rest GET /api/plugins/hermuse/computer/status "$EVID/probe/computer-status.json" &&
+    jq -e '.body.state == "running"' "$EVID/probe/computer-status.json" >/dev/null &&
+    listed=$(docker_as "$1" ps --filter "name=^$name\$" --format '{{.Names}}' 2>/dev/null) &&
+    [ "$listed" = "$name" ]
+}
+
 c7_computer() { # [engine-owner root|tester]
   local id=c7-computer owner=${1:-root} ok
-  if ! wait_until "$(T 3600)" 15 computer_ready; then
+  if ! wait_until "$(T 3600)" 15 ready_or_retry "$id" computer_ready; then
     check "$id" computer-prepared fail "computer never became startable" "$EVID/probe/computer-status.json"
     return 1
   fi
@@ -1041,13 +1181,15 @@ c7_computer() { # [engine-owner root|tester]
   local doctor=$EVID/logs/hermuse-doctor.txt
   hermes_cli hermuse doctor >"$doctor" 2>&1
   pass_or_fail "$id" doctor $? "hermes hermuse doctor" "$doctor"
-  local probe=$EVID/probe/computer.json
+  local name probe=$EVID/probe/computer.json rc
+  name=$(computer_container)
+  computer_diagnostics "$owner" "$name" before
   python3 "$SMOKE_DIR/guest/probe.py" computer --out "$EVID/probe/computer" --timeout "$(T 180)" >"$probe" 2>&1
-  pass_or_fail "$id" viewer-protocol $? \
+  rc=$?
+  [ "$rc" = 0 ] || computer_diagnostics "$owner" "$name" after
+  pass_or_fail "$id" viewer-protocol "$rc" \
     "real frames, take control, type/click/scroll on a fixture page, hand back (input ignored after release)" \
     "$probe" "$EVID/probe/computer/frame-first.jpg" "$EVID/probe/computer/frame-after-input.jpg"
-  local name
-  name=hermuse-computer-$(basename "$HERMES_HOME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g')
   docker_as "$owner" ps --filter "name=^$name\$" --format '{{.Names}} {{.Image}} {{.Status}}' >"$EVID/logs/computer-container.txt" 2>&1
   pass_or_fail "$id" container "$(grep -q "^$name " "$EVID/logs/computer-container.txt" && echo 0 || echo 1)" \
     "container $name running on the $owner engine" "$EVID/logs/computer-container.txt"
@@ -1058,7 +1200,7 @@ c7_computer() { # [engine-owner root|tester]
 c6_bridge() {
   local id=c6-bridge
   local config=$HERMES_HOME/cliproxy/config.yaml
-  if ui_connections && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
+  if ui_bridge_connect; then
     if wait_until "$(T 120)" 3 test -s "$config" &&
       wait_until "$(T 120)" 3 python3 "$SMOKE_DIR/guest/probe.py" cliproxy --config "$config" \
         --expect-exe "$APP_DIR/lib/cliproxy" >"$EVID/probe/cliproxy.json" 2>&1; then
@@ -1079,7 +1221,7 @@ c6_bridge() {
       "no subscription credential stored in ${auth_dir:-the bridge auth dir} (login started, never completed)" \
       "$EVID/logs/cliproxy-auth-files.txt"
   else
-    check "$id" sidecar manual-gate "Connections > '$UI_BRIDGE_CARD' > '$UI_CONNECT' not reachable by OCR: start a bridge by hand" \
+    check "$id" sidecar manual-gate "Connections > search '$UI_BRIDGE_CARD' > '$UI_CONNECT' not reachable by OCR: start a bridge by hand" \
       "$(gui_shot bridge-ui-missing)"
   fi
 }
@@ -1104,7 +1246,7 @@ c6_bad_hash() {
     app_launch bad-hash "'$TESTER_HOME/bad-hash/squashfs-root/AppRun'" || return 1
   fi
   local shot=''
-  if ui_connections && ui_click "$UI_BRIDGE_CARD" 60 any && ui_click "$UI_CONNECT" 60; then
+  if ui_bridge_connect; then
     sleep 20
     shot=$(gui_shot bad-hash-refused)
   fi
@@ -1327,9 +1469,12 @@ fixture_docker() { # <variant> -> engine owner on stdout
         systemctl restart docker && docker_resources root && echo root
       ;;
     docker-stopped)
+      # The resources are listed while the daemon still runs: the "before"
+      # state of the stopped engine.
       apt-get install -y docker.io >>"$EVID/logs/fixture.log" 2>&1 &&
         mkdir -p /etc/docker && printf '{\n  "log-level": "warn"\n}\n' >/etc/docker/daemon.json &&
         systemctl restart docker && docker_resources root &&
+        docker_fingerprint "$EVID/logs/docker-before.txt" root &&
         systemctl disable --now docker.service docker.socket >>"$EVID/logs/fixture.log" 2>&1 && echo root
       ;;
     docker-rootless)
@@ -1382,10 +1527,12 @@ scenario_fresh() {
   start_desktop || return 1
   c1_launch || return 1
   c2_prepare || return 1
+  c4_hermes_interrupt || return 1
+  c2_dependencies
   c3_keyring
-  c4_hermes_fresh || return 1
+  c4_hermes_resume || return 1
   # The app goes on by itself: plugin, bridge check, computer, then onboarding.
-  if wait_until "$(T 5400)" 15 setup_done; then
+  if wait_until "$(T 5400)" 15 ready_or_retry c5-plugin setup_done; then
     check c5-plugin setup-completed pass "the local setup went through plugin, bridge check and computer by itself"
   else
     check c5-plugin setup-completed fail "the local setup did not complete" "$(gui_shot setup-not-done)"
@@ -1414,14 +1561,23 @@ scenario_adopt() { # <compatible|foreign>
   start_desktop || return 1
   local install_dir=$HERMES_HOME/hermes-agent fingerprint_before=$EVID/logs/foreign-before.txt
   if [ "$kind" = compatible ]; then
-    # A user-run upstream install at the pin, outside the app.
-    local script=/tmp/hermes-install.sh
-    curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$PIN_COMMIT/scripts/install.sh" -o "$script" &&
-      chmod 0755 "$script" &&
+    # A user-run upstream install at the pin, outside the app. Git never
+    # prompts and gives up on a stalled transfer (the script retries clones).
+    local script=/tmp/hermes-install.sh fixture_rc=1
+    if curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/$PIN_COMMIT/scripts/install.sh" -o "$script" &&
+      chmod 0755 "$script"; then
       in_session upstream-install "$(T 3600)" \
-        "HERMES_HOME='$HERMES_HOME' '$script' --commit '$PIN_COMMIT' --dir '$install_dir' --hermes-home '$HERMES_HOME' --skip-setup --skip-browser --skip-computer-use --non-interactive >'$STATE/out/upstream-install.log' 2>&1"
-    check "$id" fixture-install "$([ -x "$TESTER_HOME/.local/bin/hermes" ] && echo pass || echo fail)" \
-      "compatible Hermes installed by the upstream script (fixture, not the app)" "$STATE/out/upstream-install.log"
+        "HERMES_HOME='$HERMES_HOME' GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=120 '$script' --commit '$PIN_COMMIT' --dir '$install_dir' --hermes-home '$HERMES_HOME' --skip-setup --skip-browser --skip-computer-use --non-interactive >'$STATE/out/upstream-install.log' 2>&1"
+      fixture_rc=$?
+    fi
+    cp "$STATE/out/upstream-install.log" "$EVID/logs/" 2>/dev/null
+    if [ "$fixture_rc" != 0 ] || [ ! -x "$TESTER_HOME/.local/bin/hermes" ]; then
+      check "$id" fixture-install fail "the upstream install script at the pin failed (exit $fixture_rc, 124 = timed out)" \
+        "$EVID/logs/upstream-install.log" "$(newest "$EVID/logs" 'timeout-*-upstream-install-ps.txt')"
+      return 1
+    fi
+    check "$id" fixture-install pass "compatible Hermes installed by the upstream script at the pin (fixture, not the app)" \
+      "$EVID/logs/upstream-install.log"
     # The user logs in again after installing, as they would on a desktop.
     session_restart || check "$id" relogin fail "the tester session did not come back"
   else
@@ -1440,7 +1596,7 @@ scenario_adopt() { # <compatible|foreign>
   app_launch first || return 1
   prepare_and_accept || check "$id" gate fail "no preparation gate" "$(gui_shot gate-missing)"
   if [ "$kind" = compatible ]; then
-    if wait_until "$(T 1800)" 10 backend_up; then
+    if wait_until "$(T 1800)" 10 ready_or_retry "$id" backend_up; then
       local ok=0
       jq -e --arg dir "$install_dir" '.backend.cmdline | join(" ") | contains($dir)' "$EVID/probe/backend.json" >/dev/null ||
         ok=1
@@ -1492,7 +1648,7 @@ scenario_docker() { # <variant>
   fi
   check "$id" fixture pass "$variant fixture ready (engine owner: $owner)" "$EVID/logs/fixture.log"
   local before=$EVID/logs/docker-before.txt after=$EVID/logs/docker-after.txt
-  docker_fingerprint "$before" "${owner/none/root}"
+  [ -s "$before" ] || docker_fingerprint "$before" "${owner/none/root}"
   local groups_before
   groups_before=$(id -nG "$TESTER")
   app_launch first || return 1
@@ -1504,7 +1660,7 @@ scenario_docker() { # <variant>
   if [ "$variant" = docker-remote-context ]; then
     sleep "$(T 600)"
   else
-    wait_until "$(T 5400)" 15 computer_ready
+    wait_until "$(T 5400)" 15 ready_or_retry "$id" computer_on_engine "$owner"
   fi
   docker_fingerprint "$after" "${owner/none/root}"
   pass_or_fail "$id" engine-not-replaced \
@@ -1521,20 +1677,20 @@ scenario_docker() { # <variant>
     "fixture volume, network, image and container untouched"
   case $variant in
     docker-ce)
-      verdict "$id" computer-on-engine "the computer runs on the existing Docker CE" \
-        "no computer on the existing Docker CE" computer_ready
+      verdict "$id" computer-on-engine "the computer container runs on the existing Docker CE" \
+        "no running computer container on the existing Docker CE" computer_on_engine root
       verdict "$id" docker-group "docker group added after the root-equivalence consent" \
         "the tester cannot reach the rootful engine" in_docker_group
       ;;
     docker-stopped)
       verdict "$id" started "the stopped engine was started (the consented action only)" \
         "the stopped engine is still down" systemctl is-active --quiet docker
-      verdict "$id" computer-on-engine "the computer runs on the started docker.io" \
-        "no computer on the started engine" computer_ready
+      verdict "$id" computer-on-engine "the computer container runs on the started docker.io" \
+        "no running computer container on the started engine" computer_on_engine root
       ;;
     docker-rootless)
-      verdict "$id" computer-on-engine "the computer runs on the rootless engine" \
-        "no computer on the rootless engine" computer_ready
+      verdict "$id" computer-on-engine "the computer container runs on the rootless engine" \
+        "no running computer container on the rootless engine" computer_on_engine tester
       verdict "$id" no-docker-group "no docker group added for a usable rootless engine" \
         "group membership changed: $(id -nG "$TESTER")" test "$groups_before" = "$(id -nG "$TESTER")"
       verdict "$id" rootful-untouched "the rootful daemon stayed stopped" \

@@ -505,12 +505,25 @@ def cmd_computer(args: argparse.Namespace) -> None:
             ok = step("take-control", pump(lambda: state.get("mine") is True, 20),
                       {"control": state.get("control")})
         if ok:
+            # Diagnostic, not a step: does a key reach Chromium before any
+            # click (the address bar of a fresh computer looks focused)?
+            seen = frames["count"]
+            ws.send_json({"t": "text", "s": "x"})
+            pump(lambda: frames["count"] > seen, 8)
+            report["key_before_click_changed_screen"] = frames["count"] > seen
+            # As a person does: click into the page, then Ctrl+L to the address bar.
+            x, y = width // 2, height // 2
+            ws.send_json({"t": "move", "x": x, "y": y})
+            ws.send_json({"t": "down", "x": x, "y": y, "b": 1})
+            ws.send_json({"t": "up", "x": x, "y": y, "b": 1})
+            pump(lambda: False, 2)
             ws.send_json({"t": "key", "k": "Control_L", "a": "down"})
             key("l")
             ws.send_json({"t": "key", "k": "Control_L", "a": "up"})
             ws.send_json({"t": "text", "s": _FIXTURE})
             key("Return")
-            ok = step("open-fixture-page", pump(lambda: title().startswith("hs:"), 60), title())
+            ok = step("open-fixture-page", pump(lambda: title().startswith("hs:"), 60),
+                      {"title": title(), "frames": frames["count"]})
         if ok:
             ws.send_json({"t": "text", "s": "hermuse"})
             ok = step("type", pump(lambda: "k=hermuse|" in title(), 30), title())

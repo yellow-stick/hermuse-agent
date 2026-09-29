@@ -45,12 +45,25 @@ openbox --sm-disable >"$out/openbox.log" 2>&1 &
 env | sort >"$out/session.env"
 : >"$out/ready"
 
+# Jobs run one at a time, each in its own session without a controlling
+# terminal and with stdin from /dev/null: a prompt (sudo, git credentials,
+# a y/N question on /dev/tty) fails instead of blocking the session. Its pid
+# is the process group root kills when the job times out. A job started by a
+# previous instance of this session (restarted while the job ran) is never
+# run twice: it is reported as interrupted (rc 129).
 while :; do
   for job in "$spool"/*.sh; do
     [ -e "$job" ] || continue
     name=$(basename "$job" .sh)
     [ -e "$out/$name.rc" ] && continue
-    sh "$job" >"$out/$name.log" 2>&1
+    if [ -e "$out/$name.started" ]; then
+      echo 129 >"$out/$name.rc"
+      continue
+    fi
+    : >"$out/$name.started"
+    setsid sh "$job" </dev/null >"$out/$name.log" 2>&1 &
+    echo "$!" >"$out/$name.pid"
+    wait "$!"
     echo "$?" >"$out/$name.rc.tmp"
     mv "$out/$name.rc.tmp" "$out/$name.rc"
   done

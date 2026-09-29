@@ -155,13 +155,15 @@ gui_locate_filled() { # <png> <phrase>
 
 # Clicks <phrase> with real pointer events: by default the first OCR line equal
 # to it (a button label), else a filled button carrying it; `any` also accepts
-# the phrase inside a longer line (a list row). Prints the screenshot taken
-# just before the click.
-gui_click() { # <phrase> <timeout-s> [line|any]
+# the phrase inside a longer line (a list row); `filled` only a filled button
+# (when the same word is also a plain label elsewhere on the screen). Prints
+# the screenshot taken just before the click.
+gui_click() { # <phrase> <timeout-s> [line|any|filled]
   local phrase=$1 deadline=$((SECONDS + $2)) mode=${3:-line} shot xy tries=0
   while :; do
     shot=$(gui_shot "click-$phrase") || return 1
-    if xy=$(gui_locate "$shot" "$phrase" "$mode") || xy=$(gui_locate_filled "$shot" "$phrase"); then
+    if { [ "$mode" != filled ] && xy=$(gui_locate "$shot" "$phrase" "$mode"); } ||
+      xy=$(gui_locate_filled "$shot" "$phrase"); then
       # shellcheck disable=SC2086 # "x y"
       xdotool mousemove --sync $xy click 1
       printf '%s\n' "$shot"
