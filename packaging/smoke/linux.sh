@@ -1633,11 +1633,24 @@ scenario_adopt() { # <compatible|foreign>
     >"$fingerprint_after" 2>/dev/null
   cat "$install_dir/.git/HEAD" >>"$fingerprint_after" 2>/dev/null
   # Only files of the checkout itself are compared: the app legitimately adds
-  # its plugin, cron and computer state next to it.
-  local changed
-  changed=$(diff <(grep ' ./hermes-agent/' "$fingerprint_before") <(grep ' ./hermes-agent/' "$fingerprint_after") | head -n 20)
-  pass_or_fail "$id" checkout-unchanged "$([ -z "$changed" ] && echo 0 || echo 1)" \
-    "the existing checkout is byte-identical after the app ran${changed:+: $changed}" "$fingerprint_before" "$fingerprint_after"
+  # its plugin, cron and computer state next to it. An adopted Hermes that
+  # runs installs its own lazy dependencies into its venv and writes its web
+  # build fingerprint: those additions are Hermes at work, not the app. Any
+  # changed or removed file, any other addition, a moved HEAD or a dirty
+  # tracked tree still fails.
+  local changed tracked=
+  changed=$(diff <(grep ' ./hermes-agent/' "$fingerprint_before") <(grep ' ./hermes-agent/' "$fingerprint_after") |
+    grep -E '^[<>]' | grep -vE '^> [0-9a-f]{64}  \./hermes-agent/(venv/|\.bytecode-fingerprint$)' | head -n 20)
+  if [ "$kind" = compatible ]; then
+    tracked=$(git -c safe.directory='*' -C "$install_dir" status --porcelain --untracked-files=no 2>&1 | head -n 20)
+    [ "$(tail -n 1 "$fingerprint_before")" = "$(tail -n 1 "$fingerprint_after")" ] ||
+      tracked="HEAD moved: $(tail -n 1 "$fingerprint_after") $tracked"
+  fi
+  diff <(grep ' ./hermes-agent/' "$fingerprint_before") <(grep ' ./hermes-agent/' "$fingerprint_after") \
+    >"$EVID/logs/checkout-diff.txt" 2>&1
+  pass_or_fail "$id" checkout-unchanged "$([ -z "$changed$tracked" ] && echo 0 || echo 1)" \
+    "the existing checkout is unchanged after the app ran (HEAD, tracked tree, no file changed or removed; only Hermes' own venv additions allowed)${changed:+: $changed}${tracked:+; tracked: $tracked}" \
+    "$fingerprint_before" "$fingerprint_after" "$EVID/logs/checkout-diff.txt"
 }
 
 scenario_docker() { # <variant>
