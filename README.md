@@ -162,7 +162,7 @@ melos run test
 
 ```bash
 cd apps/hermuse_app && flutter run -d linux     # or macos / windows / an iOS or Android device
-cd apps/hermuse_web && jaspr serve              # http://localhost:8080
+tool/serve-web.sh                               # jaspr serve, http://localhost:8080 (per-worktree ports elsewhere)
 cd apps/hermuse_web && jaspr build              # static output in build/jaspr
 ```
 

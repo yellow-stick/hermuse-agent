@@ -45,10 +45,18 @@ Running:
 
 ```bash
 cd apps/hermuse_app && flutter run -d linux   # or macos / windows / device
-cd apps/hermuse_web && jaspr serve            # http://localhost:8080
+tool/serve-web.sh                             # jaspr serve; http://localhost:8080 in the main checkout
 cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
+
+Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
+(`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with
+the main checkout) and `tool/orca/archive-worktree.sh` on archive (stops every
+process rooted in the tree). In a linked worktree `tool/serve-web.sh` picks a
+port triple derived from the path (printed on start; `HERMUSE_WEB_PORT`
+overrides). Jaspr always binds the Dart VM service to 8181: a second concurrent
+`jaspr serve` logs a DDS "address already in use" error but keeps serving.
 
 ## Generated code — never edit by hand
 
@@ -56,9 +64,18 @@ cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tes
 - Desktop app bundles a copy of the plugin. After changing `hermes-plugin/hermuse`, refresh it from `apps/hermuse_app`: `dart run tool/sync_plugin_assets.dart` (covered by `plugin_assets_test.dart`).
 - `jaspr_builder` 0.23.5 wants `analyzer ^12`, capped at `build_runner` 2.15.1 / `build_web_compilers` 4.8.5. The root `dependency_overrides` pins `analyzer ^13.3.0` (jaspr builds fine on 13.x). Bump these together with Jaspr.
 
-## Commits
+## Commits, branches and PRs
 
-Style: `<Area>: <what changed>` — e.g. `Chat: hold slash commands refused as busy`, `Docs: setup guides`, `Hermuse computer: browser card, live viewer`. Present tense, no trailing period. Keep history clean: never commit references to `muse.ai`, renames, or cleanup narratives. Work on `yellow-stick/<topic>` branches, PR to `main` with an English description presenting just the change plus tests.
+Commit subject: `<Area>: <what changed>` — one line, English, present tense, lowercase after the colon (proper nouns excepted), no trailing period, no body needed.
+
+- Area names the product surface or package, capitalized: `Chat`, `Hermuse computer`, `Onboarding`, `Relay`, `Web`, `Desktop`, `Host`, `Plugin`, `Contract`, `Data`, `UI`, `Release`, `Docs`, `Tooling` (build, CI, worktree scripts).
+- The subject says what the product or repo does now, not how the work went: `Chat: hold slash commands refused as busy and replay when the session is idle`. Several changes: comma-separated (`Chat: provider retry status, server slash commands`); a distinct second group after `;` (`Hermuse computer: browser card, live viewer; one-click remote install`). Changes spanning unrelated areas belong in separate commits.
+- Never mention `muse.ai`, renames, "fix typo", "cleanup", "WIP", "address review", agent or tool names, and no `Co-authored-by` trailers. Squash fixups locally before pushing.
+- One logical change per commit; commit only files of that change. The main checkout often holds unrelated work in progress: never `git add -A` there — commit from a dedicated worktree or stage explicit paths.
+
+Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yellow-stick/orca-worktrees`), cut from `origin/main`. Never commit to `main` directly.
+
+Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Merge with a merge commit (`Merge pull request #N from yellow-stick/<topic>`), not squash or rebase, then delete the branch.
 
 ## Validation per area
 
