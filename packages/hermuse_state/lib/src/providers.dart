@@ -110,6 +110,40 @@ final class InstanceAuth {
     await secrets.write(instanceId, SecretKeys.password, password);
     _ref.invalidate(connectionProvider(instanceId));
   }
+
+  /// Registers [candidate] once [secrets] (keyed by [SecretKeys]: the
+  /// session token of a [AuthMethod.loopbackToken] instance, or username and
+  /// password) open a throwaway connection. Nothing is stored when the
+  /// connection refuses them (its [HermesException], e.g.
+  /// [HermesAuthFailed]) or the registry rejects the instance
+  /// ([DuplicateInstance]); the secrets go to the [SecretStore] only.
+  Future<void> add(
+    HermesInstance candidate, {
+    required Map<String, String> secrets,
+  }) async {
+    final trial = MemorySecretStore();
+    for (final MapEntry(:key, :value) in secrets.entries) {
+      await trial.write(candidate.id, key, value);
+    }
+    if (candidate.auth == AuthMethod.loopbackToken) {
+      // A wrong token only fails the `/api/ws` upgrade (403), which reads as
+      // an unreachable host: prove it on an authenticated route first so a
+      // refusal is a [HermesAuthFailed].
+      await HermesRestClient(
+        _ref.read(httpClientProvider),
+        baseUrl: candidate.baseUrl,
+        sessionToken: secrets[SecretKeys.sessionToken],
+      ).getJson('/api/config');
+    }
+    await _ref.read(trialConnectProvider)(candidate, trial);
+    // Registry first: secrets written before a failed add would be orphaned
+    // under the new id.
+    await (await _ref.read(registryProvider.future)).add(candidate);
+    final store = _ref.read(secretStoreProvider);
+    for (final MapEntry(:key, :value) in secrets.entries) {
+      await store.write(candidate.id, key, value);
+    }
+  }
 }
 
 /// Registered instances, in user order.

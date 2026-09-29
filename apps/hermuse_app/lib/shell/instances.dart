@@ -542,6 +542,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   final _label = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
+  final _token = TextEditingController();
   final _labelEdited = ValueNotifier(false);
 
   HermesStatus? _status;
@@ -554,6 +555,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
     _label.dispose();
     _username.dispose();
     _password.dispose();
+    _token.dispose();
     _labelEdited.dispose();
     super.dispose();
   }
@@ -584,6 +586,14 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       ).getStatus();
       checkSupportedVersion(status.version);
       if (!mounted) return;
+      if (status.loginMethod == null) {
+        setState(
+          () => _error =
+              'This Hermes needs a login Hermuse does not support '
+              '(${status.authProviders.join(', ')}).',
+        );
+        return;
+      }
       setState(() {
         _status = status;
         if (!_labelEdited.value) _label.text = url.host;
@@ -608,69 +618,66 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
 
   Future<void> _save() async {
     final url = _parsedUrl;
-    final status = _status;
-    if (url == null || status == null) return;
+    final login = _status?.loginMethod;
+    if (url == null || login == null) return;
     final label = _label.text.trim();
     if (label.isEmpty || label.length > HermesInstance.maxLabelLength) {
       setState(() => _error = 'Name must be 1–64 characters');
       return;
     }
-    final password = _password.text;
-    if (status.authRequired && password.isEmpty) {
-      setState(() => _error = 'Enter the dashboard password');
+    final token = login == AuthMethod.loopbackToken;
+    final secret = token ? _token.text.trim() : _password.text;
+    if (secret.isEmpty) {
+      setState(
+        () => _error = token
+            ? 'Enter the session token'
+            : 'Enter the dashboard password',
+      );
       return;
     }
     setState(() {
       _busy = true;
       _error = null;
     });
+    final candidate = HermesInstance(
+      id: const Uuid().v4(),
+      label: label,
+      kind: InstanceKind.remote,
+      baseUrl: url,
+      auth: login,
+    );
     try {
-      // Validate by really connecting before persisting anything. The
-      // trial transport reads the just-typed credentials from an
-      // ephemeral store — never the keystore, which only gets them
-      // once validation succeeds.
-      final candidate = HermesInstance(
-        id: const Uuid().v4(),
-        label: label,
-        kind: InstanceKind.remote,
-        baseUrl: url,
-        auth: AuthMethod.password,
-      );
-      final trialSecrets = MemorySecretStore();
-      await trialSecrets.write(
-        candidate.id,
-        SecretKeys.username,
-        _username.text,
-      );
-      await trialSecrets.write(candidate.id, SecretKeys.password, password);
-      final trial = await DashboardTransport.connect(
-        instance: candidate,
-        secrets: trialSecrets,
-        httpClient: ref.read(httpClientProvider),
-      );
-      await trial.close();
-      final registry = await ref.read(registryProvider.future);
-      try {
-        await registry.add(candidate);
-      } on DuplicateInstance catch (e) {
-        if (mounted) {
-          setState(
-            () => _error = e.field == 'label'
-                ? 'That name is already used'
-                : 'That Hermes is already registered',
+      // Proved on a real connection before anything is stored; the secret
+      // then goes to the keystore only.
+      await ref
+          .read(instanceAuthProvider)
+          .add(
+            candidate,
+            secrets: token
+                ? {SecretKeys.sessionToken: secret}
+                : {
+                    SecretKeys.username: _username.text,
+                    SecretKeys.password: secret,
+                  },
           );
-        }
-        return;
-      }
-      final secrets = ref.read(secretStoreProvider);
-      await secrets.write(candidate.id, SecretKeys.username, _username.text);
-      await secrets.write(candidate.id, SecretKeys.password, password);
+      _token.clear();
+      _password.clear();
       await ref.read(activeThreadProvider.notifier).openInstance(candidate.id);
       widget.onDone(candidate.id);
+    } on DuplicateInstance catch (e) {
+      if (mounted) {
+        setState(
+          () => _error = e.field == 'label'
+              ? 'That name is already used'
+              : 'That Hermes is already registered',
+        );
+      }
     } on HermesAuthFailed {
       if (mounted) {
         setState(
-          () => _error = 'Login rejected (401): check username and password',
+          () => _error = token
+              ? 'Wrong session token.'
+              : 'Login rejected (401): check username and password',
         );
       }
     } on UnsupportedServerVersion catch (e) {
@@ -746,8 +753,13 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                 if (status != null) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'Hermes ${status.version} · '
-                    '${status.authRequired ? 'login required (${status.authProviders.join(', ')})' : 'no login'}',
+                    // Web add-instance wording: no "no login" claim, since
+                    // a gateless `hermes serve` still wants its token.
+                    status.loginMethod == AuthMethod.loopbackToken
+                        ? 'Hermes ${status.version} · paste its session token '
+                              '(HERMES_DASHBOARD_SESSION_TOKEN).'
+                        : 'Hermes ${status.version} · sign in with your '
+                              'dashboard account.',
                     style: YsType.small.flutter.copyWith(
                       color: palette.successColor,
                     ),
@@ -760,7 +772,17 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                     semanticLabel: 'Instance name',
                     onChanged: (_) => _labelEdited.value = true,
                   ),
-                  if (status.authRequired) ...[
+                  if (status.loginMethod == AuthMethod.loopbackToken) ...[
+                    const SizedBox(height: 12),
+                    _Field(
+                      label: 'Session token',
+                      controller: _token,
+                      placeholder: '••••••••',
+                      semanticLabel: 'Session token',
+                      obscure: true,
+                      onSubmitted: (_) => _save(),
+                    ),
+                  ] else ...[
                     const SizedBox(height: 12),
                     _Field(
                       label: 'Username',
