@@ -799,16 +799,24 @@ elif IS_WIN:
             env_ptr = int.from_bytes(_read(handle, params + 0x80, 8), "little")
             env_size = int.from_bytes(_read(handle, params + 0x3F0, 8), "little")
             env = _read(handle, env_ptr, env_size).decode("utf-16-le", errors="replace")
-            return (image.decode("utf-16-le", errors="replace"), cmd.decode("utf-16-le", errors="replace"),
+            return (image.decode("utf-16-le", errors="replace").split("\0", 1)[0],
+                    cmd.decode("utf-16-le", errors="replace"),
                     [item for item in env.split("\0") if item])
         finally:
             kernel32.CloseHandle(handle)
 
     def _split_cmdline(cmd: str) -> list[str]:
+        # The PEB string may carry a terminating NUL (and garbage after it)
+        # inside its length: CommandLineToArgvW takes a C string.
+        cmd = cmd.split("\0", 1)[0]
+        if not cmd:
+            return []
         argc = ctypes.c_int(0)
         shell32 = ctypes.WinDLL("shell32")
         shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
         argv = shell32.CommandLineToArgvW(cmd, ctypes.byref(argc))
+        if not argv:
+            return [cmd]
         try:
             return [argv[i] for i in range(argc.value)]
         finally:

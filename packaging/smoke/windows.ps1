@@ -209,12 +209,18 @@ function Stop-App([int]$TimeoutSec = (T 300)) {
   return Wait-Until $TimeoutSec 2 { Test-AppGone }
 }
 
-# A transient failure the app reports with its retry button (e.g. HTTP 429 of
-# raw.githubusercontent.com): a user reads the error and clicks the button.
-# The screen is read at most every minute, the button clicked at most every 3
-# minutes; each click is kept as evidence.
+# A failure the app reports on its install screen (a stage that lost the
+# network, say): a user reads the error and tries again, with its retry
+# button when the app offers one, else (a failure before the first stage)
+# with Cancel and the local choice again. The screen is read at most every
+# minute; at most $UserRetries tries, 3 minutes apart, each kept as evidence.
+# An error still shown after them ends the wait: $script:RetryGaveUp names
+# its screenshot.
+$UserRetries = 3
 $script:RetryLooked = -1000
 $script:RetryClicked = -1000
+$script:Retries = 0
+$script:RetryGaveUp = $null
 function Invoke-RetryWhenOffered([string]$Id) {
   $now = [int]$Started.Elapsed.TotalSeconds
   if ($now - $script:RetryLooked -lt 60 -or $now - $script:RetryClicked -lt 180) { return }
@@ -222,23 +228,38 @@ function Invoke-RetryWhenOffered([string]$Id) {
   $png = Save-Shot 'retry-offered'
   if (-not $png) { return }
   $text = (D text $png) -join "`n"
-  if ($text -match '(?i)\b(cannot|failed|error|unable)\b') {
-    $xy = D locate $png $UiRetryStage
-    if ($LASTEXITCODE -eq 0 -and $xy) {
-      $parts = "$xy".Trim() -split ' '
-      D pointer $parts[0] $parts[1]
-      $script:RetryClicked = $now
-      Add-Check $Id 'user-retry' 'pass' "the app reported an error with '$UiRetryStage': clicked it, as a user does" @($png)
-      return
-    }
+  if ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b') {
+    Remove-Item $png -ErrorAction SilentlyContinue
+    return
   }
-  Remove-Item $png -ErrorAction SilentlyContinue
+  if ($script:Retries -ge $UserRetries) {
+    $script:RetryGaveUp = $png
+    return
+  }
+  $xy = D locate $png $UiRetryStage
+  if ($LASTEXITCODE -eq 0 -and $xy) {
+    $parts = "$xy".Trim() -split ' '
+    D pointer $parts[0] $parts[1] | Out-Null
+    $how = "clicked '$UiRetryStage'"
+  } else {
+    $xy = D locate $png $UiCancel
+    if ($LASTEXITCODE -ne 0 -or -not $xy) { return }
+    $parts = "$xy".Trim() -split ' '
+    D pointer $parts[0] $parts[1] | Out-Null
+    if (-not (Invoke-UiClick $UiLocalChoice 60)) { return }
+    $how = "no stage had started: clicked '$UiCancel', then '$UiLocalChoice' again"
+  }
+  $script:Retries++
+  $script:RetryClicked = $now
+  Add-Check $Id "user-retry-$($script:Retries)" 'pass' "the app reported an error; $how, as a user does" @($png)
 }
 
+# The predicate, else maybe a user's retry; also ends the wait once the
+# retries are spent (the caller then checks $script:RetryGaveUp).
 function Test-ReadyOrRetry([string]$Id, [scriptblock]$Predicate) {
   if (& $Predicate) { return $true }
-  Invoke-RetryWhenOffered $Id
-  return $false
+  Invoke-RetryWhenOffered $Id | Out-Null
+  return [bool]$script:RetryGaveUp
 }
 
 function Get-TreeManifest([string]$Root) {
@@ -349,8 +370,11 @@ function Test-Hermes {
     return $false
   }
   Add-Check $id 'local-choice' 'pass' "clicked '$UiLocalChoice' (OCR + pointer event)" @($png)
-  if (-not (Wait-Until (T 3600) 10 { Test-ReadyOrRetry $id { Test-BackendUp } })) {
-    Add-Check $id 'backend-serve' 'fail' 'no app-supervised backend answering /api/status' @((Save-Shot 'install-stuck'), (Join-Path $Probe 'backend.json'))
+  if (-not (Wait-Until (T 3600) 10 { Test-ReadyOrRetry $id { Test-BackendUp } }) -or $script:RetryGaveUp) {
+    $detail = 'no app-supervised backend answering /api/status'
+    if ($script:RetryGaveUp) { $detail += " (the app still reported an error after $UserRetries tries)" }
+    $shotPath = if ($script:RetryGaveUp) { $script:RetryGaveUp } else { Save-Shot 'install-stuck' }
+    Add-Check $id 'backend-serve' 'fail' $detail @($shotPath, (Join-Path $Probe 'backend.json'))
     return $false
   }
   Save-Shot 'backend-up' | Out-Null

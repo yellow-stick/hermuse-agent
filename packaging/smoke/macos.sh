@@ -35,7 +35,7 @@ APP_NAME='Hermuse Agent'
 WINDOW_TITLE='Hermuse Agent'
 BUNDLE_ID=com.yellowstick.hermuseApp
 APP=/Applications/$APP_NAME.app
-APP_SUPPORT=$HOME/Library/Application Support/$BUNDLE_ID
+APP_SUPPORT="$HOME/Library/Application Support/$BUNDLE_ID"
 KEYCHAIN=$HOME/Library/Keychains/login.keychain-db
 # The app's default when HERMES_HOME is unset (a LaunchServices start never has it).
 HERMES_HOME=$HOME/.hermes
@@ -219,32 +219,50 @@ app_close() { # [timeout-s]
   wait_until "${1:-$(T 300)}" 2 app_gone
 }
 
-# A transient failure the app reports with its retry button (e.g. HTTP 429 of
-# raw.githubusercontent.com): a user reads the error and clicks the button.
-# The screen is read at most every minute, the button clicked at most every 3
-# minutes; each click is kept as evidence.
-RETRY_LOOKED=-1000 RETRY_CLICKED=-1000
+# A failure the app reports on its install screen (a stage that lost the
+# network, say): a user reads the error and tries again, with its retry
+# button when the app offers one, else (a failure before the first stage)
+# with Cancel and the local choice again. The screen is read at most every
+# minute; at most USER_RETRIES tries, 3 minutes apart, each kept as evidence.
+# An error still shown after them ends the wait: RETRY_GAVE_UP names its
+# screenshot.
+USER_RETRIES=3
+RETRY_LOOKED=-1000 RETRY_CLICKED=-1000 RETRIES=0 RETRY_GAVE_UP=''
 retry_when_offered() { # <id>
   [ $((SECONDS - RETRY_LOOKED)) -ge 60 ] && [ $((SECONDS - RETRY_CLICKED)) -ge 180 ] || return 0
   RETRY_LOOKED=$SECONDS
-  local png xy
+  local png xy how
   png=$(shot retry-offered) || return 0
-  if D text "$png" | grep -qiwE 'cannot|failed|error|unable' && xy=$(D locate "$png" "$UI_RETRY_STAGE"); then
-    # shellcheck disable=SC2086 # "x y"
-    D pointer $xy
-    RETRY_CLICKED=$SECONDS
-    check "$1" user-retry pass "the app reported an error with '$UI_RETRY_STAGE': clicked it, as a user does" "$png"
+  if ! D text "$png" | grep -qiwE 'cannot|failed|error|unable'; then
+    rm -f "$png"
     return 0
   fi
-  rm -f "$png"
+  if [ "$RETRIES" -ge "$USER_RETRIES" ]; then
+    RETRY_GAVE_UP=$png
+    return 0
+  fi
+  # shellcheck disable=SC2086 # "x y"
+  if xy=$(D locate "$png" "$UI_RETRY_STAGE"); then
+    D pointer $xy
+    how="clicked '$UI_RETRY_STAGE'"
+  elif xy=$(D locate "$png" "$UI_CANCEL") && D pointer $xy && ui_click "$UI_LOCAL_CHOICE" 60 >/dev/null; then
+    how="no stage had started: clicked '$UI_CANCEL', then '$UI_LOCAL_CHOICE' again"
+  else
+    return 0
+  fi
+  RETRIES=$((RETRIES + 1))
+  RETRY_CLICKED=$SECONDS
+  check "$1" "user-retry-$RETRIES" pass "the app reported an error; $how, as a user does" "$png"
 }
 
-ready_or_retry() { # <id> <predicate...>: the predicate, else maybe the app's retry button
+# The predicate, else maybe a user's retry; also ends the wait once the
+# retries are spent (the caller then checks RETRY_GAVE_UP).
+ready_or_retry() { # <id> <predicate...>
   local id=$1
   shift
   "$@" && return 0
   retry_when_offered "$id"
-  return 1
+  [ -n "$RETRY_GAVE_UP" ]
 }
 
 # --- criterion checks ------------------------------------------------------------
@@ -393,9 +411,10 @@ c4_hermes() {
     return 1
   fi
   check "$id" local-choice pass "clicked '$UI_LOCAL_CHOICE' (OCR + pointer event)" "$png"
-  if ! wait_until "$(T 3600)" 10 ready_or_retry "$id" backend_up; then
-    check "$id" backend-serve fail "no app-supervised backend answering /api/status" "$(shot install-stuck)" \
-      "$EVID/probe/backend.json"
+  if ! wait_until "$(T 3600)" 10 ready_or_retry "$id" backend_up || [ -n "$RETRY_GAVE_UP" ]; then
+    check "$id" backend-serve fail \
+      "no app-supervised backend answering /api/status${RETRY_GAVE_UP:+ (the app still reported an error after $USER_RETRIES tries)}" \
+      "${RETRY_GAVE_UP:-$(shot install-stuck)}" "$EVID/probe/backend.json"
     return 1
   fi
   shot backend-up >/dev/null
