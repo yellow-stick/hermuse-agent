@@ -10,8 +10,14 @@ included), not a per-step limit.
 
 ``prepare`` never blocks on slow work: it starts ``bootstrap.py`` as one
 detached process that installs Docker when it is missing and installable
-(Linux, passwordless sudo), then pulls the published image (building it
-locally when the pull fails). ``status`` reports it as ``building``.
+(Linux, passwordless sudo, not under the Hermuse desktop app), then pulls the
+published image (building it locally when the pull fails). ``status`` reports
+it as ``building``, and says whether a ready image was pulled or built.
+
+Under the Hermuse desktop app (``HERMES_DESKTOP=1``) Docker is never installed
+here: the app's setup assistant does it with the administrator's consent, and a
+``docker_missing`` status carries ``"hint": "desktop_setup"`` to send the user
+there.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from . import state
 IMAGE = "hermuse-computer:0.2.0"
 # Published by .github/workflows/computer-image.yml (linux/amd64 + linux/arm64).
 REGISTRY_IMAGE = f"ghcr.io/yellow-stick/{IMAGE}"
+REGISTRY_REPOSITORY = REGISTRY_IMAGE.rsplit(":", 1)[0]
 IMAGE_DIR = Path(__file__).resolve().parent / "image"
 BOOTSTRAP = Path(__file__).resolve().parent / "bootstrap.py"
 CDP_PORT = 9223
@@ -45,6 +52,12 @@ MODES = ("browser", "desktop")
 
 DOCKER_SOCKET = "/var/run/docker.sock"
 GET_DOCKER_URL = "https://docs.docker.com/get-started/get-docker/"
+# Set by the Hermuse desktop app on the Hermes it supervises.
+DESKTOP_ENV = "HERMES_DESKTOP"
+# ``hint`` of a ``docker_missing`` status under the desktop app.
+DESKTOP_SETUP_HINT = "desktop_setup"
+# ``image_source`` of a ready image: pulled from REGISTRY_IMAGE, or built here.
+IMAGE_FROM_REGISTRY, IMAGE_BUILT_LOCALLY = "registry", "local"
 # build.json "step" of the running bootstrap -> status detail.
 STEP_DOCKER, STEP_PULL, STEP_BUILD = "docker", "pull", "build"
 STEP_DETAILS = {
@@ -117,13 +130,28 @@ def current_user() -> str:
         return os.environ.get("USER") or os.environ.get("USERNAME") or ""
 
 
+def desktop_managed() -> bool:
+    """True under the Hermuse desktop app, whose setup assistant owns installing Docker."""
+    return os.environ.get(DESKTOP_ENV) == "1"
+
+
 def docker_install_hint() -> str:
-    """``docker_missing`` detail: what the user runs when Hermuse cannot install Docker itself."""
+    """``docker_missing`` detail: how Docker gets installed when Hermuse cannot do it here."""
+    if desktop_managed():
+        return "Open the Hermuse Agent setup to install Docker."
     if sys.platform.startswith("linux"):
         user = current_user() or "$USER"
         return (f"curl -fsSL https://get.docker.com | sudo sh && "
                 f"sudo usermod -aG docker {shlex.quote(user)}")
     return f"Install Docker Desktop: {GET_DOCKER_URL}"
+
+
+def docker_missing_status() -> dict:
+    """The ``docker_missing`` status; under the desktop app it points at its setup assistant."""
+    status = _status("docker_missing", docker_install_hint())
+    if desktop_managed():
+        status["hint"] = DESKTOP_SETUP_HINT
+    return status
 
 
 def needs_docker_group() -> bool:
@@ -160,8 +188,10 @@ def docker_installer(timeout: float = _SUDO_PROBE_S) -> Optional[str]:
     """How the bootstrap can install Docker here: ``"apt"``, ``"script"`` (get.docker.com), or None.
 
     Only on Linux with passwordless sudo (``sudo -n true``); anything else needs the user.
+    Never under the Hermuse desktop app: its setup assistant installs Docker with the
+    administrator's consent, so no sudo is even probed.
     """
-    if not sys.platform.startswith("linux"):
+    if desktop_managed() or not sys.platform.startswith("linux"):
         return None
     sudo = shutil.which("sudo")
     if sudo is None:
@@ -244,8 +274,27 @@ class DockerComputerRuntime:
         timeout = min(_DAEMON_PROBE_S, _step_timeout(deadline, "version"))
         return self._docker(["version", "--format", "{{.Server.Version}}"], timeout)
 
-    def _image_present(self, deadline: float) -> bool:
-        return self._run(["image", "inspect", "--format", "{{.Id}}", IMAGE], deadline).returncode == 0
+    def _image(self, deadline: float) -> Optional[dict]:
+        """Where :data:`IMAGE` came from, or None when it is absent.
+
+        ``{"image_source": "registry", "image_digest": "<repo>@sha256:…"}`` when the
+        image carries a digest of :data:`REGISTRY_REPOSITORY` (it was pulled), else
+        ``{"image_source": "local"}`` (built on this host) — never guessed from a
+        bootstrap's intent.
+        """
+        result = self._run(["image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE],
+                           deadline)
+        if result.returncode != 0:
+            return None
+        try:
+            digests = json.loads(result.stdout or "null") or []
+        except ValueError:
+            digests = []
+        pulled = [d for d in digests
+                  if isinstance(d, str) and d.startswith(f"{REGISTRY_REPOSITORY}@")]
+        if pulled:
+            return {"image_source": IMAGE_FROM_REGISTRY, "image_digest": pulled[0]}
+        return {"image_source": IMAGE_BUILT_LOCALLY}
 
     @staticmethod
     def _running_bootstrap(home: Any) -> Optional[dict]:
@@ -264,7 +313,7 @@ class DockerComputerRuntime:
     # --- status -------------------------------------------------------------------
 
     def status(self, home: Any, timeout: float = 10.0) -> dict:
-        """``{"state", "detail"}``; never raises."""
+        """``{"state", "detail"}`` (+ ``hint``, ``image_source``, ``image_digest``); never raises."""
         try:
             return self._status(home, time.monotonic() + timeout)
         except DockerTimeout as exc:
@@ -279,7 +328,7 @@ class DockerComputerRuntime:
             return _status("building", STEP_DETAILS.get(
                 bootstrap.get("step"), "Preparing the agent's computer…"))
         if shutil.which("docker") is None:
-            return _status("docker_missing", docker_install_hint())
+            return docker_missing_status()
         _step_timeout(deadline, "version")  # an exhausted budget is not a daemon failure
         try:
             probe = self._daemon_probe(deadline)
@@ -287,7 +336,8 @@ class DockerComputerRuntime:
             return _status("daemon_down", "docker version timed out")
         if probe.returncode != 0:
             return _status("daemon_down", _first_line(probe.stderr) or "the Docker daemon did not answer")
-        if not self._image_present(deadline):
+        image = self._image(deadline)
+        if image is None:
             build = state.read_build(home)
             # A bootstrap that died installing Docker never tried the image.
             if build is not None and build.get("step") != STEP_DOCKER:
@@ -299,9 +349,10 @@ class DockerComputerRuntime:
             ["inspect", "--type", "container", "--format", "{{.State.Running}}", name], deadline)
         if inspect.returncode != 0:
             if _no_such(inspect.stderr):
-                return _status("stopped", f"{name} is not created yet")
+                return {**_status("stopped", f"{name} is not created yet"), **image}
             return _status("error", _first_line(inspect.stderr) or "docker inspect failed")
-        return _status("running" if inspect.stdout.strip() == "true" else "stopped", name)
+        return {**_status("running" if inspect.stdout.strip() == "true" else "stopped", name),
+                **image}
 
     # --- lifecycle ----------------------------------------------------------------
 
@@ -320,10 +371,10 @@ class DockerComputerRuntime:
                     min(_SUDO_PROBE_S, _step_timeout(deadline, "sudo")))
                 if installer is not None:
                     self._start_bootstrap(home, installer)
-                return  # otherwise status() tells the user how to install Docker
+                return  # otherwise status() tells the user (or the desktop app) how
             if self._daemon_probe(deadline).returncode != 0:
                 return  # nothing can pull or build now; status() reports daemon_down
-            if self._image_present(deadline):
+            if self._image(deadline) is not None:
                 return
             self._start_bootstrap(home, None)
 

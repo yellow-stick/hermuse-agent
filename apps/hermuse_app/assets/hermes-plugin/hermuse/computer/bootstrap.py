@@ -9,6 +9,8 @@ which ``status`` reports as the ``building`` detail:
    passwordless sudo — apt ``docker.io`` or the get.docker.com script — start
    its daemon and add the user to the ``docker`` group. This process and the
    Hermes processes started before reach the socket through ``sg docker``.
+   Refused under the Hermuse desktop app (``HERMES_DESKTOP=1``), whose setup
+   assistant installs Docker with the administrator's consent.
 2. ``pull``: ``docker pull`` the published :data:`runtime.REGISTRY_IMAGE` and
    tag it :data:`runtime.IMAGE`.
 3. ``build``: when the pull fails, ``docker build`` :data:`runtime.IMAGE` from
@@ -60,6 +62,9 @@ def sudo(*args: str) -> list[str]:
 
 
 def install_docker(installer: str) -> bool:
+    if runtime.desktop_managed():
+        log("Docker is installed by the Hermuse Agent setup, not by this bootstrap")
+        return False
     if installer == "apt":
         # env: sudo resets the environment; the lock timeout waits out
         # unattended-upgrades on a freshly booted server.
@@ -119,13 +124,13 @@ def main(argv: list[str]) -> int:
     state.set_build_step(home, runtime.STEP_PULL)
     if (run(runtime.docker_command(docker, ["pull", runtime.REGISTRY_IMAGE]))
             and run(runtime.docker_command(docker, ["tag", runtime.REGISTRY_IMAGE, runtime.IMAGE]))):
-        log(f"{runtime.IMAGE} is ready")
+        log(f"{runtime.IMAGE} is ready, pulled from {runtime.REGISTRY_IMAGE}")
         return 0
     log(f"no published image: building {runtime.IMAGE} locally")
     state.set_build_step(home, runtime.STEP_BUILD)
     if not run(runtime.docker_command(docker, ["build", "-t", runtime.IMAGE, str(runtime.IMAGE_DIR)])):
         return 1
-    log(f"{runtime.IMAGE} is ready")
+    log(f"{runtime.IMAGE} is ready, built locally from {runtime.IMAGE_DIR}")
     return 0
 
 

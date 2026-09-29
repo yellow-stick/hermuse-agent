@@ -34,13 +34,19 @@ class ScriptedDocker:
         return subprocess.CompletedProcess(cmd, code, out, err)
 
 
-def docker_with(*, image=True, container=None, running=False, config_image=runtime.IMAGE):
+PULLED_DIGEST = f"{runtime.REGISTRY_REPOSITORY}@sha256:{'1' * 64}"
+
+
+def docker_with(*, image=True, pulled=True, container=None, running=False,
+                config_image=runtime.IMAGE):
     """Answers for a daemon that is up; *container* None = absent."""
     def answer(args):
         if args[0] == "version":
             return 0, "29.0.0\n", ""
         if args[:2] == ["image", "inspect"]:
-            return (0, "sha256:1\n", "") if image else (1, "", "Error: No such image\n")
+            if not image:
+                return 1, "", "Error: No such image\n"
+            return 0, json.dumps([PULLED_DIGEST] if pulled else []) + "\n", ""
         if args[0] == "inspect":
             if container is None:
                 return 1, "", f"Error: No such container: {args[-1]}\n"
@@ -148,6 +154,47 @@ def test_docker_the_user_must_install_starts_nothing(hermes_home, monkeypatch, p
     assert runtime.DockerComputerRuntime().status(hermes_home)["state"] == "docker_missing"
 
 
+def _sudo_and_apt(monkeypatch):
+    """Passwordless sudo and apt-get on a Linux host; returns the commands run."""
+    ran = []
+
+    def run(cmd, **kwargs):
+        ran.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(runtime.sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", lambda name: {
+        "sudo": "/usr/bin/sudo", "apt-get": "/usr/bin/apt-get"}.get(name))
+    monkeypatch.setattr(subprocess, "run", run)
+    return ran
+
+
+def test_a_server_with_passwordless_sudo_installs_docker_itself(monkeypatch):
+    ran = _sudo_and_apt(monkeypatch)
+    assert runtime.docker_installer() == "apt"
+    assert ran == [["/usr/bin/sudo", "-n", "true"]]
+
+
+def test_the_desktop_app_installs_docker_not_the_plugin(hermes_home, monkeypatch, popen):
+    ran = _sudo_and_apt(monkeypatch)
+    monkeypatch.setenv("HERMES_DESKTOP", "1")
+
+    runtime.DockerComputerRuntime().prepare(hermes_home)
+
+    assert popen == []  # no bootstrap
+    assert ran == []  # sudo not even probed
+    status = runtime.DockerComputerRuntime().status(hermes_home)
+    assert status["state"] == "docker_missing"
+    assert status["hint"] == "desktop_setup"
+    assert "sudo" not in status["detail"]
+
+
+def test_a_server_docker_missing_status_has_no_desktop_hint(hermes_home, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert "hint" not in runtime.DockerComputerRuntime().status(hermes_home)
+
+
+
 def test_a_failed_docker_install_is_not_an_image_failure(hermes_home, docker):
     state.write_build(hermes_home, _dead_pid(), time.time(), "docker")
     state.build_log_path(hermes_home).write_text("E: Unable to locate package docker.io\n")
@@ -174,6 +221,22 @@ def test_container_states(hermes_home, docker, container, running, expected):
     assert runtime.DockerComputerRuntime().status(hermes_home)["state"] == expected
 
 
+@pytest.mark.parametrize("running", [False, True])
+def test_a_ready_image_says_it_was_pulled(hermes_home, docker, running):
+    docker(docker_with(container="c", running=running))
+    status = runtime.DockerComputerRuntime().status(hermes_home)
+    assert status["image_source"] == "registry"
+    assert status["image_digest"] == PULLED_DIGEST
+
+
+def test_a_locally_built_image_is_never_reported_as_pulled(hermes_home, docker):
+    docker(docker_with(pulled=False))
+    status = runtime.DockerComputerRuntime().status(hermes_home)
+    assert status["state"] == "stopped"
+    assert status["image_source"] == "local"
+    assert "image_digest" not in status
+
+
 def test_failed_build_is_reported_and_retried(hermes_home, docker, popen):
     state.write_build(hermes_home, _dead_pid(), 0, "build")
     state.build_log_path(hermes_home).write_text(
@@ -187,7 +250,6 @@ def test_failed_build_is_reported_and_retried(hermes_home, docker, popen):
     build = state.read_build(hermes_home)
     assert build["pid"] == os.getpid() and build["step"] == "pull"
     assert state.build_log_path(hermes_home).read_text() == ""  # previous attempt's log dropped
-    assert ["image", "inspect", "--format", "{{.Id}}", runtime.IMAGE] in scripted.calls
     assert runtime.DockerComputerRuntime().status(hermes_home) == {
         "state": "building", "detail": "Downloading the computer image…"}
 
