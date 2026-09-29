@@ -1,0 +1,214 @@
+# TEMPORARY proof of packaging/windows/build-release.ps1 on the GitHub Windows
+# runner: Setup.exe built with every signing step (throwaway test
+# certificate), the Artifact Signing path run up to its missing account,
+# silent per-user install, launch from the Start menu shortcut, window title +
+# OCR, keystore round-trip, Hermes install from the app, uninstall keeping the
+# data. Removed before the branch merges.
+name: Windows app probe
+
+on:
+  push:
+    branches: [yellow-stick/desktop-releases]
+    paths:
+      - .github/workflows/winapp-probe.yml
+      - packaging/windows/**
+      - apps/hermuse_app/windows/**
+      - .github/winapp-probe-lib.ps1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winapp-probe
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PROBE: ${{ github.workspace }}\probe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Flutter SDK (pinned archive)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json
+          $entry = $lock.flutter.archives.'windows-x64'
+          $zip = Join-Path $env:RUNNER_TEMP flutter.zip
+          Invoke-WebRequest -Uri $entry.url -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($got -ne $entry.sha256) { throw "flutter archive sha256 $got, lock $($entry.sha256)" }
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE) { throw "tar $LASTEXITCODE" }
+          Remove-Item $zip
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'flutter\bin')
+          New-Item -ItemType Directory -Force $env:PROBE | Out-Null
+
+      - name: build-release.ps1 -TestSigning
+        run: |
+          flutter config --no-analytics --no-cli-animations
+          pwsh -NoProfile -File packaging/windows/build-release.ps1 -TestSigning
+          if ($LASTEXITCODE) { throw "build-release.ps1 exit $LASTEXITCODE" }
+          Get-Content dist/windows/VERSION.json
+          Get-Content dist/windows/SHA256SUMS.txt
+          Copy-Item -Recurse dist $env:PROBE
+
+      - name: Artifact Signing without an account
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP 'unsigned-probe.exe'
+          Copy-Item packages/hermuse_host/build/cliproxy/windows-amd64/cliproxy.exe $target
+          $log = Join-Path $env:PROBE 'artifact-signing-dry-run.log'
+          $env:WINDOWS_SIGNING_ENDPOINT = 'https://weu.codesigning.azure.net'
+          $env:WINDOWS_SIGNING_ACCOUNT = 'hermuse-probe-no-account'
+          $env:WINDOWS_SIGNING_PROFILE = 'hermuse-probe-no-profile'
+          pwsh -NoProfile -File packaging/windows/sign.ps1 $target *>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          $text = Get-Content -Raw $log
+          $status = (Get-AuthenticodeSignature $target).Status
+          "sign.ps1 exit $code; target signature $status"
+          if ($code -eq 0) { throw 'signing without an Artifact Signing account cannot succeed' }
+          if ($text -notmatch 'signing 1 file\(s\) with Artifact Signing') { throw 'sign.ps1 did not reach signtool' }
+          if ($status -ne 'NotSigned') { throw "the target was modified: $status" }
+
+      - name: Tesseract (pinned installer)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json
+          $entry = $lock.ci.tesseract_windows
+          $exe = Join-Path $env:RUNNER_TEMP tesseract-setup.exe
+          Invoke-WebRequest -Uri $entry.url -OutFile $exe
+          $got = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          if ($got -ne $entry.sha256) { throw "tesseract sha256 $got" }
+          Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+          & 'C:\Program Files\Tesseract-OCR\tesseract.exe' --version
+
+      - name: Install, launch, keystore
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/winapp-probe-lib.ps1
+          $fragment = Get-Content dist/windows/VERSION.json -Raw | ConvertFrom-Json
+          $setup = (Resolve-Path "dist/$($fragment.artifacts[0].name)").Path
+
+          $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$env:PROBE\setup.log`""
+          Check 'silent-install' ($p.ExitCode -eq 0) "exit $($p.ExitCode)"
+          Check 'install-dir' (Test-Path -LiteralPath $AppExe) $AppExe
+          $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($StartMenuLink)
+          Check 'start-menu-shortcut' ((Test-Path -LiteralPath $StartMenuLink) -and $shortcut.TargetPath -eq $AppExe) "$StartMenuLink -> $($shortcut.TargetPath)"
+          $entry = Get-ItemProperty -LiteralPath $UninstallKey
+          Check 'uninstall-entry' ($entry.DisplayName -eq 'Hermuse Agent' -and $entry.Publisher -eq 'Yellow Stick') "HKCU: $($entry.DisplayName) / $($entry.Publisher) / $($entry.DisplayVersion) / $($entry.UninstallString)"
+          Check 'per-user' (-not (Test-Path -LiteralPath ($UninstallKey -replace '^HKCU:', 'HKLM:'))) 'no HKLM uninstall entry'
+          $info = (Get-Item -LiteralPath $AppExe).VersionInfo
+          Check 'file-properties' ($info.ProductName -eq 'Hermuse Agent' -and $info.CompanyName -eq 'Yellow Stick' -and $info.FileDescription -eq 'Hermuse Agent') "$($info.ProductName) / $($info.CompanyName) / $($info.FileDescription) / $($info.ProductVersion) / $($info.LegalCopyright)"
+          $sha = (Get-FileHash -Algorithm SHA256 (Join-Path $AppDir 'cliproxy.exe')).Hash.ToLowerInvariant()
+          Check 'embedded-cliproxy' ($sha -eq $fragment.cliproxy.binary_sha256) "$sha (VERSION.json $($fragment.cliproxy.binary_sha256), upstream $($fragment.cliproxy.upstream_binary_sha256))"
+          $signed = foreach ($file in $AppExe, (Join-Path $AppDir 'unins000.exe'), (Join-Path $AppDir 'cliproxy.exe'), (Join-Path $AppDir 'flutter_windows.dll'), $setup) {
+            $s = Get-AuthenticodeSignature -LiteralPath $file
+            [pscustomobject]@{ File = Split-Path -Leaf $file; Status = $s.Status; Signer = $s.SignerCertificate.Subject; Timestamp = [bool]$s.TimeStamperCertificate }
+          }
+          $signed | Format-Table -AutoSize | Out-String | Tee-Object -FilePath "$env:PROBE\signatures.txt"
+          Check 'test-signatures' (-not ($signed | Where-Object { $_.Signer -ne 'CN=Hermuse Agent test signing (untrusted)' -or -not $_.Timestamp })) 'exe, uninstaller, cliproxy, flutter_windows.dll and Setup.exe carry the test signature and a timestamp'
+          $runtime = Get-ChildItem -LiteralPath $AppDir -Filter '*.dll' | ForEach-Object Name
+          "bundled DLLs: $($runtime -join ', ')"
+          Get-ChildItem -LiteralPath (Join-Path $AppDir 'notices') | ForEach-Object Name
+
+          # Launch the Start menu shortcut's target from an unrelated directory.
+          $cwd = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'elsewhere')
+          $app = Start-Process -FilePath $shortcut.TargetPath -WorkingDirectory $cwd -PassThru
+          $app.Id | Set-Content "$env:PROBE\app.pid"
+          $deadline = (Get-Date).AddSeconds(90)
+          do { Start-Sleep 2; $app.Refresh() } until ($app.MainWindowTitle -or (Get-Date) -gt $deadline -or $app.HasExited)
+          Check 'window-title' ($app.MainWindowTitle -eq 'Hermuse Agent') "title '$($app.MainWindowTitle)', exited: $($app.HasExited)"
+          Show-App $app
+          Start-Sleep 5
+          $text = Read-Screen 'launch'
+          Check 'ocr-title' ($text -match 'Hermuse Agent') 'title bar text'
+          Check 'ocr-welcome' ($text -match 'Connect to a Hermes' -and $text -match 'Install Hermes on this computer' -and $text -notmatch 'Secure storage unavailable') 'Welcome, no keystore error'
+
+          # The startup keystore probe writes, reads back and deletes a secret
+          # through flutter_secure_storage: a DPAPI (CurrentUser) file in the
+          # app support directory, which must decrypt to an empty map again.
+          $dat = Join-Path $SupportDir 'flutter_secure_storage.dat'
+          Check 'keystore-file' (Test-Path -LiteralPath $dat) $dat
+          $bytes = [IO.File]::ReadAllBytes($dat)
+          $raw = [Text.Encoding]::UTF8.GetString($bytes)
+          Check 'keystore-not-plaintext' (-not $raw.Contains('hermes/') -and -not $raw.TrimStart().StartsWith('{')) "$($bytes.Length) bytes"
+          $keys = powershell.exe -NoProfile -Command "Add-Type -AssemblyName System.Security; `$plain = [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes('$dat'), `$null, 'CurrentUser')); (`$plain | ConvertFrom-Json).PSObject.Properties.Name -join ','; if (`$plain.Trim() -eq '{}') { 'EMPTY' }"
+          Check 'keystore-roundtrip' ($LASTEXITCODE -eq 0 -and ($keys -join '') -eq 'EMPTY') "DPAPI-decrypted keys: '$($keys -join ' ')'"
+          Get-ChildItem -LiteralPath $SupportDir | Format-Table -AutoSize Length, LastWriteTime, Name | Out-String | Tee-Object -FilePath "$env:PROBE\support-dir.txt"
+          Save-Results
+          Assert-Results
+
+      - name: Install Hermes from the app
+        continue-on-error: true
+        timeout-minutes: 45
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/winapp-probe-lib.ps1
+          $app = Get-Process -Id (Get-Content "$env:PROBE\app.pid")
+          Show-App $app
+          Click-Text 'install-button' 'Install Hermes on this computer'
+          $journal = Join-Path $SupportDir 'hermes-install.json'
+          $deadline = (Get-Date).AddMinutes(40)
+          $shot = 0
+          do {
+            Start-Sleep 30
+            $state = if (Test-Path -LiteralPath $journal) { Get-Content -Raw -LiteralPath $journal | ConvertFrom-Json } else { $null }
+            "$(Get-Date -Format HH:mm:ss) journal: $(if ($state) { "current=$($state.current_stage) done=$($state.completed_stages -join ',') finished=$($state.finished)" } else { 'none' })"
+            if ((++$shot % 4) -eq 0) { Read-Screen "installing-$shot" | Out-Null }
+          } until (($state -and $state.finished) -or (Get-Date) -gt $deadline)
+          Copy-Item -LiteralPath $journal "$env:PROBE\hermes-install.json" -ErrorAction SilentlyContinue
+          Check 'journal-finished' ([bool]($state -and $state.finished)) "$(Get-Content -Raw -LiteralPath $journal -ErrorAction SilentlyContinue)"
+          $hermesHome = Join-Path $env:LOCALAPPDATA 'hermes'
+          $version = & (Join-Path $hermesHome 'bin\hermes.exe') --version
+          Check 'launcher' ($LASTEXITCODE -eq 0) "$version"
+          $head = git -C (Join-Path $hermesHome 'hermes-agent') rev-parse HEAD
+          Check 'pinned-checkout' ($head -eq '130b8f2c5dbca93a81aa396dd2ba44420d78f6f0') $head
+          Get-Content -Raw (Join-Path $hermesHome 'hermes-agent\.hermes-bootstrap-complete') | Tee-Object -FilePath "$env:PROBE\bootstrap-marker.json"
+          Start-Sleep 30
+          Read-Screen 'after-install' | Out-Null
+          $backend = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'serve' -and $_.CommandLine -match 'hermes' }
+          $backend | Select-Object ProcessId, ParentProcessId, CommandLine | Format-Table -AutoSize | Out-String -Width 400 | Tee-Object -FilePath "$env:PROBE\backend.txt"
+          Check 'backend-running' ([bool]$backend) 'hermes serve supervised by the app'
+          Save-Results 'hermes'
+          Assert-Results
+
+      - name: Quit and uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./.github/winapp-probe-lib.ps1
+          $app = Get-Process -Id (Get-Content "$env:PROBE\app.pid") -ErrorAction SilentlyContinue
+          if ($app) {
+            [void]$app.CloseMainWindow()
+            if (-not $app.WaitForExit(60000)) { Stop-Process -Id $app.Id -Force; 'app killed after 60 s' } else { 'app closed' }
+          }
+          $before = Get-ChildItem -LiteralPath $SupportDir | ForEach-Object Name
+          $hermesHome = Join-Path $env:LOCALAPPDATA 'hermes'
+          $hermesBefore = Test-Path -LiteralPath $hermesHome
+          $uninstaller = Join-Path $AppDir 'unins000.exe'
+          $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          # The uninstaller runs from a copy in %TEMP%: wait for it to finish.
+          $deadline = (Get-Date).AddMinutes(3)
+          while ((Test-Path -LiteralPath $UninstallKey) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          Start-Sleep 5
+          Check 'silent-uninstall' ($p.ExitCode -eq 0 -and -not (Test-Path -LiteralPath $UninstallKey)) "exit $($p.ExitCode)"
+          Check 'app-removed' (-not (Test-Path -LiteralPath $AppExe) -and -not (Test-Path -LiteralPath $StartMenuLink)) "left in ${AppDir}: $((Get-ChildItem -LiteralPath $AppDir -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName) -join ', ')"
+          $after = Get-ChildItem -LiteralPath $SupportDir -ErrorAction SilentlyContinue | ForEach-Object Name
+          Check 'data-kept' ((@($before) -join ',') -eq (@($after) -join ',') -and $after -contains 'flutter_secure_storage.dat' -and $after -contains 'hermuse.sqlite') "${SupportDir}: $($after -join ', ')"
+          Check 'hermes-home-kept' ($hermesBefore -eq (Test-Path -LiteralPath $hermesHome)) "HERMES_HOME present before: $hermesBefore, after: $(Test-Path -LiteralPath $hermesHome)"
+          Save-Results 'uninstall'
+          Assert-Results
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: winapp-probe
+          path: ${{ env.PROBE }}
