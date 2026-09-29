@@ -30,11 +30,14 @@ final class YsPalette {
     required this.primary,
     required this.primary2,
     required this.primaryMuted,
+    required this.primaryWash,
     required this.primaryContent,
     required this.line,
     required this.backdrop,
     required this.success,
+    required this.successMuted,
     required this.error,
+    required this.errorWash,
     required this.logoSurface,
     required this.avatarSurface,
   });
@@ -72,6 +75,9 @@ final class YsPalette {
   /// Accent wash behind selected rows.
   final YsColor primaryMuted;
 
+  /// Faint accent wash behind a row that waits on the user.
+  final YsColor primaryWash;
+
   /// Text/icons drawn on [primary].
   final YsColor primaryContent;
 
@@ -84,8 +90,14 @@ final class YsPalette {
   /// Positive status (Connected).
   final YsColor success;
 
+  /// Positive wash: behind a check that was already in place.
+  final YsColor successMuted;
+
   /// Negative status (errors, destructive actions).
   final YsColor error;
+
+  /// Faint negative wash behind a failed row.
+  final YsColor errorWash;
 
   /// Light disc behind airline marks.
   final YsColor logoSurface;
@@ -107,11 +119,14 @@ final class YsPalette {
     primary: YsColor(0xFFF5C21B),
     primary2: YsColor(0xFFFFD44D),
     primaryMuted: YsColor(0x29F5C21B),
+    primaryWash: YsColor(0x14F5C21B),
     primaryContent: YsColor(0xFF1A1505),
     line: YsColor(0x1FFFFFFF),
     backdrop: YsColor(0x8C000000),
     success: YsColor(0xFF07B123),
+    successMuted: YsColor(0x2907B123),
     error: YsColor(0xFFE5484D),
+    errorWash: YsColor(0x14E5484D),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
   );
@@ -129,11 +144,14 @@ final class YsPalette {
     'primary': primary,
     'primary-2': primary2,
     'primary-muted': primaryMuted,
+    'primary-wash': primaryWash,
     'primary-content': primaryContent,
     'line': line,
     'backdrop': backdrop,
     'success': success,
+    'success-muted': successMuted,
     'error': error,
+    'error-wash': errorWash,
     'logo-surface': logoSurface,
     'avatar-surface': avatarSurface,
   };

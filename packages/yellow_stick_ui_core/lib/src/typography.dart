@@ -31,6 +31,9 @@ abstract final class YsType {
   /// CSS fallback stack after [family].
   static const fallback = ['system-ui', 'sans-serif'];
 
+  /// Family of technical output (logs), the platform's monospace face.
+  static const monoFamily = 'monospace';
+
   /// Route headers (Feed, Library, Goals).
   static const display = YsTextStyle(34, 40, YsWeight.semibold);
 
@@ -75,4 +78,7 @@ abstract final class YsType {
 
   /// Monogram inside logo discs.
   static const monogram = YsTextStyle(14, 20, YsWeight.semibold);
+
+  /// Technical output lines (logs), in [monoFamily].
+  static const code = YsTextStyle(12, 18);
 }

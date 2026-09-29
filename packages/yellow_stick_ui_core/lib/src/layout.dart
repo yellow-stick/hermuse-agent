@@ -70,6 +70,31 @@ abstract final class YsLayout {
   /// Size of the phone bottom navigation icons.
   static const bottomNavIconSize = 28.0;
 
+  /// Status badge of a setup checklist row: the ring's outer diameter.
+  static const stepBadge = 36.0;
+
+  /// Glyph inside a [stepBadge].
+  static const stepGlyph = 18.0;
+
+  /// Stroke of a step badge's ring and arc.
+  static const stepRingStroke = 2.0;
+
+  /// Stroke of a step glyph, in 24-unit viewBox space (1.5 px at
+  /// [stepGlyph]).
+  static const stepGlyphStroke = 2.0;
+
+  /// Overall progress ring of a setup card's header.
+  static const progressRing = 44.0;
+
+  /// Stroke of the [progressRing].
+  static const progressRingStroke = 3.0;
+
+  /// Tallest a technical log box grows before it scrolls.
+  static const logMaxHeight = 160.0;
+
+  /// Icon beside a line of label text (a disclosure's chevron).
+  static const inlineIcon = 16.0;
+
   /// At or above this width the panel docks beside the thread.
   static const wideMin = 768.0;
 

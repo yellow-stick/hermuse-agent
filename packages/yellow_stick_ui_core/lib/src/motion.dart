@@ -20,6 +20,9 @@ final class YsEase {
   /// Near-linear segment between two keyframes of a continuous move.
   static const drift = YsEase(0.167, 0.167, 0.833, 0.833);
 
+  /// Decelerating entrance: quick start, long settle.
+  static const settle = YsEase(0.2, 0, 0, 1);
+
   /// CSS `animation-timing-function` / `transition-timing-function` value.
   String get css => 'cubic-bezier($x1, $y1, $x2, $y2)';
 
@@ -433,6 +436,292 @@ YsPartMotion _libraryFlip(int part, double x, double y, double start) {
         k(32, 0.9, const YsEase(0.167, 0.167, 0.424, 1)),
         k(42, 1),
       ]),
+    ],
+  );
+}
+
+/// Motion of a setup checklist: rows entering, glyphs drawing in, state
+/// changes, the checking scan, the working arc and the "ready" moment
+/// (milliseconds unless noted; frames are 60 fps, like [YsIconMotion]).
+abstract final class YsStepMotion {
+  /// A new row fades in while rising [rise] px over [enter] ms, [stagger] ms
+  /// after the row above it, with the [YsEase.settle] curve.
+  static const enter = 360;
+  static const stagger = 60;
+  static const rise = 8.0;
+
+  /// Its glyph draws in stroke after stroke: each stroke takes [drawStroke]
+  /// frames and the last one starts at frame [drawSpread] ([drawIn]).
+  static const drawStroke = 16.0;
+  static const drawSpread = 14.0;
+
+  /// A state change: status, glyph and ring crossfade over [swap] ms and the
+  /// row's height eases over [resize] ms ([YsEase.standard]).
+  static const swap = 220;
+  static const resize = 280;
+
+  /// Checking: the glyph breathes and a short arc scans the ring, one cycle
+  /// every [pulse] ms.
+  static const pulse = 1600;
+
+  /// Working without a known end: one arc turn every [spin] ms.
+  static const spin = 1100;
+
+  /// Working towards a known end, and the overall ring: each new value is
+  /// reached in [progress] ms ([YsEase.standard]).
+  static const progress = 600;
+
+  /// Ready: the overall ring turns to the success colour over [readyTurn]
+  /// frames while it draws the tick of [YsStepMark.tick], then pops
+  /// ([readyPop]); after [readyFrames] frames the moment holds [readyHold]
+  /// ms before the app goes on.
+  static const readyTurn = 14.0;
+  static const readyFrames = 34.0;
+  static const readyHold = 600;
+  static const readyPop = YsPartMotion(
+    originX: 12,
+    originY: 12,
+    tracks: [
+      YsMotionTrack(YsMotionProperty.scale, [
+        YsKeyframe(20, 1, YsEase.standard),
+        YsKeyframe(26, 1.06),
+        YsKeyframe(34, 1),
+      ]),
+    ],
+  );
+
+  /// Frames of [drawIn] for [count] elements.
+  static double drawFrames(int count) =>
+      count <= 1 ? drawStroke : drawSpread + drawStroke;
+
+  /// Each of [count] glyph elements drawing in ([YsMotionProperty.trimEnd]
+  /// from 0 to 1), the starts spread over [drawSpread] frames.
+  static List<YsPartMotion> drawIn(int count) => [
+    for (var i = 0; i < count; i++)
+      _drawStroke(i, count <= 1 ? 0 : drawSpread * i / (count - 1)),
+  ];
+
+  static YsPartMotion _drawStroke(int part, double start) => YsPartMotion(
+    part: part,
+    originX: 12,
+    originY: 12,
+    tracks: [
+      YsMotionTrack(YsMotionProperty.trimEnd, [
+        YsKeyframe(start, 0, YsEase.settle),
+        YsKeyframe(start + drawStroke, 1),
+      ]),
+      // A zero-length stroke would still paint its round caps.
+      YsMotionTrack(YsMotionProperty.opacity, [
+        YsKeyframe(start, 0, YsEase.linear),
+        YsKeyframe(start + 0.1, 1),
+      ]),
+    ],
+  );
+}
+
+/// The mark a setup checklist row settles on — tick, calm tick, cross,
+/// dash — with the one-shot motion that brings it in when the row reaches
+/// that state: Lucide geometry on the 24-unit viewBox, keyframes at 60 fps
+/// like [YsIconMotion].
+final class YsStepMark {
+  const YsStepMark._({
+    required this.body,
+    required this.frames,
+    required this.parts,
+    this.ring,
+  });
+
+  /// Glyph markup (24-unit viewBox), drawn inside the row's ring.
+  final String body;
+
+  /// Length in frames (60 fps).
+  final double frames;
+
+  /// Motion of the ring around the glyph: [YsMotionProperty.trimEnd]
+  /// closes it, opacity and scale bring it in. Null: the ring just shows.
+  final YsPartMotion? ring;
+
+  /// Motion of the whole glyph (part null) and of its elements.
+  final List<YsPartMotion> parts;
+
+  int get durationMs => (frames * 1000 / 60).round();
+
+  /// Top-level SVG elements of [body].
+  List<String> get elements => ysSvgElements(body);
+
+  /// Motion of the whole glyph, if any.
+  YsPartMotion? get root => _find(null);
+
+  /// Motion of element [index], if any.
+  YsPartMotion? part(int index) => _find(index);
+
+  YsPartMotion? _find(int? index) {
+    for (final p in parts) {
+      if (p.part == index) return p;
+    }
+    return null;
+  }
+
+  /// Completed now: the ring closes clockwise from the top, then the tick
+  /// draws stroke by stroke, short leg then long leg (26 frames, ~430 ms).
+  static const tick = YsStepMark._(
+    // Lucide `check`, drawn from its short leg.
+    body: '<path d="m4 12 5 5L20 6"/>',
+    frames: 26,
+    ring: YsPartMotion(
+      originX: 12,
+      originY: 12,
+      tracks: [
+        YsMotionTrack(YsMotionProperty.trimEnd, [
+          YsKeyframe(0, 0, YsEase.standard),
+          YsKeyframe(14, 1),
+        ]),
+      ],
+    ),
+    parts: [
+      YsPartMotion(
+        part: 0,
+        originX: 12,
+        originY: 12,
+        tracks: [
+          // The short leg is 0.3125 of the path.
+          YsMotionTrack(YsMotionProperty.trimEnd, [
+            YsKeyframe(6, 0, YsEase(0.15, 1, 0.4, 1)),
+            YsKeyframe(12, 0.3125),
+            YsKeyframe(14, 0.3125, YsEase(0.45, 0.1, 0.2, 1)),
+            YsKeyframe(26, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(5.9, 0, YsEase.linear),
+            YsKeyframe(6, 1),
+          ]),
+        ],
+      ),
+    ],
+  );
+
+  /// Already in place: a soft disc grows behind a tick that settles in,
+  /// without being drawn (16 frames).
+  static const calmTick = YsStepMark._(
+    body: '<path d="m4 12 5 5L20 6"/>',
+    frames: 16,
+    ring: YsPartMotion(
+      originX: 12,
+      originY: 12,
+      tracks: [
+        YsMotionTrack(YsMotionProperty.scale, [
+          YsKeyframe(0, 0.6, YsEase.settle),
+          YsKeyframe(12, 1),
+        ]),
+        YsMotionTrack(YsMotionProperty.opacity, [
+          YsKeyframe(0, 0, YsEase.standard),
+          YsKeyframe(10, 1),
+        ]),
+      ],
+    ),
+    parts: [
+      YsPartMotion(
+        originX: 12,
+        originY: 12,
+        tracks: [
+          YsMotionTrack(YsMotionProperty.scale, [
+            YsKeyframe(2, 0.75, YsEase.settle),
+            YsKeyframe(16, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(2, 0, YsEase.standard),
+            YsKeyframe(12, 1),
+          ]),
+        ],
+      ),
+    ],
+  );
+
+  /// Failed: the ring fades in, the cross draws stroke by stroke, then it
+  /// shakes its head, gently (38 frames).
+  static const cross = YsStepMark._(
+    // Lucide `x`.
+    body: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    frames: 38,
+    ring: YsPartMotion(
+      originX: 12,
+      originY: 12,
+      tracks: [
+        YsMotionTrack(YsMotionProperty.opacity, [
+          YsKeyframe(0, 0, YsEase.standard),
+          YsKeyframe(8, 1),
+        ]),
+      ],
+    ),
+    parts: [
+      YsPartMotion(
+        originX: 12,
+        originY: 12,
+        tracks: [
+          YsMotionTrack(YsMotionProperty.rotate, [
+            YsKeyframe(16, 0),
+            YsKeyframe(20, 9),
+            YsKeyframe(25, -7),
+            YsKeyframe(30, 4),
+            YsKeyframe(35, -1.5),
+            YsKeyframe(38, 0),
+          ]),
+        ],
+      ),
+      YsPartMotion(
+        part: 0,
+        originX: 12,
+        originY: 12,
+        tracks: [
+          YsMotionTrack(YsMotionProperty.trimEnd, [
+            YsKeyframe(2, 0, YsEase.settle),
+            YsKeyframe(10, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(2, 0, YsEase.linear),
+            YsKeyframe(2.1, 1),
+          ]),
+        ],
+      ),
+      YsPartMotion(
+        part: 1,
+        originX: 12,
+        originY: 12,
+        tracks: [
+          YsMotionTrack(YsMotionProperty.trimEnd, [
+            YsKeyframe(8, 0, YsEase.settle),
+            YsKeyframe(16, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(8, 0, YsEase.linear),
+            YsKeyframe(8.1, 1),
+          ]),
+        ],
+      ),
+    ],
+  );
+
+  /// Not needed: a dash draws from the left (12 frames).
+  static const dash = YsStepMark._(
+    // Lucide `minus`.
+    body: '<path d="M5 12h14"/>',
+    frames: 12,
+    parts: [
+      YsPartMotion(
+        part: 0,
+        originX: 12,
+        originY: 12,
+        tracks: [
+          YsMotionTrack(YsMotionProperty.trimEnd, [
+            YsKeyframe(0, 0, YsEase.standard),
+            YsKeyframe(12, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(0, 0, YsEase.linear),
+            YsKeyframe(0.1, 1),
+          ]),
+        ],
+      ),
     ],
   );
 }
