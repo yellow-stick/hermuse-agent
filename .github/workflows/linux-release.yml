@@ -1,0 +1,824 @@
+# Linux release of Hermuse Agent: .deb + AppImage (amd64) from one Flutter bundle.
+#
+#   metadata -> checks -> package -> smoke + compat -> smoke-report -> release-approval -> publish
+#                                 \-> attest (tag runs of the canonical repository only)
+#
+# Pull requests: version read from apps/hermuse_app/pubspec.yaml, checks, build,
+# package and every smoke leg, without secrets and without publication.
+# Tag push (hermuse/v*) or dispatch with an existing tag: the tag is resolved to
+# its commit, must name exactly the pubspec version, and that exact commit is
+# built. Publication needs the `release` environment (required reviewers), then
+# creates a DRAFT with the tested bytes and flips it public only when every
+# proof exists: no failed or missing smoke result, the evidence of each manual
+# gate, and the real conversation with the capped test account.
+#
+# Actions are pinned by commit (tag in the trailing comment, resolved
+# 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
+# tools by URL + SHA-256 in tool/release/toolchain.lock.json and
+# tool/release/guest-images.lock.json.
+name: Linux release
+
+on:
+  pull_request:
+    paths:
+      - apps/**
+      - packages/**
+      - hermes-plugin/**
+      - packaging/**
+      - tool/release/**
+      - pubspec.yaml
+      - pubspec.lock
+      - .github/workflows/linux-release.yml
+  push:
+    tags: ['hermuse/v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (hermuse/vX.Y.Z or hermuse/vX.Y.Z-rc.N)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.tag || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BUILDER_IMAGE: hermuse-linux-builder:ci
+
+jobs:
+  metadata:
+    name: Metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      release: ${{ steps.source.outputs.release }}
+      publishable: ${{ steps.source.outputs.publishable }}
+      commit: ${{ steps.source.outputs.commit }}
+      tag: ${{ steps.meta.outputs.tag }}
+      app_version: ${{ steps.meta.outputs.app_version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      deb_version: ${{ steps.meta.outputs.deb_version }}
+      deb_file: ${{ steps.meta.outputs.deb_file }}
+      appimage_file: ${{ steps.meta.outputs.appimage_file }}
+      sources_file: ${{ steps.meta.outputs.sources_file }}
+      fixture_deb_version: ${{ steps.meta.outputs.fixture_deb_version }}
+      fixture_deb_file: ${{ steps.meta.outputs.fixture_deb_file }}
+      run_label: ${{ steps.source.outputs.run_label }}
+      smoke_matrix: ${{ steps.legs.outputs.smoke }}
+      compat_matrix: ${{ steps.legs.outputs.compat }}
+    steps:
+      - name: Resolve the source commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_LABEL: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          echo "run_label=$RUN_LABEL" >>"$GITHUB_OUTPUT"
+          if [ "$EVENT" = pull_request ]; then
+            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag=${INPUT_TAG:-$REF_NAME}
+          if ! [[ $tag =~ ^hermuse/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::'$tag' is not a hermuse/vX.Y.Z[-rc.N] tag"
+            exit 1
+          fi
+          # Existing tags only, dereferenced to the commit (annotated or not).
+          object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha')
+          while [ "${object%% *}" = tag ]; do
+            object=$(gh api "repos/$REPOSITORY/git/tags/${object#* }" --jq '.object.type + " " + .object.sha')
+          done
+          [ "${object%% *}" = commit ] || { echo "::error::$tag does not point at a commit"; exit 1; }
+          commit=${object#* }
+          if [ "$EVENT" = push ] && [ "$commit" != "$EVENT_SHA" ]; then
+            echo "::error::$tag resolves to $commit, the push was $EVENT_SHA"
+            exit 1
+          fi
+          publishable=false
+          [ "$REPOSITORY" = yellow-stick/hermuse-agent ] && publishable=true
+          { echo release=true; echo "publishable=$publishable"; echo "commit=$commit"; echo "tag=$tag"; } >>"$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          persist-credentials: false
+
+      - name: Release metadata from the app pubspec
+        id: meta
+        env:
+          TAG: ${{ steps.source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            tool/release/release-metadata.sh --tag "$TAG" | tee -a "$GITHUB_OUTPUT"
+          else
+            tool/release/release-metadata.sh | tee -a "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke legs
+        id: legs
+        run: |
+          set -euo pipefail
+          echo "smoke=$(python3 packaging/smoke/proof_summary.py matrix guests)" >>"$GITHUB_OUTPUT"
+          echo "compat=$(python3 packaging/smoke/proof_summary.py matrix containers)" >>"$GITHUB_OUTPUT"
+
+  checks:
+    name: Checks
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: Pinned lint tools
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          bin="$RUNNER_TEMP/lint"
+          mkdir -p "$bin"
+          fetch() {
+            curl -fsSL --proto '=https' --retry 3 -o "$bin/$1.archive" "$(jq -er ".ci.$1.url" "$lock")"
+            echo "$(jq -er ".ci.$1.sha256" "$lock")  $bin/$1.archive" | sha256sum -c -
+          }
+          fetch actionlint
+          tar -xzf "$bin/actionlint.archive" -C "$bin" actionlint
+          fetch shellcheck
+          tar -xJf "$bin/shellcheck.archive" -C "$bin" --strip-components=1 \
+            "shellcheck-v$(jq -er .ci.shellcheck.version "$lock")/shellcheck"
+          echo "$bin" >>"$GITHUB_PATH"
+
+      - name: Lint the workflows and the release scripts
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files packaging tool/release | while read -r file; do
+            case $file in
+              *.sh) echo "$file" ;;
+              *) head -n 1 "$file" | grep -Eq '^#!.*[/ ](ba|da)?sh( |$)' && echo "$file" || true ;;
+            esac
+          done)
+          [ "${#scripts[@]}" -gt 0 ] || { echo "::error::no release scripts found"; exit 1; }
+          printf 'shellcheck: %s\n' "${scripts[@]}"
+          shellcheck -x -P SCRIPTDIR "${scripts[@]}" </dev/null
+          for file in "${scripts[@]}"; do
+            if head -n 1 "$file" | grep -Eq '^#!.*[/ ]sh( |$)'; then sh -n "$file"; else bash -n "$file"; fi
+          done
+          actionlint -shellcheck "$(command -v shellcheck)"
+          python3 -m py_compile packaging/smoke/*.py packaging/smoke/guest/*.py
+
+      - name: Linux helper shell tests
+        run: sh packaging/linux/tests/run.sh
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Builder image (Ubuntu 22.04, Flutter and Melos from toolchain.lock.json, no JDK)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tool/release
+          file: packaging/linux/builder.Dockerfile
+          tags: ${{ env.BUILDER_IMAGE }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermuse-linux-builder
+          cache-to: type=gha,scope=hermuse-linux-builder,mode=max
+
+      - name: Dart workspace checks in the builder
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$BUILDER_IMAGE" bash -euo pipefail -c '
+            flutter --version
+            melos --version
+            flutter pub get --enforce-lockfile
+            (cd apps/hermuse_app && dart run tool/sync_plugin_assets.dart)
+            melos run analyze
+            melos run format:check
+            melos run test:dart
+            melos run test:flutter
+          '
+
+      - name: Bundled plugin assets match hermes-plugin/hermuse
+        run: |
+          set -euo pipefail
+          drift=$(git status --porcelain -- apps/hermuse_app/assets/hermes-plugin)
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::apps/hermuse_app/assets/hermes-plugin is stale: run 'dart run tool/sync_plugin_assets.dart' in apps/hermuse_app"
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.20
+          checksum: 6590717592ace991ff83a63fef799e3ad9d33ecc8f96c5d6bdd732496e79337f
+          enable-cache: false
+
+      - name: Plugin tests against Hermes at the pinned commit
+        run: |
+          set -euo pipefail
+          pin=$(sed -n "s/^const hermesReleaseCommit = '\([0-9a-f]\{40\}\)';$/\1/p" \
+            packages/hermuse_host/lib/src/installer.dart)
+          [ -n "$pin" ] || { echo "::error::no hermesReleaseCommit in installer.dart"; exit 1; }
+          src="$RUNNER_TEMP/hermes-agent"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$pin"
+          git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          [ "$(git -C "$src" rev-parse HEAD)" = "$pin" ]
+          (cd "$src" && uv sync --frozen --extra dev --python 3.12)
+          cd hermes-plugin/hermuse
+          HERMES_AGENT_DIR="$src" "$src/.venv/bin/python" -m pytest tests/ -q
+
+  package:
+    name: Build and package
+    needs: [metadata, checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Builder image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tool/release
+          file: packaging/linux/builder.Dockerfile
+          tags: ${{ env.BUILDER_IMAGE }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermuse-linux-builder
+          cache-to: type=gha,scope=hermuse-linux-builder,mode=max
+
+      - name: Build the release (packaging/linux/build-release.sh)
+        run: |
+          mkdir -p "$RUNNER_TEMP/hermuse-work"
+          docker run --rm -v "$PWD:/src" -v "$RUNNER_TEMP/hermuse-work:/work" -w /src \
+            "$BUILDER_IMAGE" packaging/linux/build-release.sh
+
+      - name: Artifacts match the release metadata
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          DEB_VERSION: ${{ needs.metadata.outputs.deb_version }}
+          DEB_FILE: ${{ needs.metadata.outputs.deb_file }}
+          APPIMAGE_FILE: ${{ needs.metadata.outputs.appimage_file }}
+          SOURCES_FILE: ${{ needs.metadata.outputs.sources_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$DEB_FILE" "$APPIMAGE_FILE" "$SOURCES_FILE" SHA256SUMS.txt VERSION.json | sort)
+          actual=$(find . -maxdepth 1 -type f -printf '%P\n' | sort)
+          [ "$actual" = "$expected" ] || { ls -l; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          sha256sum -c SHA256SUMS.txt
+          [ "$(wc -l <SHA256SUMS.txt)" = 4 ]
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg deb "$DEB_VERSION" '
+            .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and .app.debian_version == $deb' VERSION.json
+
+      - name: Upgrade fixture (lower Debian version, never published)
+        env:
+          DEB_VERSION: ${{ needs.metadata.outputs.deb_version }}
+          FIXTURE_VERSION: ${{ needs.metadata.outputs.fixture_deb_version }}
+          FIXTURE_FILE: ${{ needs.metadata.outputs.fixture_deb_file }}
+        run: |
+          set -euo pipefail
+          dpkg --compare-versions "$FIXTURE_VERSION" lt "$DEB_VERSION"
+          docker run --rm -v "$PWD:/src" -v "$RUNNER_TEMP/hermuse-work:/work" -w /src \
+            -e HERMUSE_DEB_VERSION_OVERRIDE="$FIXTURE_VERSION" -e HERMUSE_TOOLS_CACHE=/work/cache "$BUILDER_IMAGE" \
+            packaging/linux/package-deb.sh /work/bundle /work/fixture
+          mkdir -p upgrade-fixture
+          cp "$RUNNER_TEMP/hermuse-work/fixture/$FIXTURE_FILE" upgrade-fixture/
+          [ "$(dpkg-deb -f "upgrade-fixture/$FIXTURE_FILE" Version)" = "$FIXTURE_VERSION" ]
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-dist
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS.txt
+            dist/VERSION.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-sources
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-upgrade-fixture
+          path: upgrade-fixture/*.deb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  attest:
+    name: Provenance attestation
+    needs: [metadata, package]
+    if: needs.metadata.outputs.release == 'true' && needs.metadata.outputs.publishable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-sources
+          path: dist
+      - name: Verify the bytes to attest
+        run: cd dist && sha256sum -c SHA256SUMS.txt
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
+
+  smoke:
+    name: Smoke ${{ matrix.name }}
+    needs: [metadata, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.metadata.outputs.smoke_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      FORMAT: ${{ matrix.format }}
+      RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
+      FIXTURE_FILE: ${{ needs.metadata.outputs.fixture_deb_file }}
+      WORK: /mnt/hermuse-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: matrix.scenario == 'lifecycle' && matrix.format == 'deb'
+        with:
+          name: linux-upgrade-fixture
+          path: fixture
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && sha256sum -c --ignore-missing SHA256SUMS.txt
+
+      - name: QEMU, KVM when the runner exposes it
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage ffmpeg
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-hermuse-kvm.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "$WORK"
+
+      - name: Boot a fresh ${{ matrix.target }} guest
+        run: |
+          set -euo pipefail
+          packaging/smoke/guest/guest.sh fetch "$TARGET" "$WORK/images"
+          packaging/smoke/guest/guest.sh up "$TARGET" "$WORK/images" "$WORK/run"
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }})
+        run: |
+          set -euo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          scale=1
+          [ "$(cat "$run/accel")" = kvm ] || scale=4
+          stage=$(mktemp -d)
+          cp -r packaging/smoke "$stage/hermuse-smoke"
+          "$guest" push "$run" "$stage/hermuse-smoke" /opt
+          "$guest" push "$run" dist /root/hermuse-release
+          "$guest" ssh "$run" 'install -d -m 0700 /root/hermuse-release/secrets'
+          "$guest" push "$run" "$run/tester-password" /root/hermuse-release/secrets
+          "$guest" push "$run" "$run/keyring-password" /root/hermuse-release/secrets
+          fixture=()
+          if [ -d fixture ]; then
+            "$guest" push "$run" fixture /root/hermuse-release
+            fixture=(--fixture-deb "/root/hermuse-release/fixture/$FIXTURE_FILE")
+          fi
+          # The verdict is the result files, not the runner's exit status.
+          "$guest" exec "$run" 17400 /opt/hermuse-smoke/linux.sh "$SCENARIO" --format "$FORMAT" \
+            --dist /root/hermuse-release/dist --out /root/hermuse-release/out --run-id "$RUN_LABEL" \
+            --guest "$TARGET" --secrets /root/hermuse-release/secrets --timeout-scale "$scale" \
+            "${fixture[@]}" || echo "::warning::scenario runner exited with $?"
+
+      - name: Collect the evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          leg="$RUNNER_TEMP/legs/$LEG"
+          mkdir -p "$RUNNER_TEMP/legs"
+          if [ -f "$run/ssh-port" ] && "$guest" pull "$run" /root/hermuse-release/out "$RUNNER_TEMP/legs"; then
+            mv "$RUNNER_TEMP/legs/out" "$leg"
+          fi
+          mkdir -p "$leg/evidence"
+          cp "$run/console.log" "$leg/evidence/guest-console.log" 2>/dev/null || true
+          cp "$run/accel" "$leg/evidence/accel" 2>/dev/null || true
+          if compgen -G "$leg/evidence/frames/*.jpg" >/dev/null; then
+            ffmpeg -loglevel error -framerate 4 -pattern_type glob -i "$leg/evidence/frames/*.jpg" \
+              -vf 'scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libx264 -pix_fmt yuv420p "$leg/evidence/frames/run.mp4" &&
+              rm -f "$leg"/evidence/frames/*.jpg
+          fi
+          "$guest" down "$run" || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO"
+
+  compat:
+    name: Compat ${{ matrix.name }}
+    needs: [metadata, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.metadata.outputs.compat_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      FORMAT: ${{ matrix.format }}
+      RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && sha256sum -c --ignore-missing SHA256SUMS.txt
+
+      - name: APT resolution, ELF resolution and window in ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          image=$(jq -er --arg t "$TARGET" '.containers[$t] | .image + "@" + .digest' tool/release/guest-images.lock.json)
+          out="$RUNNER_TEMP/legs/$LEG"
+          mkdir -p "$out"
+          docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/smoke:/opt/hermuse-smoke:ro" -v "$out:/out" \
+            "$image" bash -c 'apt-get update -q >/dev/null && apt-get install -y -q jq >/dev/null &&
+              exec /opt/hermuse-smoke/linux.sh compat --format "$0" --dist /dist --out /out --run-id "$1" --guest "$2"' \
+            "$FORMAT" "$RUN_LABEL" "$TARGET" || echo "::warning::compat runner exited with $?"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" compat
+
+  smoke-report:
+    name: Smoke report
+    needs: [metadata, smoke, compat]
+    if: always() && needs.metadata.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+          sparse-checkout: packaging/smoke
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: smoke-*
+          path: legs
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: compat-*
+          path: legs
+
+      - name: Roll up every leg
+        run: |
+          set -uo pipefail
+          status=0
+          python3 packaging/smoke/proof_summary.py collect legs --out proof-summary.json \
+            --markdown proof-summary.md || status=$?
+          cat proof-summary.md >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: proof-summary
+          path: |
+            proof-summary.json
+            proof-summary.md
+          if-no-files-found: error
+          retention-days: 90
+
+  release-approval:
+    name: Release approval
+    needs: [metadata, package, attest, smoke-report]
+    if: needs.metadata.outputs.release == 'true' && needs.metadata.outputs.publishable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    environment: release
+    permissions:
+      contents: read
+      actions: read # read the environment's protection rules
+    outputs:
+      public_ready: ${{ steps.proof.outputs.public_ready }}
+    env:
+      RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
+      WORK: /mnt/hermuse-smoke
+      MODEL_LEG: model-ubuntu-22.04-fresh-deb
+    steps:
+      - name: The release environment really requires a reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reviewers=$(gh api "repos/$REPOSITORY/environments/release" \
+            --jq '[.protection_rules[]? | select(.type == "required_reviewers")] | length')
+          if [ "$reviewers" -lt 1 ]; then
+            echo "::error::the 'release' environment has no required reviewers: the approval gate would be a no-op"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: proof-summary
+          path: proof
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - name: Model test account (release environment secrets only)
+        id: model
+        env:
+          PROVIDER: ${{ secrets.HERMUSE_TEST_MODEL_PROVIDER }}
+          MODEL: ${{ secrets.HERMUSE_TEST_MODEL_NAME }}
+          API_KEY: ${{ secrets.HERMUSE_TEST_MODEL_API_KEY }}
+          BASE_URL: ${{ secrets.HERMUSE_TEST_MODEL_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PROVIDER" ] || [ -z "$MODEL" ] || [ -z "$API_KEY" ]; then
+            echo "available=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::no HERMUSE_TEST_MODEL_* account: the conversation proof is recorded as missing and the release stays a draft"
+            exit 0
+          fi
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "$WORK"
+          (umask 077 && {
+            printf 'HERMUSE_TEST_MODEL_PROVIDER=%q\n' "$PROVIDER"
+            printf 'HERMUSE_TEST_MODEL_NAME=%q\n' "$MODEL"
+            printf 'HERMUSE_TEST_MODEL_API_KEY=%q\n' "$API_KEY"
+            printf 'HERMUSE_TEST_MODEL_BASE_URL=%q\n' "$BASE_URL"
+          } >"$WORK/model.env")
+          echo "available=true" >>"$GITHUB_OUTPUT"
+
+      - name: QEMU, KVM when the runner exposes it
+        if: steps.model.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage ffmpeg
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-hermuse-kvm.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+
+      - name: Real conversation on a fresh ubuntu-22.04 guest (.deb)
+        if: steps.model.outputs.available == 'true'
+        run: |
+          set -euo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          "$guest" fetch ubuntu-22.04 "$WORK/images"
+          "$guest" up ubuntu-22.04 "$WORK/images" "$run"
+          scale=1
+          [ "$(cat "$run/accel")" = kvm ] || scale=4
+          stage=$(mktemp -d)
+          cp -r packaging/smoke "$stage/hermuse-smoke"
+          "$guest" push "$run" "$stage/hermuse-smoke" /opt
+          "$guest" push "$run" dist /root/hermuse-release
+          "$guest" ssh "$run" 'install -d -m 0700 /root/hermuse-release/secrets'
+          "$guest" push "$run" "$run/tester-password" /root/hermuse-release/secrets
+          "$guest" push "$run" "$run/keyring-password" /root/hermuse-release/secrets
+          "$guest" push "$run" "$WORK/model.env" /root/hermuse-release/secrets
+          rm -f "$WORK/model.env"
+          "$guest" exec "$run" 17400 /opt/hermuse-smoke/linux.sh fresh --format deb \
+            --dist /root/hermuse-release/dist --out /root/hermuse-release/out --run-id "$RUN_LABEL-model" \
+            --guest ubuntu-22.04 --secrets /root/hermuse-release/secrets --timeout-scale "$scale" \
+            --model-env /root/hermuse-release/secrets/model.env || echo "::warning::scenario runner exited with $?"
+
+      - name: Collect the model evidence
+        if: always() && steps.model.outputs.available == 'true'
+        run: |
+          set -uo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          mkdir -p "$RUNNER_TEMP/legs"
+          if [ -f "$run/ssh-port" ] && "$guest" pull "$run" /root/hermuse-release/out "$RUNNER_TEMP/legs"; then
+            mv "$RUNNER_TEMP/legs/out" "$RUNNER_TEMP/legs/$MODEL_LEG"
+          fi
+          mkdir -p "$RUNNER_TEMP/legs/$MODEL_LEG/evidence"
+          leg="$RUNNER_TEMP/legs/$MODEL_LEG"
+          cp "$run/console.log" "$leg/evidence/guest-console.log" 2>/dev/null || true
+          if compgen -G "$leg/evidence/frames/*.jpg" >/dev/null; then
+            ffmpeg -loglevel error -framerate 4 -pattern_type glob -i "$leg/evidence/frames/*.jpg" \
+              -vf 'scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libx264 -pix_fmt yuv420p "$leg/evidence/frames/run.mp4" &&
+              rm -f "$leg"/evidence/frames/*.jpg
+          fi
+          "$guest" down "$run" || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.model.outputs.available == 'true'
+        with:
+          name: model-ubuntu-22.04-fresh-deb
+          path: ${{ runner.temp }}/legs/model-ubuntu-22.04-fresh-deb
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Release proof
+        id: proof
+        env:
+          MODEL_AVAILABLE: ${{ steps.model.outputs.available }}
+        run: |
+          set -euo pipefail
+          model=()
+          [ "$MODEL_AVAILABLE" = true ] && model=(--model "$RUNNER_TEMP/legs/$MODEL_LEG")
+          python3 packaging/smoke/proof_summary.py finalize --summary proof/proof-summary.json "${model[@]}" \
+            --out release-proof.json --markdown release-proof.md | tee -a "$GITHUB_OUTPUT"
+          cat release-proof.md >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-proof
+          path: |
+            release-proof.json
+            release-proof.md
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish
+    needs: [metadata, release-approval]
+    if: needs.metadata.outputs.release == 'true' && needs.metadata.outputs.publishable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: linux-release-publish-${{ needs.metadata.outputs.tag }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      TAG: ${{ needs.metadata.outputs.tag }}
+      COMMIT: ${{ needs.metadata.outputs.commit }}
+      APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+      PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+      PUBLIC_READY: ${{ needs.release-approval.outputs.public_ready }}
+      DEB_FILE: ${{ needs.metadata.outputs.deb_file }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-sources
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-proof
+          path: proof
+
+      - name: The published bytes are the tested bytes
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c SHA256SUMS.txt
+          [ "$(find . -maxdepth 1 -type f | wc -l)" = 5 ]
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" \
+            '.source.commit == $commit and .source.dirty == false and .app.version == $version' VERSION.json
+
+      - name: Draft release (never overwrites an asset)
+        run: |
+          set -euo pipefail
+          {
+            echo "Hermuse Agent $APP_VERSION for Linux (amd64): Debian/Ubuntu family (Ubuntu 22.04+, Debian 12+ and derivatives)."
+            echo
+            echo "- \`.deb\`: \`sudo apt-get install ./$DEB_FILE\`"
+            echo "- AppImage: mark it executable and run it; no FUSE needed (it extracts to a temporary directory on each launch)."
+            echo
+            echo "On first launch the app prepares its own dependencies (keyring, Hermes, plugin, bridge, computer image)"
+            echo "after one administrator authorization; it needs network access. Model accounts stay yours to connect."
+            echo "See docs/guides/desktop.md. Source commit \`$COMMIT\`. Checksums: SHA256SUMS.txt; build provenance:"
+            echo "\`gh attestation verify <file> --repo $REPOSITORY\`."
+          } >notes.md
+          flags=(--draft --verify-tag --title "Hermuse Agent $APP_VERSION" --notes-file notes.md)
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          existing=$(gh api "repos/$REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | {id, draft, assets: [.assets[] | {name, digest}]}")
+          if [ -z "$existing" ]; then
+            gh release create "$TAG" -R "$REPOSITORY" "${flags[@]}" dist/*
+            exit 0
+          fi
+          if [ "$(jq -r .draft <<<"$existing")" != true ]; then
+            echo "::error::$TAG is already published: refusing to replace it"
+            exit 1
+          fi
+          # Re-run on an existing draft: identical assets stay, missing ones are
+          # added, a different asset under the same name is refused.
+          for file in dist/*; do
+            name=$(basename "$file")
+            digest=$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | .digest // "none"' <<<"$existing")
+            if [ -z "$digest" ]; then
+              gh release upload "$TAG" -R "$REPOSITORY" "$file"
+            elif [ "$digest" != "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]; then
+              echo "::error::the draft of $TAG already has a different $name: refusing to overwrite it"
+              exit 1
+            fi
+          done
+
+      - name: Publish when every proof exists
+        if: env.PUBLIC_READY == 'true'
+        run: |
+          set -euo pipefail
+          jq -e '.public_ready == true and .smoke_ok == true and .model_proof.status == "pass"' proof/release-proof.json
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" -R "$REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$TAG" -R "$REPOSITORY" --draft=false --latest
+          fi
+          mkdir public
+          gh release download "$TAG" -R "$REPOSITORY" -D public
+          (cd public && sha256sum -c SHA256SUMS.txt)
+          echo "Published $TAG; the public downloads match SHA256SUMS.txt." >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Draft kept
+        if: env.PUBLIC_READY != 'true'
+        run: |
+          {
+            echo "$TAG stays a DRAFT: a required proof is missing (see the release-proof artifact)."
+            cat proof/release-proof.md
+          } >>"$GITHUB_STEP_SUMMARY"
