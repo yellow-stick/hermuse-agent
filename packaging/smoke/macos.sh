@@ -59,6 +59,10 @@ UI_CANCEL='Cancel'
 UI_FEED='Feed'
 UI_GOALS='Goals'
 UI_DOCKER_NOTICE='Install Docker'
+# macOS's own prompt when a process of the app first reaches for the local
+# network (not the app's copy).
+UI_LOCAL_NETWORK='find devices on local networks'
+UI_DONT_ALLOW="Don't Allow"
 
 # --- arguments -----------------------------------------------------------------
 
@@ -265,6 +269,44 @@ ready_or_retry() { # <id> <predicate...>
   [ -n "$RETRY_GAVE_UP" ]
 }
 
+# macOS asks once whether the app may find devices on the local network, when
+# a process it started first reaches for it. A user answers; the smoke says
+# Don't Allow (the least a user may grant: the checks after it prove the app
+# works without it), with a pointer click, else through Accessibility, and
+# keeps the prompt as evidence. A prompt that stays covers the app: fail.
+LOCAL_NETWORK_SEEN=''
+local_network_prompt() { # <id>
+  [ -z "$LOCAL_NETWORK_SEEN" ] || return 0
+  local png after xy how owner
+  png=$(shot local-network-prompt) || return 0
+  if ! D text "$png" | grep -qi "$UI_LOCAL_NETWORK"; then
+    rm -f "$png"
+    return 0
+  fi
+  LOCAL_NETWORK_SEEN=1
+  # shellcheck disable=SC2086 # "x y"
+  if xy=$(D locate "$png" "$UI_DONT_ALLOW" --mode any); then
+    D pointer $xy
+    how='a pointer click'
+    sleep 2
+  fi
+  after=$(shot local-network-answered)
+  if D text "$after" | grep -qi "$UI_LOCAL_NETWORK" && owner=$(D alert "$UI_DONT_ALLOW" 2>>"$EVID/logs/alert.log"); then
+    how="Accessibility (button of $owner)"
+    sleep 2
+    after=$(shot local-network-answered)
+  fi
+  if D text "$after" | grep -qi "$UI_LOCAL_NETWORK"; then
+    check "$1" local-network-prompt fail \
+      "macOS asked to let 'Hermuse Agent' find devices on local networks; '$UI_DONT_ALLOW' could not be clicked" \
+      "$png" "$after" "$EVID/logs/alert.log"
+    return 1
+  fi
+  check "$1" local-network-prompt pass \
+    "macOS asked to let 'Hermuse Agent' find devices on local networks; answered '$UI_DONT_ALLOW' (${how:-no click needed})" \
+    "$png" "$after"
+}
+
 # --- criterion checks ------------------------------------------------------------
 
 c0_test_base() {
@@ -380,7 +422,7 @@ c1_launch() {
   pass_or_fail "$id" menu-bar-name "$(grep -qi 'hermuse agent' <<<"$text" && echo 0 || echo 1)" \
     "the menu bar names the app 'Hermuse Agent' (OCR)" "$EVID/logs/ocr-menu-bar.txt"
   ok=0
-  D locate "$png" "$UI_CONNECT_TITLE" any >/dev/null || ok=1
+  D locate "$png" "$UI_CONNECT_TITLE" --mode any >/dev/null || ok=1
   D locate "$png" "$UI_LOCAL_CHOICE" >/dev/null || ok=1
   pass_or_fail "$id" welcome "$ok" "Welcome screen: '$UI_CONNECT_TITLE' and '$UI_LOCAL_CHOICE' (OCR)" "$png" \
     "$EVID/logs/ocr-welcome.txt"
@@ -418,6 +460,7 @@ c4_hermes() {
     return 1
   fi
   shot backend-up >/dev/null
+  local_network_prompt "$id" || true
   local journal ok
   journal=$(journal_file)
   cp "$journal" "$EVID/logs/journal.json" 2>/dev/null
@@ -509,6 +552,7 @@ plugin_ready() {
 
 c5_plugin() {
   local id=c5-plugin ok png
+  local_network_prompt "$id" || true
   ui_click "$UI_BACK_TO_CHAT" 10 >/dev/null || true
   # The plugin gate sits on every product route: Feed, second in the rail.
   if ! D rail 2 "$WINDOW_TITLE" >"$EVID/logs/rail.json" 2>&1 || ! png=$(ui_wait "$UI_ENABLE_PLUGIN" "$(T 60)"); then
@@ -585,6 +629,7 @@ ui_bridge_connect() {
 
 c6_bridge() {
   local id=c6-bridge config=$HERMES_HOME/cliproxy/config.yaml
+  local_network_prompt "$id" || true
   if ! ui_bridge_connect; then
     check "$id" sidecar manual-gate \
       "Connections > search '$UI_BRIDGE_CARD' > '$UI_CONNECT' not reachable by OCR: start a bridge by hand" \

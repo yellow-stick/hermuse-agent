@@ -312,8 +312,9 @@ elif IS_MAC:
         # The visible frame (below the menu bar, above the Dock), as the
         # green zoom button fills it.
         try:
-            frame = _osascript("use framework \"AppKit\"\nset f to current application's NSScreen's mainScreen()'s "
-                               "visibleFrame()\nset full to current application's NSScreen's mainScreen()'s frame()\n"
+            frame = _osascript("use AppleScript version \"2.4\"\nuse framework \"AppKit\"\nuse scripting additions\n"
+                               "set s to (current application's NSScreen's screens()'s objectAtIndex:0)\n"
+                               "set f to s's visibleFrame()\nset full to s's frame()\n"
                                "return ((item 1 of item 1 of f) as integer as text) & \" \" & "
                                "(((item 2 of item 2 of full) - (item 2 of item 1 of f) - (item 2 of item 2 of f)) "
                                "as integer as text) & \" \" & ((item 1 of item 2 of f) as integer as text) & \" \" & "
@@ -323,8 +324,28 @@ elif IS_MAC:
                                              f"        set position of w to {{{x}, {y}}}\n"
                                              f"        set size of w to {{{w}, {h}}}\n        return \"ok\""))
             return True
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            print(f"maximize: {exc}", file=sys.stderr)
             return False
+
+    def click_alert_button(label: str) -> str:
+        """Clicks the button <label> of any process's window through
+        Accessibility (system alerts may ignore synthetic pointer events);
+        the owning process, or "" when no window has that button."""
+        names = sorted({label, label.replace("'", "\u2019")})
+        whose = " or ".join(f"name is {json.dumps(name)}" for name in names)
+        return _osascript("tell application \"System Events\"\n"
+                          "  repeat with p in every process\n"
+                          "    try\n"
+                          "      repeat with w in (every window of p)\n"
+                          f"        set hits to (every button of w whose {whose})\n"
+                          "        if (count of hits) > 0 then\n"
+                          "          click item 1 of hits\n"
+                          "          return name of p\n"
+                          "        end if\n"
+                          "      end repeat\n"
+                          "    end try\n"
+                          "  end repeat\n  return \"\"\nend tell")
 
     def window_close(title: str) -> bool:
         try:
@@ -680,6 +701,15 @@ def cmd_key(args: argparse.Namespace) -> None:
 
 def cmd_focus(args: argparse.Namespace) -> None:
     window_focus(args.title)
+
+
+def cmd_alert(args: argparse.Namespace) -> None:
+    """macOS: clicks a button of a system alert; prints its owning process."""
+    if not IS_MAC:
+        sys.exit(2)
+    owner = click_alert_button(args.button)
+    print(owner)
+    sys.exit(0 if owner else 1)
 
 
 # --- processes -------------------------------------------------------------------
@@ -1146,6 +1176,9 @@ def main() -> None:
     p = sub.add_parser("key")
     p.add_argument("name", choices=("return", "escape", "tab"))
     p.set_defaults(run=cmd_key)
+    p = sub.add_parser("alert")
+    p.add_argument("button")
+    p.set_defaults(run=cmd_alert)
     sub.add_parser("processes").set_defaults(run=cmd_processes)
     sub.add_parser("backend").set_defaults(run=cmd_backend)
     p = sub.add_parser("plaintext")
