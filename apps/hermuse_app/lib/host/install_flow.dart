@@ -54,7 +54,6 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   String? _failedStage;
   String? _error;
   final _log = <String>[];
-  final _logScroll = ScrollController();
 
   HermesInstaller get _installer =>
       widget.installer ?? makeInstaller(widget.host.hermesHome);
@@ -65,22 +64,11 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     Future.microtask(_start);
   }
 
-  @override
-  void dispose() {
-    _logScroll.dispose();
-    super.dispose();
-  }
-
   void _appendLog(String stream, String line) {
     if (!mounted) return;
     setState(() {
       _log.add('[$stream] $line');
       if (_log.length > 200) _log.removeRange(0, _log.length - 200);
-    });
-    Future.microtask(() {
-      if (_logScroll.hasClients) {
-        _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
-      }
     });
   }
 
@@ -346,11 +334,15 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
           ],
           if (_log.isNotEmpty) ...[
             const SizedBox(height: 12),
-            _LogBox(log: _log, scroll: _logScroll),
+            InstallLogBox(log: _log),
           ],
           if (_manifest != null) ...[
             const SizedBox(height: 12),
-            _StageList(manifest: _manifest!, done: _done, running: _running),
+            InstallStageList(
+              manifest: _manifest!,
+              done: _done,
+              running: _running,
+            ),
           ],
         ];
       case _Phase.stages:
@@ -366,20 +358,21 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
-          _ProgressBar(value: total == 0 ? 1 : finished / total),
+          InstallProgressBar(value: total == 0 ? 1 : finished / total),
           const SizedBox(height: 12),
-          _StageList(manifest: manifest, done: _done, running: _running),
+          InstallStageList(manifest: manifest, done: _done, running: _running),
           if (_log.isNotEmpty) ...[
             const SizedBox(height: 12),
-            _LogBox(log: _log, scroll: _logScroll),
+            InstallLogBox(log: _log),
           ],
         ];
     }
   }
 }
 
-final class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.value});
+/// Install progress: [value] from 0 to 1.
+final class InstallProgressBar extends StatelessWidget {
+  const InstallProgressBar({required this.value, super.key});
 
   final double value;
 
@@ -410,11 +403,14 @@ final class _ProgressBar extends StatelessWidget {
   }
 }
 
-final class _StageList extends StatelessWidget {
-  const _StageList({
+/// The installer's stages with their state (waiting, running, done, skipped,
+/// failed).
+final class InstallStageList extends StatelessWidget {
+  const InstallStageList({
     required this.manifest,
     required this.done,
     required this.running,
+    super.key,
   });
 
   final InstallManifest manifest;
@@ -500,15 +496,33 @@ final class _StageList extends StatelessWidget {
   }
 }
 
-final class _LogBox extends StatelessWidget {
-  const _LogBox({required this.log, required this.scroll});
+/// Last output lines, scrolled to the newest.
+final class InstallLogBox extends StatefulWidget {
+  const InstallLogBox({required this.log, super.key});
 
   final List<String> log;
-  final ScrollController scroll;
+
+  @override
+  State<InstallLogBox> createState() => _InstallLogBoxState();
+}
+
+final class _InstallLogBoxState extends State<InstallLogBox> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.canvasColor,
@@ -517,12 +531,12 @@ final class _LogBox extends StatelessWidget {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 160),
         child: SingleChildScrollView(
-          controller: scroll,
+          controller: _scroll,
           padding: const EdgeInsets.all(12),
           child: SizedBox(
             width: double.infinity,
             child: Text(
-              log.join('\n'),
+              widget.log.join('\n'),
               style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 12,

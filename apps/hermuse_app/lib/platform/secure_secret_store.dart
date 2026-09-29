@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hermes_client/hermes_client.dart';
 
@@ -34,3 +38,31 @@ final class SecureSecretStore implements SecretStore {
     }
   }
 }
+
+/// Instance id of the throwaway keystore probes.
+const _probeInstance = '__probe__';
+
+/// Proves [store] works end to end: writes a throwaway secret, reads it back
+/// and deletes it. Throws the store's own error (a locked or missing keyring
+/// included); callers never fall back to another store.
+Future<void> verifySecretStore(SecretStore store) async {
+  final random = Random.secure();
+  final value = base64Url.encode([
+    for (var i = 0; i < 16; i++) random.nextInt(256),
+  ]);
+  await store.write(_probeInstance, 'probe', value);
+  try {
+    if (await store.read(_probeInstance, 'probe') != value) {
+      throw StateError(
+        'the system keyring did not return the secret it stored',
+      );
+    }
+  } finally {
+    await store.delete(_probeInstance);
+  }
+}
+
+/// Whether [error] is the keyring refusing access because it stays locked
+/// (its unlock prompt was dismissed).
+bool isKeyringLocked(Object error) =>
+    error is PlatformException && error.code == 'KeyringLocked';

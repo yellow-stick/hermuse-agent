@@ -218,7 +218,8 @@ final class WelcomeScreen extends ConsumerWidget {
   }
 }
 
-/// Blocking screen shown when the platform keystore is unavailable.
+/// Blocking screen shown when the platform keystore is unavailable (macOS,
+/// Windows; Linux repairs it in its setup assistant instead).
 final class KeystoreErrorScreen extends StatelessWidget {
   const KeystoreErrorScreen({required this.error, super.key});
 
@@ -240,9 +241,7 @@ final class KeystoreErrorScreen extends StatelessWidget {
         YsDialogBody(
           'Hermuse keeps your Hermes credentials in the system keyring, '
           'which could not be reached. Nothing was stored in plain text.\n\n'
-          'On Linux this usually means libsecret is missing or the '
-          'keyring is locked: install gnome-keyring and unlock it, '
-          'then restart Hermuse.\n\n$error',
+          'Unlock the system keyring, then restart Hermuse.\n\n$error',
         ),
       ],
     );

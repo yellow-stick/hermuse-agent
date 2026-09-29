@@ -7,43 +7,75 @@ import 'package:hermuse_data/native.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'host/linux_setup.dart';
 import 'platform/local_host.dart';
 import 'platform/secure_secret_store.dart';
 import 'shell/app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final db = openNativeDatabase(await getApplicationSupportDirectory());
+  final support = await getApplicationSupportDirectory();
+  final db = openNativeDatabase(support);
   final secrets = SecureSecretStore();
-  Object? keystoreError;
-  try {
-    // Touch the keystore now: a locked/missing keyring must surface as a
-    // blocking error screen, never as a silent plaintext fallback.
-    await secrets.read('__probe__', '__probe__');
-  } on Object catch (e) {
-    keystoreError = e;
-  }
-  final host = isDesktop ? LocalHermesHost.system(secrets) : null;
+  // Linux verifies (and can repair) the keyring in its setup assistant,
+  // before anything connects; elsewhere a keystore that fails here blocks
+  // the app. Never a silent plaintext fallback.
+  final keystoreError = Platform.isLinux ? null : await _probeKeystore(secrets);
+  final journalPath =
+      '${support.path}${Platform.pathSeparator}'
+      'hermes-install.json';
+  final host = isDesktop
+      ? Platform.isLinux
+            ? LocalHermesHost.system(
+                secrets,
+                installJournalPath: journalPath,
+                setupAssistant: true,
+              )
+            : LocalHermesHost.system(secrets)
+      : null;
+  final container = ProviderContainer(
+    overrides: [
+      hermuseDatabaseProvider.overrideWithValue(db),
+      secretStoreProvider.overrideWithValue(secrets),
+      if (host != null) ...localHostOverrides(host),
+      if (host != null && Platform.isLinux)
+        linuxSetupServicesProvider.overrideWithValue(
+          await LinuxSetupServices.forHost(host, journalPath: journalPath),
+        ),
+    ],
+  );
   if (host != null) {
-    // Stops the backend and sidecar Hermuse started when the app quits (the
-    // binding keeps the listener alive).
+    // On quit: a setup step still running (an authorization, an APT
+    // transaction, an install stage) finishes and no other starts; then the
+    // backend and sidecar Hermuse started stop (the binding keeps the
+    // listener alive).
     AppLifecycleListener(
       onExitRequested: () async {
+        if (Platform.isLinux) {
+          await container.read(linuxSetupProvider.notifier).stopAndWait();
+        }
         await host.shutdown();
         return AppExitResponse.exit;
       },
     );
   }
   runApp(
-    ProviderScope(
-      overrides: [
-        hermuseDatabaseProvider.overrideWithValue(db),
-        secretStoreProvider.overrideWithValue(secrets),
-        if (host != null) ...localHostOverrides(host),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: HermuseApp(keystoreError: keystoreError),
     ),
   );
+}
+
+/// Touches the keystore: a locked or missing keyring surfaces as a blocking
+/// error screen.
+Future<Object?> _probeKeystore(SecureSecretStore secrets) async {
+  try {
+    await secrets.read('__probe__', '__probe__');
+    return null;
+  } on Object catch (e) {
+    return e;
+  }
 }
 
 /// True on the desktop targets (install flow target); phones get only Connect.

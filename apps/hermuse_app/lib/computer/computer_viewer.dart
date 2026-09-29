@@ -13,6 +13,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../host/linux_setup.dart';
 import 'browser_parts.dart';
 
 /// The agent's computer in place of the chat (Muse's browser session
@@ -264,6 +265,21 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
     final view = _view;
     final session = _session;
     final frame = _frame;
+    // On Linux the setup assistant installs or starts Docker for the
+    // agent's computer; the viewer keeps polling meanwhile.
+    final status = _status;
+    final setUp =
+        ref.watch(linuxSetupServicesProvider) != null &&
+            _failure == null &&
+            status != null &&
+            (status.needsDesktopSetup ||
+                status.state == ComputerState.daemonDown)
+        ? () => unawaited(
+            ref
+                .read(linuxSetupProvider.notifier)
+                .prepare(LinuxSetupGoal.computer),
+          )
+        : null;
     final (title, subtitle) = view.inControl
         ? ("You're in control", host)
         : view.control == ComputerControl.human
@@ -358,13 +374,14 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
                       )
                     : _Status(
                         text: _statusText(busy: chat.busy),
-                        command: switch ((_failure, _status)) {
+                        command: switch ((_failure, _status, setUp)) {
                           (
                             null,
                             ComputerStatus(
                               state: ComputerState.dockerMissing,
                               :final detail,
                             ),
+                            null,
                           )
                               when detail.isNotEmpty =>
                             detail,
@@ -375,6 +392,7 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
                                 _status?.state == ComputerState.error
                             ? () => unawaited(_retry())
                             : null,
+                        onSetUp: setUp,
                       ),
               ),
             ),
@@ -692,18 +710,26 @@ final class _Tab extends StatelessWidget {
 }
 
 /// Before the first frame: why the computer does not show yet, with the
-/// shell [command] to paste on the Hermes host when there is one.
+/// shell [command] to paste on the Hermes host when there is one, or the
+/// Linux setup assistant to open ([onSetUp]).
 final class _Status extends StatelessWidget {
-  const _Status({required this.text, required this.onRetry, this.command});
+  const _Status({
+    required this.text,
+    required this.onRetry,
+    this.command,
+    this.onSetUp,
+  });
 
   final String text;
   final String? command;
   final VoidCallback? onRetry;
+  final VoidCallback? onSetUp;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final onRetry = this.onRetry;
+    final onSetUp = this.onSetUp;
     final command = this.command;
     return Center(
       child: ConstrainedBox(
@@ -721,6 +747,10 @@ final class _Status extends StatelessWidget {
             if (command != null) ...[
               const SizedBox(height: 12),
               _Command(command),
+            ],
+            if (onSetUp != null) ...[
+              const SizedBox(height: 12),
+              YsButton.neutral(label: 'Set up Docker', onPressed: onSetUp),
             ],
             if (onRetry != null) ...[
               const SizedBox(height: 12),

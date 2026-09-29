@@ -10,10 +10,13 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
-import 'package:hermuse_host/hermuse_host.dart' show DetectedHermes;
+import 'package:hermuse_host/hermuse_host.dart'
+    show DetectedHermes, localInstanceId;
 
 import '../computer/computer_viewer.dart';
 import '../host/install_flow.dart';
+import '../host/linux_setup.dart';
+import '../host/linux_setup_gate.dart';
 import '../platform/local_host.dart';
 import '../onboarding/connections.dart';
 import '../onboarding/onboarding.dart';
@@ -67,7 +70,7 @@ final class HermuseAppState extends State<HermuseApp> {
     return YsTheme(
       palette: YsPalette.dark,
       child: WidgetsApp(
-        title: 'Hermuse',
+        title: 'Hermuse Agent',
         color: const Color(0xFF181819),
         debugShowCheckedModeBanner: false,
         builder: (context, child) => MediaQuery(
@@ -132,6 +135,48 @@ final class _Root extends ConsumerStatefulWidget {
 final class _RootState extends ConsumerState<_Root> {
   _Route _route = _Route.chat;
   String? _overlayInstanceId;
+
+  /// Whether the Linux setup assistant runs (Linux only, see `main()`).
+  bool get _linux => ref.read(linuxSetupServicesProvider) != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.controllerOverride == null && _linux) {
+      // Before anything connects: resume an unfinished install, or verify
+      // the keyring the registered instances need.
+      Future.microtask(() => ref.read(linuxSetupProvider.notifier).start());
+    }
+  }
+
+  /// Takes the user where a finished setup leads.
+  void _setupChanged(LinuxSetupState? previous, LinuxSetupState next) {
+    if (next.phase is! SetupFinished) return;
+    switch (next.goal) {
+      case LinuxSetupGoal.connect:
+        setState(() => _route = _Route.addInstance);
+      case LinuxSetupGoal.local:
+        setState(() {
+          _route = _Route.onboarding;
+          _overlayInstanceId = localInstanceId;
+        });
+      case LinuxSetupGoal.reopen || LinuxSetupGoal.computer || null:
+        break;
+    }
+    Future.microtask(ref.read(linuxSetupProvider.notifier).acknowledge);
+  }
+
+  /// Connect to a Hermes server; on Linux the keyring comes first.
+  void _connect() {
+    if (_linux && !ref.read(linuxSetupProvider).keystoreVerified) {
+      unawaited(
+        ref.read(linuxSetupProvider.notifier).prepare(LinuxSetupGoal.connect),
+      );
+      return;
+    }
+    setState(() => _route = _Route.addInstance);
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
@@ -146,11 +191,36 @@ final class _RootState extends ConsumerState<_Root> {
         ),
       );
     }
+    if (ref.watch(linuxSetupServicesProvider) == null) return _routes(palette);
+    final setup = ref.watch(linuxSetupProvider);
+    ref.listen(linuxSetupProvider, _setupChanged);
+    final instances = ref.watch(instancesProvider).value;
+    // No registered instance connects before the keyring works, nor the
+    // local one before its Docker engine is known.
+    if ((instances == null || instances.isNotEmpty) &&
+        (!setup.keystoreVerified ||
+            (setup.goal == LinuxSetupGoal.reopen && setup.active))) {
+      return const LinuxSetupGate(canLeave: false);
+    }
+    final content = _routes(palette);
+    if (!setup.active) return content;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Kept alive under the assistant, back as it was once it closes.
+        ExcludeFocus(child: Offstage(child: content)),
+        const LinuxSetupGate(canLeave: true),
+      ],
+    );
+  }
+
+  Widget _routes(YsPalette palette) {
     // The error/keyring screen reads nothing; everything else needs the DB.
     final instances = ref.watch(instancesProvider);
     final active = ref.watch(activeThreadProvider);
     final instanceList = instances.value;
     if (instanceList != null && instanceList.isEmpty) {
+      final host = ref.read(localHostProvider);
       return ColoredBox(
         color: palette.canvasColor,
         child: switch (_route) {
@@ -161,16 +231,21 @@ final class _RootState extends ConsumerState<_Root> {
             }),
             onCancel: () => setState(() => _route = _Route.chat),
           ),
-          _Route.install when ref.read(localHostProvider) != null =>
-            _InstallRoute(
-              host: ref.read(localHostProvider)!,
-              onDone: () => setState(() => _route = _Route.chat),
-              onCancel: () => setState(() => _route = _Route.chat),
-            ),
+          _Route.install when host != null => _InstallRoute(
+            host: host,
+            onDone: () => setState(() => _route = _Route.chat),
+            onCancel: () => setState(() => _route = _Route.chat),
+          ),
           _ => WelcomeScreen(
-            onConnect: () => setState(() => _route = _Route.addInstance),
-            onInstall: ref.read(localHostProvider) == null
+            onConnect: _connect,
+            onInstall: host == null
                 ? null
+                : _linux
+                ? () => unawaited(
+                    ref
+                        .read(linuxSetupProvider.notifier)
+                        .prepare(LinuxSetupGoal.local),
+                  )
                 : () => setState(() => _route = _Route.install),
           ),
         },
@@ -318,7 +393,13 @@ final class _ChatRoute extends ConsumerWidget {
             onInstall:
                 ref.read(localHostProvider) != null &&
                     !instances.any((i) => i.kind == InstanceKind.local)
-                ? () => onRoute(_Route.install)
+                ? ref.read(linuxSetupServicesProvider) != null
+                      ? () => unawaited(
+                          ref
+                              .read(linuxSetupProvider.notifier)
+                              .prepare(LinuxSetupGoal.local),
+                        )
+                      : () => onRoute(_Route.install)
                 : null,
             onClose: () => onRoute(_Route.chat),
             onSetup: (id) => onRoute(_Route.onboarding, id),

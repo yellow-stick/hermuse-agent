@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +7,8 @@ import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+import '../platform/open_url.dart';
 
 /// Connections page: card list for one instance (web `HermuseConnections`
 /// parity), plus desktop subscription-bridge cards (marked Advanced).
@@ -700,28 +701,6 @@ final class _LinkRowState extends State<_LinkRow> {
         ),
       ],
     );
-  }
-}
-
-/// Opens [url] in the system browser (desktop only; no-op elsewhere).
-Future<void> openExternalUrl(String url) async {
-  final uri = Uri.tryParse(url);
-  if (uri == null || !uri.hasScheme) return;
-  try {
-    if (Platform.isLinux) {
-      await Process.start('xdg-open', [url], mode: ProcessStartMode.detached);
-    } else if (Platform.isMacOS) {
-      await Process.start('open', [url], mode: ProcessStartMode.detached);
-    } else if (Platform.isWindows) {
-      await Process.start(
-        'cmd',
-        ['/c', 'start', '', url],
-        mode: ProcessStartMode.detached,
-        runInShell: true,
-      );
-    }
-  } on Object {
-    // Best-effort: the copy button next to every link is the fallback.
   }
 }
 
