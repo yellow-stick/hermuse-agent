@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:test/test.dart';
 
@@ -60,6 +62,55 @@ void main() {
       expect(host, {
         'PATH': '/usr/bin',
         'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus',
+      });
+    });
+  });
+
+  group('macOS login PATH', () {
+    late Directory etc;
+
+    setUp(() async {
+      etc = await Directory.systemTemp.createTemp('host_environment_test');
+      await File('${etc.path}/paths').writeAsString(
+        '/usr/local/bin\n/System/Cryptexes/App/usr/bin\n/usr/bin\n/bin\n'
+        '/usr/sbin\n/sbin\n',
+      );
+      await Directory('${etc.path}/paths.d').create();
+      await File('${etc.path}/paths.d/40-tool')
+          .writeAsString('/opt/tool/bin\n');
+      await File('${etc.path}/paths.d/10-other')
+          .writeAsString('\n/opt/other/bin\n');
+    });
+
+    tearDown(() => etc.delete(recursive: true));
+
+    test('reads /etc/paths, then /etc/paths.d by name, like path_helper', () {
+      expect(macOSSystemPaths(etc: etc.path), [
+        '/usr/local/bin',
+        '/System/Cryptexes/App/usr/bin',
+        '/usr/bin',
+        '/bin',
+        '/usr/sbin',
+        '/sbin',
+        '/opt/other/bin',
+        '/opt/tool/bin',
+      ]);
+    });
+
+    test('an app opened from the Finder gets the missing directories after '
+        'its own', () {
+      final host = withSystemPath({
+        'PATH': '/usr/bin:/bin:/usr/sbin:/sbin',
+        'HOME': '/Users/u',
+      }, macOSSystemPaths(etc: etc.path));
+      expect(
+        host['PATH'],
+        '/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:'
+        '/System/Cryptexes/App/usr/bin:/opt/other/bin:/opt/tool/bin',
+      );
+      expect(host['HOME'], '/Users/u');
+      expect(withSystemPath({'PATH': host['PATH']!}, ['/usr/local/bin']), {
+        'PATH': host['PATH'],
       });
     });
   });
