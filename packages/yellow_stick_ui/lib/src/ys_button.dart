@@ -193,8 +193,17 @@ final class YsButton extends StatelessWidget {
         excludeSemantics: true,
         autofocus: autofocus,
         focusNode: focusNode,
+        // A disabled button neither hovers nor presses; it dims like the web
+        // kit's `:disabled` rule.
         builder: (context, state) => ExcludeSemantics(
-          child: _buildChild(context, YsTheme.of(context), state),
+          child: Opacity(
+            opacity: state.disabled ? _disabledOpacity : 1,
+            child: _buildChild(
+              context,
+              YsTheme.of(context),
+              state.disabled ? const YsPressableState(disabled: true) : state,
+            ),
+          ),
         ),
       ),
     );
@@ -204,6 +213,13 @@ final class YsButton extends StatelessWidget {
     }
     return button;
   }
+
+  /// Web kit `:disabled` opacities.
+  double get _disabledOpacity => switch (kind) {
+    YsButtonKind.icon => 0.4,
+    YsButtonKind.pill => 0.6,
+    _ => 0.5,
+  };
 
   Widget _buildChild(
     BuildContext context,
@@ -218,7 +234,6 @@ final class YsButton extends StatelessWidget {
             ? palette.neutralFilmColor
             : palette.paperClearColor,
         // Floating pills hug their label, even under a max width.
-        hug: true,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -314,22 +329,21 @@ Color _brightness(Color color, double factor) => Color.from(
 
 enum YsButtonKind { pill, icon, primary, neutral, destructive }
 
+/// Rounded button body. It hugs its content wherever the parent leaves the
+/// width loose (Align, Center, Row, Wrap) and fills a tight width (a
+/// stretched column), like the web kit's inline-flex buttons.
 final class _PillShell extends StatelessWidget {
   const _PillShell({
     required this.height,
     required this.padding,
     required this.background,
     required this.child,
-    this.hug = false,
   });
 
   final double height;
   final EdgeInsetsGeometry padding;
   final Color background;
   final Widget child;
-
-  /// Content width even when the parent allows more.
-  final bool hug;
 
   @override
   Widget build(BuildContext context) => AnimatedContainer(
@@ -340,7 +354,7 @@ final class _PillShell extends StatelessWidget {
       color: background,
       borderRadius: BorderRadius.circular(YsRadius.pill),
     ),
-    child: Center(widthFactor: hug ? 1 : null, child: child),
+    child: Center(widthFactor: 1, child: child),
   );
 }
 

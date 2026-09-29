@@ -106,12 +106,9 @@ final class ProfilePanelState extends State<ProfilePanel> {
               ],
             ),
             const SizedBox(height: 16),
-            // Hugs its label, like a secondary pill.
-            IntrinsicWidth(
-              child: YsButton.neutral(
-                label: 'Open computer',
-                onPressed: widget.onOpenComputer,
-              ),
+            YsButton.neutral(
+              label: 'Open computer',
+              onPressed: widget.onOpenComputer,
             ),
             const SizedBox(height: 44),
             SizedBox(
