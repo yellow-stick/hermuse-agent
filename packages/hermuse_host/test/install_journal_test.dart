@@ -79,6 +79,19 @@ void main() {
       ]);
     });
 
+    test('an install in the user\'s own HOME has no runtime home', () async {
+      await InstallJournal(
+        hermesHome: r'C:\Users\u\AppData\Local\hermes',
+        installDir: r'C:\Users\u\AppData\Local\hermes\hermes-agent',
+        runtimeHome: null,
+        commit: hermesReleaseCommit,
+        startedAt: DateTime.utc(2026, 9, 29, 8),
+      ).withStageCompleted('prerequisites').write(path);
+      final read = (await InstallJournal.read(path))!;
+      expect(read.runtimeHome, isNull);
+      expect(read.completedStages, ['prerequisites']);
+    });
+
     test('refuses a file it cannot trust', () async {
       final file = File(path);
       await file.parent.create(recursive: true);

@@ -232,19 +232,28 @@ final class InstallerSource {
 
 /// Outcome of [HermesInstaller.checkPrerequisites].
 final class PrerequisiteCheck {
-  const PrerequisiteCheck({required this.missing, this.fixCommand});
+  const PrerequisiteCheck({
+    required this.missing,
+    this.fixCommand,
+    this.installable = false,
+  });
 
-  /// Tools absent from PATH (`git`, `curl`, `tar` on POSIX).
+  /// What is missing: tools absent from PATH (`git`, `curl`, `tar` on
+  /// POSIX) or, on macOS, [HermesInstaller.commandLineTools].
   final List<String> missing;
 
   /// Exact command the user must run when the fix is known
-  /// (macOS without git → `xcode-select --install`).
+  /// (macOS without the Command Line Tools → `xcode-select --install`).
   final String? fixCommand;
+
+  /// Whether [HermesInstaller.installPrerequisites] can start that fix:
+  /// Apple's Command Line Tools installer on macOS.
+  final bool installable;
 
   bool get ok => missing.isEmpty;
 }
 
-/// The user's XDG base directories. Linux installer stages run without
+/// The user's XDG base directories. POSIX installer stages run without
 /// them, so every tool defaults to the private runtime `HOME` instead.
 const _userDirectoryVariables = {
   'XDG_BIN_HOME',
@@ -268,16 +277,16 @@ const _powerShellPrefix = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File'];
 /// handler emits the `skipped: true` frame, which is the single source of
 /// truth. Never runs with sudo.
 ///
-/// POSIX stages pin the checkout with `--commit` ([InstallerSource.commit]).
-/// On Linux every stage also gets `--dir`, `--skip-browser` and
+/// POSIX stages (Linux, macOS) pin the checkout with `--commit`
+/// ([InstallerSource.commit]), get `--dir`, `--skip-browser` and
 /// `--skip-computer-use` (the agent's browser is the Hermuse computer
-/// container, not a host Chromium or computer-use driver) and runs in the
+/// container, not a host Chromium or computer-use driver) and run in the
 /// [ManagedRuntime]: `HOME` is the private `<hermesHome>/runtime`, created
 /// first, the XDG base directories are unset so they default under it, and
 /// `PATH` starts with its tool directories. No launcher, Node or Python
 /// lands in the user's `~/.local` and no shell rc file of theirs is edited.
 ///
-/// With a [journalPath] (Linux only) the install is the app's own: an
+/// With a [journalPath] (Linux, macOS) the install is the app's own: an
 /// [InstallJournal] is written before the first stage, a fresh install
 /// refuses an existing [installDir] the app does not own, stages also get
 /// `--force-commit` (a re-run `repository` stage re-pins the app's own
@@ -313,11 +322,11 @@ final class HermesInstaller {
        _writeFile = writeFile ?? _writeFileDefault,
        _isWindows = isWindows ?? Platform.isWindows,
        _isMacOS = isMacOS ?? Platform.isMacOS {
-    if (journalPath != null && !_isLinux) {
+    if (journalPath != null && _isWindows) {
       throw ArgumentError.value(
         journalPath,
         'journalPath',
-        'install journals are kept on Linux only',
+        'install journals are not kept on Windows',
       );
     }
   }
@@ -346,28 +355,84 @@ final class HermesInstaller {
   final bool _isWindows;
   final bool _isMacOS;
 
-  bool get _isLinux => !_isWindows && !_isMacOS;
   ManagedRuntime get _runtime => ManagedRuntime(hermesHome);
   String get _shell => _isWindows ? 'powershell.exe' : 'bash';
 
   /// Tools the POSIX installer shells out to and cannot self-provision.
   static const posixRequiredTools = ['git', 'curl', 'tar'];
 
+  /// What macOS reports missing without Apple's developer tools: they
+  /// provide `git` and the compiler the stages build native modules with.
+  static const commandLineTools = 'Xcode Command Line Tools';
+
+  static const _xcodeSelect = '/usr/bin/xcode-select';
+
   /// Checks the installer prerequisites before any stage runs. POSIX only:
-  /// `git`, `curl`, `tar` on PATH. The Windows script self-provisions via
-  /// winget, so it always passes there.
+  /// `git`, `curl`, `tar` on PATH. On macOS `/usr/bin/git` is a stub until
+  /// the [commandLineTools] are installed (running it opens Apple's
+  /// installer), so git counts as present only when `xcode-select -p` names
+  /// a developer directory holding it; the app can start that install
+  /// ([PrerequisiteCheck.installable]). The Windows script self-provisions
+  /// via winget, so it always passes there.
   Future<PrerequisiteCheck> checkPrerequisites() async {
     if (_isWindows) return const PrerequisiteCheck(missing: []);
     final which = _which ?? _whichOnPath;
     final missing = <String>[];
+    if (_isMacOS && !await _hasCommandLineTools()) {
+      missing.add(commandLineTools);
+    }
     for (final tool in posixRequiredTools) {
+      if (_isMacOS && tool == 'git') continue;
       if (await which(tool) == null) missing.add(tool);
     }
     if (missing.isEmpty) return const PrerequisiteCheck(missing: []);
-    final fix = _isMacOS && missing.contains('git')
-        ? 'xcode-select --install'
-        : null;
-    return PrerequisiteCheck(missing: missing, fixCommand: fix);
+    final tools = missing.contains(commandLineTools);
+    return PrerequisiteCheck(
+      missing: missing,
+      fixCommand: tools ? 'xcode-select --install' : null,
+      installable: tools,
+    );
+  }
+
+  /// Starts the fix of an [PrerequisiteCheck.installable] check: on macOS,
+  /// Apple's installer for the [commandLineTools] (`xcode-select
+  /// --install`). Returns once its dialog is requested; the user completes
+  /// the install there and [checkPrerequisites] tells when it is done.
+  /// Throws [ProcessFailed] when the request is refused, for instance when
+  /// the tools are already installed.
+  Future<void> installPrerequisites() async {
+    if (!_isMacOS) {
+      throw UnsupportedError('only macOS prerequisites can be installed');
+    }
+    final result = await _runScript(_xcodeSelect, const [
+      '--install',
+    ], environment: _environment);
+    if (result.exitCode != 0) {
+      throw ProcessFailed(
+        'xcode-select --install failed (exit ${result.exitCode})',
+        exitCode: result.exitCode,
+        outputTail: '${result.stdout}${result.stderr}'.trim(),
+      );
+    }
+  }
+
+  /// Whether `xcode-select -p` names a developer directory (the Command
+  /// Line Tools or Xcode) with its `git`.
+  Future<bool> _hasCommandLineTools() async {
+    final ProcessResult result;
+    try {
+      result = await _runScript(_xcodeSelect, const [
+        '-p',
+      ], environment: _environment).timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      return false;
+    } on ProcessException {
+      return false;
+    }
+    final directory = '${result.stdout}'.trim();
+    return result.exitCode == 0 &&
+        directory.isNotEmpty &&
+        await _fileExists('$directory/usr/bin/git');
   }
 
   /// Reads the stage manifest without side effects (`--manifest` /
@@ -535,21 +600,19 @@ final class HermesInstaller {
           '--commit',
           source.commit,
           if (owned) '--force-commit',
-          if (_isLinux) ...[
-            '--dir',
-            installDir,
-            '--skip-browser',
-            '--skip-computer-use',
-          ],
+          '--dir',
+          installDir,
+          '--skip-browser',
+          '--skip-computer-use',
           '--non-interactive',
           '--json',
         ];
 
-  /// The complete environment of a stage; on Linux the [ManagedRuntime]
+  /// The complete environment of a stage; on POSIX the [ManagedRuntime]
   /// (whose `HOME` is created here).
   Future<Map<String, String>> _stageEnvironment() async {
     final environment = {..._environment, 'HERMES_HOME': hermesHome};
-    if (!_isLinux) return environment;
+    if (_isWindows) return environment;
     final runtime = _runtime;
     await Directory(runtime.home).create(recursive: true);
     environment.removeWhere(
@@ -598,13 +661,19 @@ final class HermesInstaller {
     final journal = InstallJournal(
       hermesHome: hermesHome,
       installDir: installDir,
-      runtimeHome: _runtime.home,
+      runtimeHome: _isWindows ? null : _runtime.home,
       commit: source.commit,
       startedAt: DateTime.now().toUtc(),
     );
     await journal.write(path);
     return journal;
   }
+
+  /// The launcher a validated install answers `--version` with.
+  String get _launcher => _runtime.launcher;
+
+  /// The stage writing `<installDir>/.hermes-bootstrap-complete`.
+  static const _markerStage = 'complete';
 
   /// Validates the finished install and closes [journal], or reopens the
   /// stage a defect traces back to and throws [InstallFailed] for it.
@@ -613,7 +682,7 @@ final class HermesInstaller {
     final commit = source.commit;
     final head = await _readTrimmed('$installDir/.git/HEAD');
     final marker = await _markerCommit();
-    final launcher = _runtime.launcher;
+    final launcher = _launcher;
     final (String, String)? defect = head != commit
         ? (
             'repository',
@@ -622,7 +691,7 @@ final class HermesInstaller {
           )
         : marker != commit
         ? (
-            'complete',
+            _markerStage,
             '$installDir/.hermes-bootstrap-complete '
                 '${marker == null ? 'is missing or malformed' : 'pins $marker'}'
                 ', not $commit',

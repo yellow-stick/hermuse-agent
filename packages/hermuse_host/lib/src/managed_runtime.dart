@@ -1,4 +1,4 @@
-/// Layout of a Hermes runtime installed by Hermuse on Linux.
+/// Layout of a Hermes runtime installed by Hermuse on Linux and macOS.
 ///
 /// The staged installer runs with `HOME=<hermesHome>/runtime`, a persistent
 /// private home: the command links it writes to `~/.local/bin` (`hermes`,

@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-/// Durable record of the Hermes install Hermuse owns on Linux.
+/// Durable record of the Hermes install Hermuse owns (Linux, macOS).
 ///
 /// Kept as JSON at a caller-chosen path under the app support directory and
 /// written before the first installer stage runs. It proves the checkout at
@@ -41,7 +41,13 @@ final class InstallJournal {
     return InstallJournal(
       hermesHome: text('hermes_home'),
       installDir: text('install_dir'),
-      runtimeHome: text('runtime_home'),
+      runtimeHome: switch (json['runtime_home']) {
+        null => null,
+        final String home when home.isNotEmpty => home,
+        _ => throw const FormatException(
+          'install journal has a malformed runtime_home',
+        ),
+      },
       commit: text('commit'),
       startedAt: startedAt,
       completedStages: switch (json['completed_stages']) {
@@ -74,8 +80,9 @@ final class InstallJournal {
   /// The hermes-agent checkout the installer writes (`--dir`).
   final String installDir;
 
-  /// The private `HOME` of the installer stages.
-  final String runtimeHome;
+  /// The private `HOME` of the installer stages, or null when they run in
+  /// the user's own.
+  final String? runtimeHome;
 
   /// The hermes-agent commit the install pins (`--commit`).
   final String commit;
