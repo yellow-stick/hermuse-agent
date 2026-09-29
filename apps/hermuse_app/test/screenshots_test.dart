@@ -305,12 +305,12 @@ Future<void> main() async {
       final harness = await _Harness.open();
       addTearDown(harness.dispose);
       await _pumpApp(tester, const Size(1938, 1062), harness);
-      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Nothing yet today'), findsOneWidget);
 
       await tester.tap(find.bySemanticsLabel('Approvals'));
       await tester.pumpAndSettle();
       expect(find.text('No approvals yet'), findsOneWidget);
-      expect(find.text('Today'), findsNothing);
+      expect(find.text('Nothing yet today'), findsNothing);
     });
 
     testWidgets('pending approval appears in the Approvals tab', (
@@ -337,17 +337,17 @@ Future<void> main() async {
       final harness = await _Harness.open();
       addTearDown(harness.dispose);
       await _pumpApp(tester, const Size(1938, 1062), harness);
-      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Nothing yet today'), findsOneWidget);
       expect(find.bySemanticsLabel('Open panel'), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Close panel'));
       await tester.pumpAndSettle();
-      expect(find.text('Today'), findsNothing);
+      expect(find.text('Nothing yet today'), findsNothing);
       expect(find.bySemanticsLabel('Open panel'), findsOneWidget);
 
       await tester.tap(find.bySemanticsLabel('Open panel'));
       await tester.pumpAndSettle();
-      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Nothing yet today'), findsOneWidget);
 
       await _capture(tester, 'proof-panel-reopened.png');
     });

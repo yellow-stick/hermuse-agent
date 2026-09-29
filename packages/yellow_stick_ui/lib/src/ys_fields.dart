@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_button.dart';
 import 'ys_icon_widget.dart';
 import 'ys_menu.dart';
 import 'ys_pressable.dart';
@@ -306,43 +307,48 @@ final class _YsInputBoxState extends State<YsInputBox> {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Stack(
-            children: [
-              EditableText(
-                controller: widget.controller,
-                focusNode: _focus,
-                autofocus: widget.autofocus,
-                style: widget.textStyle.flutter.copyWith(
-                  color: palette.contentColor,
+          // The box is taller than one text line: centre the line so the
+          // text, cursor and placeholder share the box's centre.
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Stack(
+              children: [
+                EditableText(
+                  controller: widget.controller,
+                  focusNode: _focus,
+                  autofocus: widget.autofocus,
+                  style: widget.textStyle.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                  cursorColor: palette.primaryColor,
+                  backgroundCursorColor: palette.contentMutedColor,
+                  selectionColor: palette.primaryMutedColor,
+                  keyboardType: widget.obscure
+                      ? TextInputType.visiblePassword
+                      : TextInputType.text,
+                  obscureText: widget.obscure,
+                  maxLines: 1,
+                  onChanged: widget.onChanged,
+                  onSubmitted: widget.onSubmitted,
                 ),
-                cursorColor: palette.primaryColor,
-                backgroundCursorColor: palette.contentMutedColor,
-                selectionColor: palette.primaryMutedColor,
-                keyboardType: widget.obscure
-                    ? TextInputType.visiblePassword
-                    : TextInputType.text,
-                obscureText: widget.obscure,
-                maxLines: 1,
-                onChanged: widget.onChanged,
-                onSubmitted: widget.onSubmitted,
-              ),
-              if (empty && widget.placeholder.isNotEmpty)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        widget.placeholder,
-                        style: widget.textStyle.flutter.copyWith(
-                          color: palette.contentSubtleColor,
+                if (empty && widget.placeholder.isNotEmpty)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.placeholder,
+                          style: widget.textStyle.flutter.copyWith(
+                            color: palette.contentSubtleColor,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -632,26 +638,17 @@ final class _YsDialogState extends State<YsDialog> {
   }
 }
 
-/// Close (✕) icon button for dialog headers.
+/// Close (✕) icon button for dialog headers: the kit icon button (hover
+/// wash, focus ring), 32 px like the web dialog's.
 final class YsButtonIconClose extends StatelessWidget {
   const YsButtonIconClose(this.onClose, {super.key});
 
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context) => YsPressable(
+  Widget build(BuildContext context) => YsButton.icon(
+    icon: YsIcon.close,
     onPressed: onClose,
     semanticLabel: 'Close',
-    builder: (context, state) => SizedBox(
-      width: 32,
-      height: 32,
-      child: Center(
-        child: YsIconWidget(
-          YsIcon.close,
-          size: 18,
-          color: YsTheme.of(context).contentMutedColor,
-        ),
-      ),
-    ),
   );
 }

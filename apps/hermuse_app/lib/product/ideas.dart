@@ -148,6 +148,7 @@ final class _IdeaCardState extends ConsumerState<_IdeaCard> {
           ),
           semanticLabel: 'Start in chat: ${idea.title}',
           builder: (context, state) => ProductCard(
+            highlighted: state.hovered || state.pressed,
             children: [
               Text(
                 idea.title,

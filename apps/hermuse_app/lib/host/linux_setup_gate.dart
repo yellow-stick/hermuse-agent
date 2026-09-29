@@ -89,9 +89,10 @@ final class LinuxSetupGate extends ConsumerWidget {
                 'Finishing the current step before stopping…',
                 color: palette.contentMutedColor,
               ),
-            // One button per row: each label stays on its own line.
+            // One full-width button per row: each label stays on its own line.
             Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 for (var i = 0; i < actions.length; i++) ...[
                   if (i > 0) const SizedBox(height: 8),

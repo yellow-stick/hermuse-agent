@@ -142,73 +142,72 @@ final class ThreadViewState extends State<ThreadView> {
     final palette = YsTheme.of(context);
     return Stack(
       children: [
-        ColoredBox(
-          color: palette.canvasColor,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final columnWidth =
-                  (constraints.maxWidth - widget.horizontalPadding * 2).clamp(
-                    0.0,
-                    YsLayout.threadMaxWidth,
+        // No fill of its own: the shell paints the canvas, so the hairline
+        // of the side-by-side column stays visible.
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columnWidth =
+                (constraints.maxWidth - widget.horizontalPadding * 2).clamp(
+                  0.0,
+                  YsLayout.threadMaxWidth,
+                );
+            // Reversed so the conversation starts pinned to the bottom and
+            // stays there as messages arrive.
+            return ListView.builder(
+              controller: _scroll,
+              reverse: true,
+              padding: EdgeInsets.fromLTRB(
+                widget.horizontalPadding,
+                YsLayout.threadTopPad,
+                widget.horizontalPadding,
+                _overlayReserve,
+              ),
+              itemCount: widget.thread.messages.length + 1,
+              itemBuilder: (context, reversedIndex) {
+                final index = widget.thread.messages.length - reversedIndex;
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      widget.thread.startedAt,
+                      style: YsType.caption.flutter.copyWith(
+                        color: palette.contentMutedColor,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   );
-              // Reversed so the conversation starts pinned to the bottom and
-              // stays there as messages arrive.
-              return ListView.builder(
-                controller: _scroll,
-                reverse: true,
-                padding: EdgeInsets.fromLTRB(
-                  widget.horizontalPadding,
-                  YsLayout.threadTopPad,
-                  widget.horizontalPadding,
-                  _overlayReserve,
-                ),
-                itemCount: widget.thread.messages.length + 1,
-                itemBuilder: (context, reversedIndex) {
-                  final index = widget.thread.messages.length - reversedIndex;
-                  if (index == 0) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        widget.thread.startedAt,
-                        style: YsType.caption.flutter.copyWith(
-                          color: palette.contentMutedColor,
+                }
+                final messages = widget.thread.messages;
+                final message = messages[index - 1];
+                final position = groupPositionAt(messages, index - 1);
+                final gap = position.joinsAbove ? 8.0 : 16.0;
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: YsLayout.threadMaxWidth,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          bottom: reversedIndex == 0 ? 0 : gap,
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-                  final messages = widget.thread.messages;
-                  final message = messages[index - 1];
-                  final position = groupPositionAt(messages, index - 1);
-                  final gap = position.joinsAbove ? 8.0 : 16.0;
-                  return Align(
-                    alignment: Alignment.topCenter,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: YsLayout.threadMaxWidth,
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: reversedIndex == 0 ? 0 : gap,
-                          ),
-                          child: MessageRow(
-                            message: message,
-                            position: position,
-                            selectedOfferId: widget.selectedOffers[message.id],
-                            controller: widget.controller,
-                            columnWidth: columnWidth,
-                            threadTitle: widget.thread.title,
-                          ),
+                        child: MessageRow(
+                          message: message,
+                          position: position,
+                          selectedOfferId: widget.selectedOffers[message.id],
+                          controller: widget.controller,
+                          columnWidth: columnWidth,
+                          threadTitle: widget.thread.title,
                         ),
                       ),
                     ),
-                  );
-                },
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            );
+          },
         ),
         if (widget.showFloatingHeader && !widget.chatsOpen)
           Positioned(
@@ -272,13 +271,13 @@ final class ThreadViewState extends State<ThreadView> {
                       ),
                     if (widget.connection != ChatConnection.ready)
                       const SizedBox(height: 8),
-                    if (widget.replyTo != null)
-                      if (widget.instanceId case final instanceId?)
-                        _ModelPicker(
-                          instanceId: instanceId,
-                          controller: widget.controller,
-                        ),
-                    if (widget.instanceId != null) const SizedBox(height: 8),
+                    // Above the composer whenever models are known (web
+                    // `.hermuse-composer-column`), not only while replying.
+                    if (widget.instanceId case final instanceId?)
+                      _ModelPicker(
+                        instanceId: instanceId,
+                        controller: widget.controller,
+                      ),
                     // Flush on the composer: the quote reads as part of it.
                     if (widget.replyTo != null)
                       _ReplyPreview(
@@ -500,7 +499,6 @@ final class _Composer extends StatelessWidget {
                             semanticLabel: 'Stop',
                             tooltip: 'Stop',
                             icon: YsIcon.stop,
-                            iconSize: 14,
                           )
                         : hasText
                         ? _RoundAction(
@@ -534,14 +532,12 @@ final class _RoundAction extends StatelessWidget {
     required this.semanticLabel,
     required this.icon,
     this.tooltip,
-    this.iconSize = 18,
   });
 
   final VoidCallback onPressed;
   final String semanticLabel;
   final YsIcon icon;
   final String? tooltip;
-  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
@@ -562,7 +558,7 @@ final class _RoundAction extends StatelessWidget {
         child: Center(
           child: YsIconWidget(
             icon,
-            size: iconSize,
+            size: 18,
             color: palette.primaryContentColor,
           ),
         ),
@@ -790,45 +786,48 @@ final class _ModelPicker extends ConsumerWidget {
               entry.providerId == current!.provider &&
               entry.modelId == current.model,
         );
-    return Row(
-      children: [
-        Text(
-          'Model',
-          style: YsType.small.flutter.copyWith(
-            color: palette.contentMutedColor,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: SizedBox(
-            height: 36,
-            child: YsSelect(
-              value: known ? value : '',
-              options: [
-                ('', 'Instance default'),
-                for (final model in all)
-                  (
-                    '${model.providerId}/${model.modelId}',
-                    '${model.providerName} · ${model.modelId}',
-                  ),
-              ],
-              onChanged: (v) {
-                if (v.isEmpty) return;
-                final slash = v.indexOf('/');
-                unawaited(
-                  controller.setModel(
-                    ChatModel(
-                      provider: v.substring(0, slash),
-                      model: v.substring(slash + 1),
-                    ),
-                  ),
-                );
-              },
-              semanticLabel: 'Thread model',
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Text(
+            'Model',
+            style: YsType.small.flutter.copyWith(
+              color: palette.contentMutedColor,
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 8),
+          Expanded(
+            child: SizedBox(
+              height: 36,
+              child: YsSelect(
+                value: known ? value : '',
+                options: [
+                  ('', 'Instance default'),
+                  for (final model in all)
+                    (
+                      '${model.providerId}/${model.modelId}',
+                      '${model.providerName} · ${model.modelId}',
+                    ),
+                ],
+                onChanged: (v) {
+                  if (v.isEmpty) return;
+                  final slash = v.indexOf('/');
+                  unawaited(
+                    controller.setModel(
+                      ChatModel(
+                        provider: v.substring(0, slash),
+                        model: v.substring(slash + 1),
+                      ),
+                    ),
+                  );
+                },
+                semanticLabel: 'Thread model',
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -216,7 +217,8 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
               .text(
                 [
                   _kindLabel(detail.kind),
-                  if (detail.createdAt.isNotEmpty) detail.createdAt,
+                  if (detail.createdAt.isNotEmpty)
+                    formatTimestamp(detail.createdAt, DateTime.now()),
                   if (detail.size > 0) _formatSize(detail.size),
                 ].join(' · '),
               ),
@@ -297,7 +299,8 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
                 .text(
                   [
                     _kindLabel(artifact.kind),
-                    if (artifact.createdAt.isNotEmpty) artifact.createdAt,
+                    if (artifact.createdAt.isNotEmpty)
+                      formatTimestamp(artifact.createdAt, DateTime.now()),
                   ].join(' · '),
                 ),
               ]),

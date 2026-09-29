@@ -75,11 +75,12 @@ class YsDialog extends StatefulComponent {
         alignItems: .center,
         gap: .all(8.px),
       ),
+      // The heading token, like the Flutter kit's dialog title.
       css('.ys-dialog-title').styles(
         margin: .zero,
         flex: .grow(1),
-        fontSize: 22.px,
-        lineHeight: 28.px,
+        fontSize: YsType.heading.size.px,
+        lineHeight: YsType.heading.lineHeight.px,
         fontWeight: .w500,
       ),
       css('.ys-dialog-body')

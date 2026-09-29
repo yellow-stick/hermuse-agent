@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -49,6 +50,23 @@ final class _GoalsState extends ConsumerState<_Goals> {
   String? _detailId;
   String? _createCategory;
 
+  /// The goal dialogs open in the app overlay: their scrim covers the whole
+  /// window (rail, panel, side-by-side chat), like the other dialogs.
+  final _dialog = OverlayPortalController();
+
+  void _open(VoidCallback pick) {
+    setState(pick);
+    _dialog.show();
+  }
+
+  void _close() {
+    _dialog.hide();
+    setState(() {
+      _detailId = null;
+      _createCategory = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final goals = ref.watch(goalsProvider(widget.instanceId));
@@ -59,68 +77,63 @@ final class _GoalsState extends ConsumerState<_Goals> {
     ];
     final detail = all.where((goal) => goal.id == _detailId).firstOrNull;
     final create = _createCategory;
-    return Stack(
-      children: [
-        HermuseRoute(
-          title: 'Goals',
-          children: [
-            if (goals.isLoading && goals.value == null)
-              const HermuseRouteSub('Loading goals…')
-            else if (goals.hasError && goals.value == null)
-              HermuseRouteError('Goals failed: ${goals.error}')
-            else ...[
-              HermuseRouteSection(
-                head: 'Tracking',
-                children: [
-                  if (tracking.isEmpty)
-                    const HermuseRouteSub(
-                      'Nothing tracked yet. Create your first goal below.',
-                    )
-                  else
-                    for (final goal in tracking)
-                      _TrackingRow(
-                        key: ValueKey(goal.id),
-                        instanceId: widget.instanceId,
-                        goal: goal,
-                        onOpen: () => setState(() => _detailId = goal.id),
-                      ),
-                ],
-              ),
-              HermuseRouteSection(
-                head: 'Create a goal',
-                children: [
-                  for (final category in hermuseGoalCategories)
-                    _CategoryRow(
-                      label: goalCategoryLabel(category),
-                      onPressed: () =>
-                          setState(() => _createCategory = category),
-                    ),
-                ],
-              ),
-            ],
-          ],
-        ),
-        if (detail != null)
-          Positioned.fill(
-            child: YsDialog(
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => detail != null
+          ? YsDialog(
               title: detail.title,
-              onClose: () => setState(() => _detailId = null),
+              onClose: _close,
               child: _GoalDetail(instanceId: widget.instanceId, goal: detail),
-            ),
-          ),
-        if (create != null)
-          Positioned.fill(
-            child: YsDialog(
+            )
+          : create != null
+          ? YsDialog(
               title: 'New ${goalCategoryLabel(create).toLowerCase()} goal',
-              onClose: () => setState(() => _createCategory = null),
+              onClose: _close,
               child: _GoalCreate(
                 instanceId: widget.instanceId,
                 category: create,
-                onCreated: () => setState(() => _createCategory = null),
+                onCreated: _close,
               ),
+            )
+          : const SizedBox.shrink(),
+      child: HermuseRoute(
+        title: 'Goals',
+        children: [
+          if (goals.isLoading && goals.value == null)
+            const HermuseRouteSub('Loading goals…')
+          else if (goals.hasError && goals.value == null)
+            HermuseRouteError('Goals failed: ${goals.error}')
+          else ...[
+            HermuseRouteSection(
+              head: 'Tracking',
+              children: [
+                if (tracking.isEmpty)
+                  const HermuseRouteSub(
+                    'Nothing tracked yet. Create your first goal below.',
+                  )
+                else
+                  for (final goal in tracking)
+                    _TrackingRow(
+                      key: ValueKey(goal.id),
+                      instanceId: widget.instanceId,
+                      goal: goal,
+                      onOpen: () => _open(() => _detailId = goal.id),
+                    ),
+              ],
             ),
-          ),
-      ],
+            HermuseRouteSection(
+              head: 'Create a goal',
+              children: [
+                for (final category in hermuseGoalCategories)
+                  _CategoryRow(
+                    label: goalCategoryLabel(category),
+                    onPressed: () => _open(() => _createCategory = category),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -137,11 +150,14 @@ final class _CategoryRow extends StatelessWidget {
     return YsPressable(
       onPressed: onPressed,
       semanticLabel: 'Create a $label goal',
-      builder: (context, state) => Container(
+      builder: (context, state) => AnimatedContainer(
+        duration: const Duration(milliseconds: YsMotion.fast),
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: palette.paperColor,
+          color: state.hovered || state.pressed
+              ? palette.neutralFilmColor
+              : palette.paperColor,
           borderRadius: BorderRadius.circular(YsRadius.row),
         ),
         child: Row(
@@ -220,12 +236,16 @@ final class _TrackingRowState extends ConsumerState<_TrackingRow> {
             YsPressable(
               onPressed: _busy ? null : () => unawaited(_complete()),
               semanticLabel: 'Mark ${goal.title} complete',
-              builder: (context, state) => Container(
+              builder: (context, state) => AnimatedContainer(
+                duration: const Duration(milliseconds: YsMotion.fast),
                 width: 22,
                 height: 22,
                 margin: const EdgeInsets.only(top: 1),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(6),
+                  color: state.hovered || state.pressed
+                      ? palette.neutralFilmColor
+                      : null,
                   border: Border.all(color: palette.contentMutedColor),
                 ),
               ),
@@ -331,7 +351,7 @@ final class _GoalDetailState extends ConsumerState<_GoalDetail> {
           ),
           Text(
             [
-              event.at,
+              formatTimestamp(event.at, DateTime.now()),
               if (event.progress.isNotEmpty) event.progress,
             ].join(' · '),
             style: subtle,
@@ -417,6 +437,7 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
             semanticLabel: 'Goal title',
           ),
         ),
+        const SizedBox(height: 12),
         YsField(
           label: 'Why',
           child: YsTextBox(
@@ -427,6 +448,7 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
             maxHeight: 200,
           ),
         ),
+        const SizedBox(height: 12),
         YsField(
           label: 'Target date (optional)',
           child: YsInputBox(

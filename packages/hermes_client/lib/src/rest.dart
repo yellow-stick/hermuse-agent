@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import 'errors.dart';
+import 'instance.dart';
 
 /// Public `/api/status` probe result (no auth needed).
 final class HermesStatus {
@@ -35,6 +36,17 @@ final class HermesStatus {
   /// `cookie` and/or `native_pkce`.
   final List<String> authFlows;
   final Map<String, Object?> raw;
+
+  /// How a client signs in to this Hermes: no dashboard gate means the
+  /// session token `hermes serve` always puts on `/api/ws`
+  /// (`HERMES_DASHBOARD_SESSION_TOKEN`); a gate with the `basic` provider
+  /// means username and password. Null when the only providers are ones
+  /// Hermuse cannot use.
+  AuthMethod? get loginMethod => !authRequired
+      ? AuthMethod.loopbackToken
+      : authProviders.contains('basic')
+      ? AuthMethod.password
+      : null;
 }
 
 /// The Hermes minor line this build's generated contract targets.

@@ -1122,4 +1122,11 @@ void main() {
     expect(ago(const Duration(days: 1)), 'Sat');
     expect(ago(const Duration(days: 7)), 'Sep 20');
   });
+
+  test('stored timestamps read as time-ago; other text is kept', () {
+    final now = DateTime.utc(2026, 9, 27, 17);
+    expect(formatTimestamp('2026-09-27T14:37:22.593946+00:00', now), '2h');
+    expect(formatTimestamp('2026-09-10T12:00:00+00:00', now), 'Sep 10');
+    expect(formatTimestamp('someday', now), 'someday');
+  });
 }

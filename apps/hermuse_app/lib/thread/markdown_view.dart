@@ -122,11 +122,15 @@ final class _MarkdownViewState extends State<MarkdownView> {
     MdRule() => Container(height: 1, color: palette.lineColor),
   };
 
-  TextStyle _mono(TextStyle base, double size, double line) => base.copyWith(
+  /// A fresh style, not `base.copyWith`: [base] carries the kit's font
+  /// package, which would resolve `monospace` as a missing package font.
+  TextStyle _mono(TextStyle base, double size, double line) => TextStyle(
+    color: base.color,
     fontFamily: 'monospace',
     fontFamilyFallback: const ['Menlo', 'Consolas', 'Courier'],
     fontSize: size,
     height: line / size,
+    leadingDistribution: TextLeadingDistribution.even,
   );
 
   Widget _rich(List<MdSpan> spans, TextStyle base, YsPalette palette) =>

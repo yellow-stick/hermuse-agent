@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -328,7 +329,7 @@ class _GoalDetailState extends State<_GoalDetail> {
             p(classes: 'hermuse-goals-event-at', [
               .text(
                 [
-                  event.at,
+                  formatTimestamp(event.at, DateTime.now()),
                   if (event.progress.isNotEmpty) event.progress,
                 ].join(' · '),
               ),
