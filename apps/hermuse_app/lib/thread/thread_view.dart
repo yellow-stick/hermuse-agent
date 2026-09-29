@@ -142,73 +142,72 @@ final class ThreadViewState extends State<ThreadView> {
     final palette = YsTheme.of(context);
     return Stack(
       children: [
-        ColoredBox(
-          color: palette.canvasColor,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final columnWidth =
-                  (constraints.maxWidth - widget.horizontalPadding * 2).clamp(
-                    0.0,
-                    YsLayout.threadMaxWidth,
+        // No fill of its own: the shell paints the canvas, so the hairline
+        // of the side-by-side column stays visible.
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final columnWidth =
+                (constraints.maxWidth - widget.horizontalPadding * 2).clamp(
+                  0.0,
+                  YsLayout.threadMaxWidth,
+                );
+            // Reversed so the conversation starts pinned to the bottom and
+            // stays there as messages arrive.
+            return ListView.builder(
+              controller: _scroll,
+              reverse: true,
+              padding: EdgeInsets.fromLTRB(
+                widget.horizontalPadding,
+                YsLayout.threadTopPad,
+                widget.horizontalPadding,
+                _overlayReserve,
+              ),
+              itemCount: widget.thread.messages.length + 1,
+              itemBuilder: (context, reversedIndex) {
+                final index = widget.thread.messages.length - reversedIndex;
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      widget.thread.startedAt,
+                      style: YsType.caption.flutter.copyWith(
+                        color: palette.contentMutedColor,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
                   );
-              // Reversed so the conversation starts pinned to the bottom and
-              // stays there as messages arrive.
-              return ListView.builder(
-                controller: _scroll,
-                reverse: true,
-                padding: EdgeInsets.fromLTRB(
-                  widget.horizontalPadding,
-                  YsLayout.threadTopPad,
-                  widget.horizontalPadding,
-                  _overlayReserve,
-                ),
-                itemCount: widget.thread.messages.length + 1,
-                itemBuilder: (context, reversedIndex) {
-                  final index = widget.thread.messages.length - reversedIndex;
-                  if (index == 0) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(
-                        widget.thread.startedAt,
-                        style: YsType.caption.flutter.copyWith(
-                          color: palette.contentMutedColor,
+                }
+                final messages = widget.thread.messages;
+                final message = messages[index - 1];
+                final position = groupPositionAt(messages, index - 1);
+                final gap = position.joinsAbove ? 8.0 : 16.0;
+                return Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: YsLayout.threadMaxWidth,
+                    ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          bottom: reversedIndex == 0 ? 0 : gap,
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-                  final messages = widget.thread.messages;
-                  final message = messages[index - 1];
-                  final position = groupPositionAt(messages, index - 1);
-                  final gap = position.joinsAbove ? 8.0 : 16.0;
-                  return Align(
-                    alignment: Alignment.topCenter,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: YsLayout.threadMaxWidth,
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: reversedIndex == 0 ? 0 : gap,
-                          ),
-                          child: MessageRow(
-                            message: message,
-                            position: position,
-                            selectedOfferId: widget.selectedOffers[message.id],
-                            controller: widget.controller,
-                            columnWidth: columnWidth,
-                            threadTitle: widget.thread.title,
-                          ),
+                        child: MessageRow(
+                          message: message,
+                          position: position,
+                          selectedOfferId: widget.selectedOffers[message.id],
+                          controller: widget.controller,
+                          columnWidth: columnWidth,
+                          threadTitle: widget.thread.title,
                         ),
                       ),
                     ),
-                  );
-                },
-              );
-            },
-          ),
+                  ),
+                );
+              },
+            );
+          },
         ),
         if (widget.showFloatingHeader && !widget.chatsOpen)
           Positioned(

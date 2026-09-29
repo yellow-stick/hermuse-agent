@@ -60,74 +60,75 @@ final class ProfilePanelState extends State<ProfilePanel> {
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    return ColoredBox(
-      color: palette.canvasColor,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 70, 16, 44),
-        child: Column(
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: YsButton.icon(
-                icon: YsIcon.close,
-                onPressed: widget.onClose,
-                semanticLabel: 'Close panel',
-                tooltip: 'Close panel',
-                size: 36,
-                iconSize: 18,
-              ),
+    // No fill of its own: the shell paints the canvas, so the hairline the
+    // shell draws on the panel's edge stays visible.
+    return Padding(
+      // The close button sits on the floating header row (top 16, like the
+      // web panel's -54 px margin); the avatar starts at 70.
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 44),
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: YsButton.icon(
+              icon: YsIcon.close,
+              onPressed: widget.onClose,
+              semanticLabel: 'Close panel',
+              tooltip: 'Close panel',
+              size: 36,
+              iconSize: 18,
             ),
-            const SizedBox(height: 18),
-            YsAvatar(
-              hermuseAvatar,
-              size: 100,
-              semanticLabel: 'Hermuse avatar',
-              badgeIcon: YsIcon.pencil,
-              onBadgePressed: () {},
-              badgeSemanticLabel: 'Edit avatar and name',
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.agentName,
-              style: YsType.title.flutter.copyWith(color: palette.contentColor),
-            ),
-            const SizedBox(height: 2),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                YsIconWidget.raw(ysConnectedSvg(palette.success.css), size: 16),
-                const SizedBox(width: 5),
-                Text(
-                  'Connected',
-                  style: YsType.status.flutter.copyWith(
-                    color: palette.contentMutedColor,
-                  ),
+          ),
+          const SizedBox(height: 18),
+          YsAvatar(
+            hermuseAvatar,
+            size: 100,
+            semanticLabel: 'Hermuse avatar',
+            badgeIcon: YsIcon.pencil,
+            onBadgePressed: () {},
+            badgeSemanticLabel: 'Edit avatar and name',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.agentName,
+            style: YsType.title.flutter.copyWith(color: palette.contentColor),
+          ),
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YsIconWidget.raw(ysConnectedSvg(palette.success.css), size: 16),
+              const SizedBox(width: 5),
+              Text(
+                'Connected',
+                style: YsType.status.flutter.copyWith(
+                  color: palette.contentMutedColor,
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            YsButton.neutral(
-              label: 'Open computer',
-              onPressed: widget.onOpenComputer,
-            ),
-            const SizedBox(height: 44),
-            SizedBox(
-              width: 327,
-              child: YsSegmentedTabs(
-                semanticLabel: 'Profile sections',
-                segments: [
-                  for (final tab in PanelTab.values)
-                    YsSegment(icon: _iconFor(tab), label: tab.label),
-                ],
-                selectedIndex: _tab.index,
-                onSelected: (index) =>
-                    setState(() => _tab = PanelTab.values[index]),
               ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          YsButton.neutral(
+            label: 'Open computer',
+            onPressed: widget.onOpenComputer,
+          ),
+          const SizedBox(height: 44),
+          SizedBox(
+            width: 327,
+            child: YsSegmentedTabs(
+              semanticLabel: 'Profile sections',
+              segments: [
+                for (final tab in PanelTab.values)
+                  YsSegment(icon: _iconFor(tab), label: tab.label),
+              ],
+              selectedIndex: _tab.index,
+              onSelected: (index) =>
+                  setState(() => _tab = PanelTab.values[index]),
             ),
-            const SizedBox(height: 8),
-            Expanded(child: _tabBody()),
-          ],
-        ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(child: _tabBody()),
+        ],
       ),
     );
   }
