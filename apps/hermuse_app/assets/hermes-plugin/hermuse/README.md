@@ -69,6 +69,20 @@ the server:
    `Building the computer image…`) until the computer is `stopped` (ready to
    start).
 
+### From the Hermuse Agent desktop app (Hermes on this computer)
+
+The desktop app bundles a copy of this plugin. It copies it into
+`$HERMES_HOME/plugins/hermuse` (a `plugins/hermuse` that is not this plugin is
+never overwritten), runs `hermes plugins enable hermuse`, restarts the Hermes
+backend it supervises and sets up the agent's computer. That backend and the
+`computer setup` it runs get `HERMES_DESKTOP=1`: the plugin then never installs
+Docker itself, never probes `sudo`, and reports a missing Docker as
+`docker_missing` with `"hint": "desktop_setup"`. On Linux the app's setup
+assistant installs or starts Docker after one administrator authorization,
+registers the background jobs through `/cron/enable`, and runs the computer
+setup through the backend, which alone uses the Docker engine the assistant
+chose (see "The agent's computer").
+
 ### By hand
 
 ```bash
