@@ -635,11 +635,12 @@ final class _ShellState extends ConsumerState<_Shell> {
     );
   }
 
-  /// The product page for [_destination], or null for the chat.
+  /// The product page for [_destination], or null for the chat. A new page
+  /// enters with [YsEntrance].
   Widget? _product() {
     final instance = widget.instance;
     if (instance == null) return null;
-    return switch (_destination) {
+    final page = switch (_destination) {
       HermuseDestination.chat => null,
       HermuseDestination.feed => FeedScreen(
         instance: instance,
@@ -652,6 +653,9 @@ final class _ShellState extends ConsumerState<_Shell> {
       HermuseDestination.goals => GoalsScreen(instance: instance),
       HermuseDestination.library => LibraryScreen(instance: instance),
     };
+    return page == null
+        ? null
+        : YsEntrance(key: ValueKey(_destination), child: page);
   }
 
   KeyEventResult _onKeyFor(YsShell shell, FocusNode node, KeyEvent event) {

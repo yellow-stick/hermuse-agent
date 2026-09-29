@@ -50,6 +50,9 @@ final class _GoalsState extends ConsumerState<_Goals> {
   String? _detailId;
   String? _createCategory;
 
+  /// Goals marked done here, still on screen while their row celebrates.
+  final _leaving = <String>{};
+
   /// The goal dialogs open in the app overlay: their scrim covers the whole
   /// window (rail, panel, side-by-side chat), like the other dialogs.
   final _dialog = OverlayPortalController();
@@ -73,7 +76,8 @@ final class _GoalsState extends ConsumerState<_Goals> {
     final all = goals.value ?? const <Goal>[];
     final tracking = [
       for (final goal in all)
-        if (goal.status == GoalStatus.tracking) goal,
+        if (goal.status == GoalStatus.tracking || _leaving.contains(goal.id))
+          goal,
     ];
     final detail = all.where((goal) => goal.id == _detailId).firstOrNull;
     final create = _createCategory;
@@ -108,8 +112,12 @@ final class _GoalsState extends ConsumerState<_Goals> {
               head: 'Tracking',
               children: [
                 if (tracking.isEmpty)
-                  const HermuseRouteSub(
-                    'Nothing tracked yet. Create your first goal below.',
+                  HermuseRouteEmpty(
+                    art: YsArt.goals,
+                    size: YsLayout.artCompact,
+                    top: 0,
+                    title: 'Nothing tracked yet',
+                    body: 'Pick a category below to set your first goal.',
                   )
                 else
                   for (final goal in tracking)
@@ -118,6 +126,11 @@ final class _GoalsState extends ConsumerState<_Goals> {
                       instanceId: widget.instanceId,
                       goal: goal,
                       onOpen: () => _open(() => _detailId = goal.id),
+                      onLeaving: (leaving) => setState(
+                        () => leaving
+                            ? _leaving.add(goal.id)
+                            : _leaving.remove(goal.id),
+                      ),
                     ),
               ],
             ),
@@ -150,32 +163,39 @@ final class _CategoryRow extends StatelessWidget {
     return YsPressable(
       onPressed: onPressed,
       semanticLabel: 'Create a $label goal',
-      builder: (context, state) => AnimatedContainer(
-        duration: const Duration(milliseconds: YsMotion.fast),
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: state.hovered || state.pressed
-              ? palette.neutralFilmColor
-              : palette.paperColor,
-          borderRadius: BorderRadius.circular(YsRadius.row),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: YsType.navRow.flutter.copyWith(
-                  color: palette.contentColor,
+      builder: (context, state) => YsLift(
+        lifted: state.hovered,
+        pressed: state.pressed,
+        radius: YsRadius.row,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: YsMotion.fast),
+          height: 52,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            color: state.hovered || state.pressed
+                ? palette.neutralFilmColor
+                : palette.paperColor,
+            borderRadius: BorderRadius.circular(YsRadius.row),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: YsType.navRow.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
                 ),
               ),
-            ),
-            YsIconWidget(
-              YsIcon.chevronDown,
-              size: 18,
-              color: palette.contentMutedColor,
-            ),
-          ],
+              YsIconWidget(
+                YsIcon.chevronDown,
+                size: 18,
+                color: state.hovered
+                    ? palette.primaryColor
+                    : palette.contentMutedColor,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -183,102 +203,169 @@ final class _CategoryRow extends StatelessWidget {
 }
 
 /// Tracking row: the box marks the goal done, the body opens the detail.
+///
+/// Marked done, the box fills, its tick draws and sparks fly out; the row
+/// holds a moment ([YsDoneMotion.hold]), then folds away. [onLeaving] keeps
+/// the row listed meanwhile, although the goal is no longer tracked.
 final class _TrackingRow extends ConsumerStatefulWidget {
   const _TrackingRow({
     required this.instanceId,
     required this.goal,
     required this.onOpen,
+    required this.onLeaving,
     super.key,
   });
 
   final String instanceId;
   final Goal goal;
   final VoidCallback onOpen;
+  final ValueChanged<bool> onLeaving;
 
   @override
   ConsumerState<_TrackingRow> createState() => _TrackingRowState();
 }
 
-final class _TrackingRowState extends ConsumerState<_TrackingRow> {
+final class _TrackingRowState extends ConsumerState<_TrackingRow>
+    with TickerProviderStateMixin {
   var _busy = false;
+  var _done = false;
   String? _error;
 
+  /// The box's tick drawing, then the hold before the row folds.
+  late final _hold = AnimationController(
+    vsync: this,
+    duration: Duration(
+      milliseconds: YsStepMark.tick.durationMs + YsDoneMotion.hold,
+    ),
+  );
+
+  /// The row's height, folding to nothing once it has celebrated.
+  late final _fold = AnimationController(
+    vsync: this,
+    value: 1,
+    duration: const Duration(milliseconds: YsDoneMotion.fold),
+  );
+
+  @override
+  void dispose() {
+    _hold.dispose();
+    _fold.dispose();
+    super.dispose();
+  }
+
   Future<void> _complete() async {
+    final still = MediaQuery.disableAnimationsOf(context);
+    widget.onLeaving(true);
     setState(() {
       _busy = true;
+      _done = true;
       _error = null;
     });
     try {
-      await ref
-          .read(goalsProvider(widget.instanceId).notifier)
-          .updateGoal(
-            goalId: widget.goal.id,
-            note: 'Marked complete.',
-            status: GoalStatus.done,
-          );
+      await Future.wait<void>([
+        ref
+            .read(goalsProvider(widget.instanceId).notifier)
+            .updateGoal(
+              goalId: widget.goal.id,
+              note: 'Marked complete.',
+              status: GoalStatus.done,
+            ),
+        if (!still) _hold.forward(from: 0),
+      ]);
+      if (!still && mounted) await _fold.reverse();
     } on Object catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) {
+        setState(() {
+          _done = false;
+          _error = '$e';
+        });
+      }
     }
-    if (mounted) setState(() => _busy = false);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    widget.onLeaving(false);
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final goal = widget.goal;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            YsPressable(
-              onPressed: _busy ? null : () => unawaited(_complete()),
-              semanticLabel: 'Mark ${goal.title} complete',
-              builder: (context, state) => AnimatedContainer(
-                duration: const Duration(milliseconds: YsMotion.fast),
-                width: 22,
-                height: 22,
-                margin: const EdgeInsets.only(top: 1),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                  color: state.hovered || state.pressed
-                      ? palette.neutralFilmColor
-                      : null,
-                  border: Border.all(color: palette.contentMutedColor),
-                ),
+    return SizeTransition(
+      sizeFactor: _fold,
+      alignment: Alignment.topCenter,
+      child: FadeTransition(
+        opacity: _fold,
+        child: YsHover(
+          builder: (context, hovered) => YsLift(
+            lifted: hovered && !_done,
+            radius: YsRadius.row,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: palette.paperColor,
+                borderRadius: BorderRadius.circular(YsRadius.row),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: YsPressable(
-                onPressed: widget.onOpen,
-                semanticLabel: 'Open ${goal.title}',
-                builder: (context, state) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: YsSpace.lg,
+                  vertical: YsSpace.md,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      goal.title,
-                      style: YsType.navRow.flutter.copyWith(
-                        color: palette.contentColor,
-                      ),
-                    ),
-                    if (goal.why.isNotEmpty)
-                      Text(
-                        goal.why,
-                        style: YsType.small.flutter.copyWith(
-                          color: palette.contentMutedColor,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        YsPressable(
+                          onPressed: _busy
+                              ? null
+                              : () => unawaited(_complete()),
+                          semanticLabel: 'Mark ${goal.title} complete',
+                          builder: (context, state) => Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: YsDoneBox(
+                              done: _done,
+                              hovered: state.hovered,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: YsPressable(
+                            onPressed: widget.onOpen,
+                            semanticLabel: 'Open ${goal.title}',
+                            builder: (context, state) => Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  goal.title,
+                                  style: YsType.navRow.flutter.copyWith(
+                                    color: _done
+                                        ? palette.contentMutedColor
+                                        : palette.contentColor,
+                                  ),
+                                ),
+                                if (goal.why.isNotEmpty)
+                                  Text(
+                                    goal.why,
+                                    style: YsType.small.flutter.copyWith(
+                                      color: palette.contentMutedColor,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_error case final error?) HermuseRouteError(error),
                   ],
                 ),
               ),
             ),
-          ],
+          ),
         ),
-        if (_error case final error?) HermuseRouteError(error),
-      ],
+      ),
     );
   }
 }

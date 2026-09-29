@@ -364,7 +364,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(
-        find.widgetWithText(YsButton, 'Install Hermes on this computer'),
+        find.widgetWithText(YsChoiceCard, 'Install Hermes on this computer'),
       );
       await tester.pump();
       await tester.pump();

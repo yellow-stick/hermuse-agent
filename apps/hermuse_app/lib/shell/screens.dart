@@ -4,6 +4,8 @@ import 'package:hermes_client/hermes_client.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'mascot.dart';
+
 /// Shared dialog card: paper surface, r22 bubble radius, 32/28 padding,
 /// 16 gaps — the same spec as the web `.hermuse-card`.
 final class YsDialogCard extends StatelessWidget {
@@ -180,7 +182,8 @@ final class YsDialogBody extends StatelessWidget {
   }
 }
 
-/// First-run screen: the registry is empty, so there is no chat yet.
+/// First-run screen: the registry is empty, so there is no chat yet. The
+/// mascot says hello above one big card per way to start.
 final class WelcomeScreen extends ConsumerWidget {
   const WelcomeScreen({required this.onConnect, this.onInstall, super.key});
 
@@ -191,29 +194,81 @@ final class WelcomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return YsDialogCard(
-      narrow: true,
-      children: [
-        const YsDialogTitle('Connect to a Hermes'),
-        const YsDialogBody(
-          'Hermuse talks to your own Hermes instances. '
-          'Add one to start chatting.',
+    final palette = YsTheme.of(context);
+    final cards = [
+      YsChoiceCard(
+        art: YsArt.remote,
+        title: 'Connect to a Hermes',
+        body: 'A Hermes already running on a server or another computer.',
+        onPressed: onConnect,
+      ),
+      if (onInstall case final install?)
+        YsChoiceCard(
+          art: YsArt.local,
+          title: 'Install Hermes on this computer',
+          body: 'Hermuse installs it here and keeps it running for you.',
+          onPressed: install,
         ),
-        Center(
-          child: YsButton.primary(
-            label: 'Connect to a Hermes',
-            icon: YsIcon.plus,
-            onPressed: onConnect,
-          ),
-        ),
-        if (onInstall case final install?)
-          Center(
-            child: YsButton.neutral(
-              label: 'Install Hermes on this computer',
-              onPressed: install,
+    ];
+    return YsEntrance(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(YsSpace.xl),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: YsLayout.listWidth),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const HermuseMascot(),
+                const SizedBox(height: YsSpace.xl),
+                Text(
+                  "Hi, I'm Hermuse",
+                  textAlign: TextAlign.center,
+                  style: YsType.title.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                ),
+                const SizedBox(height: YsSpace.sm),
+                Text(
+                  'I run on your own Hermes Agent. How do you want to start?',
+                  textAlign: TextAlign.center,
+                  style: YsType.body.flutter.copyWith(
+                    color: palette.contentMutedColor,
+                  ),
+                ),
+                const SizedBox(height: YsSpace.xxl),
+                LayoutBuilder(
+                  builder: (context, constraints) =>
+                      cards.length > 1 &&
+                          constraints.maxWidth >=
+                              YsLayout.choiceMin * cards.length +
+                                  YsSpace.lg * (cards.length - 1)
+                      ? IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final (i, card) in cards.indexed) ...[
+                                if (i > 0) const SizedBox(width: YsSpace.lg),
+                                Expanded(child: card),
+                              ],
+                            ],
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final (i, card) in cards.indexed) ...[
+                              if (i > 0) const SizedBox(height: YsSpace.md),
+                              card,
+                            ],
+                          ],
+                        ),
+                ),
+              ],
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 }

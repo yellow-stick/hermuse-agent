@@ -493,27 +493,58 @@ final class _Composer extends StatelessWidget {
                   const SizedBox(width: 8),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 5),
-                    child: busy
-                        ? _RoundAction(
-                            onPressed: onStop,
-                            semanticLabel: 'Stop',
-                            tooltip: 'Stop',
-                            icon: YsIcon.stop,
-                          )
-                        : hasText
-                        ? _RoundAction(
-                            onPressed: onSend,
-                            semanticLabel: 'Send message',
-                            icon: YsIcon.send,
-                          )
-                        : YsButton.icon(
-                            icon: YsIcon.mic,
-                            onPressed: () {},
-                            semanticLabel: 'Voice',
-                            tooltip: 'Voice',
-                            size: 32,
-                            iconSize: 20,
+                    // The action morphs: the new glyph turns and grows in
+                    // while the old one shrinks away.
+                    child: AnimatedSwitcher(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: YsMorphMotion.swap),
+                      switchInCurve: YsEase.settle.curve,
+                      switchOutCurve: YsEase.standard.curve,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        // Announced from its first frame, like the button
+                        // it replaces.
+                        alwaysIncludeSemantics: true,
+                        child: RotationTransition(
+                          turns: Tween(
+                            begin: -YsMorphMotion.turn,
+                            end: 0.0,
+                          ).animate(animation),
+                          child: ScaleTransition(
+                            scale: Tween(
+                              begin: YsMorphMotion.from,
+                              end: 1.0,
+                            ).animate(animation),
+                            child: child,
                           ),
+                        ),
+                      ),
+                      child: busy
+                          ? _RoundAction(
+                              key: const ValueKey('stop'),
+                              onPressed: onStop,
+                              semanticLabel: 'Stop',
+                              tooltip: 'Stop',
+                              icon: YsIcon.stop,
+                            )
+                          : hasText
+                          ? _RoundAction(
+                              key: const ValueKey('send'),
+                              onPressed: onSend,
+                              semanticLabel: 'Send message',
+                              icon: YsIcon.send,
+                            )
+                          : YsButton.icon(
+                              key: const ValueKey('voice'),
+                              icon: YsIcon.mic,
+                              onPressed: () {},
+                              semanticLabel: 'Voice',
+                              tooltip: 'Voice',
+                              size: 32,
+                              iconSize: 20,
+                            ),
+                    ),
                   ),
                 ],
               ),
@@ -532,6 +563,7 @@ final class _RoundAction extends StatelessWidget {
     required this.semanticLabel,
     required this.icon,
     this.tooltip,
+    super.key,
   });
 
   final VoidCallback onPressed;

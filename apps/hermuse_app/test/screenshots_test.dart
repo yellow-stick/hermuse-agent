@@ -181,7 +181,9 @@ Future<void> main() async {
       );
       await tester.pumpAndSettle();
       expect(find.text('Connect to a Hermes'), findsWidgets);
-      await tester.tap(find.widgetWithText(YsButton, 'Connect to a Hermes'));
+      await tester.tap(
+        find.widgetWithText(YsChoiceCard, 'Connect to a Hermes'),
+      );
       await tester.pumpAndSettle();
 
       // One field now (URL); Name/Username/Password join after the probe.

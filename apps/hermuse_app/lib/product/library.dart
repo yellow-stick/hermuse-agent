@@ -159,7 +159,7 @@ final class _LibraryState extends ConsumerState<_Library> {
     List<Artifact> all,
   ) {
     if (artifacts.isLoading && artifacts.value == null) {
-      return const HermuseRouteSub('Loading artifacts…');
+      return const HermuseRouteSkeleton(label: 'Loading artifacts…');
     }
     if (artifacts.hasError && artifacts.value == null) {
       return HermuseRouteError('Artifacts failed: ${artifacts.error}');
@@ -169,8 +169,8 @@ final class _LibraryState extends ConsumerState<_Library> {
         if (_kind.isEmpty || artifact.kind == _kind) artifact,
     ];
     if (rows.isEmpty) {
-      return const HermuseRouteEmpty(
-        icon: YsIcon.library,
+      return HermuseRouteEmpty(
+        art: YsArt.library,
         title: 'No artifacts yet',
         body: 'Ask your Hermes to build something for you.',
       );
@@ -443,10 +443,10 @@ final class _Reflections extends ConsumerWidget {
       return HermuseRouteError('Reflections failed: ${reflections.error}');
     }
     if (all.isEmpty) {
-      return const HermuseRouteEmpty(
-        icon: YsIcon.upcoming,
+      return HermuseRouteEmpty(
+        art: YsArt.reflections,
         title: 'No reflections yet',
-        body: 'The nightly reflection appears here each morning.',
+        body: 'The nightly reflection lands here each morning.',
       );
     }
     return Column(

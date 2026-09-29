@@ -97,7 +97,14 @@ final class ProfilePanelState extends State<ProfilePanel> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              YsIconWidget.raw(ysConnectedSvg(palette.success.css), size: 16),
+              YsPing(
+                live: true,
+                color: palette.successColor,
+                child: YsIconWidget.raw(
+                  ysConnectedSvg(palette.success.css),
+                  size: 16,
+                ),
+              ),
               const SizedBox(width: 5),
               Text(
                 'Connected',
@@ -260,30 +267,35 @@ final class _TabEmptyState extends StatelessWidget {
 
   final PanelTab tab;
 
+  static YsArt _artFor(PanelTab tab) => switch (tab) {
+    PanelTab.activity => YsArt.activity,
+    PanelTab.approvals => YsArt.approvals,
+    PanelTab.upcoming => YsArt.upcoming,
+    PanelTab.identity => YsArt.identity,
+  };
+
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    return Column(
-      children: [
-        const SizedBox(height: 32),
-        YsIconWidget(
-          ProfilePanelState._iconFor(tab),
-          size: 26,
-          color: palette.contentMutedColor,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          tab.label,
-          style: YsType.label.flutter.copyWith(color: palette.contentColor),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          tab.emptyText,
-          style: YsType.small.flutter.copyWith(
-            color: palette.contentMutedColor,
+    return YsHover(
+      builder: (context, hovered) => Column(
+        children: [
+          const SizedBox(height: YsSpace.xl),
+          YsArtView(_artFor(tab), size: YsLayout.artCompact, active: hovered),
+          const SizedBox(height: YsSpace.sm),
+          Text(
+            tab.label,
+            style: YsType.label.flutter.copyWith(color: palette.contentColor),
           ),
-        ),
-      ],
+          const SizedBox(height: YsSpace.xs),
+          Text(
+            tab.emptyText,
+            style: YsType.small.flutter.copyWith(
+              color: palette.contentMutedColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -3,10 +3,13 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 /// Paper card of the product pages: r22, 20 padding, 12 gaps (web parity).
+/// A card under the pointer ([lifted]) rises with a soft shadow.
 final class ProductCard extends StatelessWidget {
   const ProductCard({
     required this.children,
     this.highlighted = false,
+    this.lifted = false,
+    this.pressed = false,
     super.key,
   });
 
@@ -15,15 +18,23 @@ final class ProductCard extends StatelessWidget {
   /// Hovered or pressed (a card that opens something): the row hover wash.
   final bool highlighted;
 
+  /// Under the pointer: the card rises ([YsLift]); [pressed] settles it.
+  final bool lifted;
+  final bool pressed;
+
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: highlighted ? palette.neutralFilmColor : palette.paperColor,
-        borderRadius: BorderRadius.circular(YsRadius.bubble),
-      ),
-      child: Padding(
+    return YsLift(
+      lifted: lifted,
+      pressed: pressed,
+      radius: YsRadius.bubble,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: YsMotion.fast),
+        decoration: BoxDecoration(
+          color: highlighted ? palette.neutralFilmColor : palette.paperColor,
+          borderRadius: BorderRadius.circular(YsRadius.bubble),
+        ),
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

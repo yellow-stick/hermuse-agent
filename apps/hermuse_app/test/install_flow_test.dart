@@ -174,7 +174,7 @@ void main() {
       );
       await _settle(tester);
       await tester.tap(
-        find.widgetWithText(YsButton, 'Install Hermes on this computer'),
+        find.widgetWithText(YsChoiceCard, 'Install Hermes on this computer'),
       );
       await _settle(tester);
       final container = ProviderScope.containerOf(

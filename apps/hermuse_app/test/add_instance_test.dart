@@ -77,7 +77,7 @@ final class _TokenHermes {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(YsButton, 'Connect to a Hermes'));
+    await tester.tap(find.widgetWithText(YsChoiceCard, 'Connect to a Hermes'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byType(EditableText).first,

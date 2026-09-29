@@ -53,14 +53,14 @@ final class IdeasScreen extends ConsumerWidget {
               'here.',
             ),
             if (ideas.isLoading && ideas.value == null)
-              const HermuseRouteSub('Loading ideas…')
+              const HermuseRouteSkeleton(label: 'Loading ideas…')
             else if (ideas.hasError && ideas.value == null)
               HermuseRouteError('Ideas failed: ${ideas.error}')
             else if (all.isEmpty)
-              const HermuseRouteEmpty(
-                icon: YsIcon.ideas,
+              HermuseRouteEmpty(
+                art: YsArt.ideas,
                 title: 'No ideas yet',
-                body: 'Ideas appear here as your Hermes thinks of them.',
+                body: 'Ideas land here as your Hermes thinks of them.',
               )
             else
               for (final group in ordered)
@@ -99,16 +99,43 @@ final class _IdeaCard extends ConsumerStatefulWidget {
   ConsumerState<_IdeaCard> createState() => _IdeaCardState();
 }
 
-final class _IdeaCardState extends ConsumerState<_IdeaCard> {
+final class _IdeaCardState extends ConsumerState<_IdeaCard>
+    with SingleTickerProviderStateMixin {
   final _feedback = TextEditingController();
   var _open = false;
   var _busy = false;
   String? _error;
 
+  /// The accepted moment: sparks fly out of the card's spark, then the idea
+  /// lands in the chat.
+  late final _accept = AnimationController(
+    vsync: this,
+    duration: Duration(microseconds: (YsBurst.frames * 1e6 / 60).round()),
+  );
+
   @override
   void dispose() {
+    _accept.dispose();
     _feedback.dispose();
     super.dispose();
+  }
+
+  void _start() {
+    final idea = widget.idea;
+    void go() =>
+        widget.onStartInChat("Let's do this: ${idea.title}\n\n${idea.pitch}");
+    if (_accept.isAnimating) return;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      go();
+      return;
+    }
+    _accept.forward(from: 0).whenComplete(() {
+      if (!mounted) return;
+      _accept.value = 0;
+      setState(() {});
+      go();
+    });
+    setState(() {});
   }
 
   Future<void> _send() async {
@@ -143,18 +170,41 @@ final class _IdeaCardState extends ConsumerState<_IdeaCard> {
       mainAxisSize: MainAxisSize.min,
       children: [
         YsPressable(
-          onPressed: () => widget.onStartInChat(
-            "Let's do this: ${idea.title}\n\n${idea.pitch}",
-          ),
+          onPressed: _start,
           semanticLabel: 'Start in chat: ${idea.title}',
           builder: (context, state) => ProductCard(
             highlighted: state.hovered || state.pressed,
+            lifted: state.hovered,
+            pressed: state.pressed,
             children: [
-              Text(
-                idea.title,
-                style: YsType.heading.flutter.copyWith(
-                  color: palette.contentColor,
-                ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      idea.title,
+                      style: YsType.heading.flutter.copyWith(
+                        color: palette.contentColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: YsSpace.md),
+                  YsBurstView(
+                    play: _accept.isAnimating,
+                    child: AnimatedScale(
+                      scale: _accept.isAnimating ? 1.25 : 1,
+                      duration: const Duration(milliseconds: YsMotion.fast),
+                      curve: YsEase.settle.curve,
+                      child: YsIconWidget(
+                        YsIcon.sparkles,
+                        size: 18,
+                        color: state.hovered || _accept.isAnimating
+                            ? palette.primaryColor
+                            : palette.contentSubtleColor,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               Text(
                 idea.pitch,

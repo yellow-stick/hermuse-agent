@@ -37,13 +37,50 @@ final class HermuseRail extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    for (final item in HermuseDestination.values)
-                      _RailItem(
-                        icon: item.icon,
-                        label: item.label,
-                        active: item == destination,
-                        onPressed: () => onDestination(item),
-                      ),
+                    // The marker slides along the rail's edge to the current
+                    // destination.
+                    Stack(
+                      children: [
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (final item in HermuseDestination.values)
+                              _RailItem(
+                                icon: item.icon,
+                                label: item.label,
+                                active: item == destination,
+                                onPressed: () => onDestination(item),
+                              ),
+                          ],
+                        ),
+                        AnimatedPositioned(
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(
+                                  milliseconds: YsRailMotion.slide,
+                                ),
+                          curve: YsEase.settle.curve,
+                          left: 0,
+                          top:
+                              destination.index * YsLayout.railItemHeight +
+                              (YsLayout.railItemHeight -
+                                      YsLayout.railMarkerHeight) /
+                                  2,
+                          width: YsLayout.railMarkerWidth,
+                          height: YsLayout.railMarkerHeight,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: palette.primaryColor,
+                                borderRadius: const BorderRadius.horizontal(
+                                  right: Radius.circular(YsRadius.pill),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     if (instances.length > 1) ...[
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),

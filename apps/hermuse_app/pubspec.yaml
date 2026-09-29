@@ -39,6 +39,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/hermuse-avatar.webp
+    - assets/images/hermuse-standing.webp
+    - assets/images/hermuse-wave.webp
     # Hermes plugin installed on the local instance (tool/sync_plugin_assets.dart).
     - assets/hermes-plugin/hermuse/
     - assets/hermes-plugin/hermuse/computer/

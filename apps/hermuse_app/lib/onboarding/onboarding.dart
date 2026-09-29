@@ -10,6 +10,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../product/route.dart';
 import 'connections.dart';
+import '../shell/mascot.dart';
 import '../shell/screens.dart';
 
 /// Onboarding flow for one instance, driven by [onboardingProvider] (web
@@ -73,76 +74,187 @@ final class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         ],
       );
     }
-    return switch (state.step) {
-      OnboardingStep.runtimeCheck => _RuntimeCheck(
-        instanceId: widget.instance.id,
-        state: state,
-        onSkipToChat: widget.onSkipToChat,
-      ),
-      OnboardingStep.connections => ConnectionsScreen(
-        instance: widget.instance,
-        onBack: widget.onSkipToChat,
-      ),
-      OnboardingStep.defaultModel => _DefaultModel(
-        instanceId: widget.instance.id,
-        state: state,
-        onSkipToChat: widget.onSkipToChat,
-      ),
-      OnboardingStep.profile => _ProfileStep(
-        instanceId: widget.instance.id,
-        state: state,
-        onDone: widget.onDone,
-        onSkipToChat: widget.onSkipToChat,
-      ),
-      OnboardingStep.ready => _ReadyStep(
-        instanceId: widget.instance.id,
-        label: widget.instance.label,
-        state: state,
-        onDone: widget.onDone,
-      ),
-    };
+    // Each step comes on screen with the page motion.
+    return YsEntrance(
+      key: ValueKey(state.step),
+      child: switch (state.step) {
+        OnboardingStep.runtimeCheck => _RuntimeCheck(
+          instanceId: widget.instance.id,
+          state: state,
+          onSkipToChat: widget.onSkipToChat,
+        ),
+        OnboardingStep.connections => ConnectionsScreen(
+          instance: widget.instance,
+          onBack: widget.onSkipToChat,
+        ),
+        OnboardingStep.defaultModel => _DefaultModel(
+          instanceId: widget.instance.id,
+          state: state,
+          onSkipToChat: widget.onSkipToChat,
+        ),
+        OnboardingStep.profile => _ProfileStep(
+          instanceId: widget.instance.id,
+          state: state,
+          onDone: widget.onDone,
+          onSkipToChat: widget.onSkipToChat,
+        ),
+        OnboardingStep.ready => _ReadyStep(
+          instanceId: widget.instance.id,
+          label: widget.instance.label,
+          state: state,
+          onDone: widget.onDone,
+        ),
+      },
+    );
   }
 }
 
-/// Step dots shared by the onboarding steps.
+/// Stepper shared by the onboarding steps, then the step's illustration.
 final class _StepDots extends StatelessWidget {
-  const _StepDots(this.step);
+  const _StepDots(this.step, {this.art});
 
   final OnboardingStep step;
+  final YsArt? art;
 
   static const _order = [
-    OnboardingStep.runtimeCheck,
-    OnboardingStep.connections,
-    OnboardingStep.defaultModel,
-    OnboardingStep.profile,
+    (OnboardingStep.runtimeCheck, YsIcon.bot, 'Check'),
+    (OnboardingStep.connections, YsIcon.keyRound, 'Accounts'),
+    (OnboardingStep.defaultModel, YsIcon.sparkles, 'Model'),
+    (OnboardingStep.profile, YsIcon.smile, 'Tour'),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    final index = _order.indexOf(step);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    final art = this.art;
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var i = 0; i < _order.length; i++) ...[
-          if (i > 0) const SizedBox(width: 6),
-          SizedBox(
-            width: 8,
-            height: 8,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: i < index
-                    ? palette.successColor
-                    : i == index
-                    ? palette.primaryColor
-                    : palette.contentSubtleColor,
-              ),
-            ),
+        YsStepper(
+          steps: [
+            for (final (_, icon, label) in _order) (icon: icon, label: label),
+          ],
+          current: _order.indexWhere((s) => s.$1 == step),
+        ),
+        if (art != null) ...[
+          const SizedBox(height: YsSpace.lg),
+          YsHover(
+            builder: (context, hovered) =>
+                YsArtView(art, size: YsLayout.artStep, active: hovered),
           ),
         ],
       ],
+    );
+  }
+}
+
+/// A provider to pick, as a card: its monogram, name and model count; the
+/// picked one wears the accent outline and a tick.
+final class _ProviderCard extends StatelessWidget {
+  const _ProviderCard({
+    required this.provider,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final ModelOptionProvider provider;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final name = provider.name.trim();
+    final models = provider.models?.length ?? 0;
+    return Semantics(
+      container: true,
+      button: true,
+      selected: selected,
+      label: name,
+      child: YsPressable(
+        onPressed: onPressed,
+        excludeSemantics: true,
+        builder: (context, state) => ExcludeSemantics(
+          child: YsFocusRing(
+            visible: state.focused,
+            radius: YsRadius.row,
+            child: YsLift(
+              lifted: state.hovered,
+              pressed: state.pressed,
+              radius: YsRadius.row,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: YsMotion.base),
+                padding: const EdgeInsets.all(YsSpace.md),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? palette.primaryWashColor
+                      : palette.neutralAmbientColor,
+                  borderRadius: BorderRadius.circular(YsRadius.row),
+                  border: Border.all(
+                    color: selected ? palette.primaryColor : palette.lineColor,
+                    width: ysHairline,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? palette.primaryColor
+                            : palette.paperClearColor,
+                        borderRadius: BorderRadius.circular(YsRadius.row - 2),
+                      ),
+                      child: Text(
+                        name.isEmpty
+                            ? '?'
+                            : name.characters.first.toUpperCase(),
+                        style: YsType.monogram.flutter.copyWith(
+                          color: selected
+                              ? palette.primaryContentColor
+                              : palette.contentColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: YsSpace.sm + YsSpace.xxs),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: YsType.label.flutter.copyWith(
+                              color: palette.contentColor,
+                            ),
+                          ),
+                          Text(
+                            models == 1 ? '1 model' : '$models models',
+                            style: YsType.caption.flutter.copyWith(
+                              color: palette.contentMutedColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    AnimatedOpacity(
+                      opacity: selected ? 1 : 0,
+                      duration: const Duration(milliseconds: YsMotion.base),
+                      child: YsIconWidget(
+                        YsIcon.check,
+                        size: 16,
+                        color: palette.primaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -172,7 +284,7 @@ final class _RuntimeCheckState extends ConsumerState<_RuntimeCheck> {
     return YsDialogCard(
       narrow: true,
       children: [
-        const _StepDots(OnboardingStep.runtimeCheck),
+        _StepDots(OnboardingStep.runtimeCheck, art: YsArt.check),
         const YsDialogTitle('Checking this Hermes'),
         if (widget.state.problems.isEmpty)
           const YsDialogBody('The configured model route cannot be served yet.')
@@ -321,7 +433,7 @@ final class _DefaultModelState extends ConsumerState<_DefaultModel> {
           child: YsDialogCard(
             narrow: true,
             children: [
-              const _StepDots(OnboardingStep.defaultModel),
+              _StepDots(OnboardingStep.defaultModel, art: YsArt.model),
               const YsDialogTitle('Pick a default model'),
               if (freeTier != null && freeTier.enabled && freeTier.available)
                 _FreeTierBox(
@@ -346,14 +458,21 @@ final class _DefaultModelState extends ConsumerState<_DefaultModel> {
               else ...[
                 YsField(
                   label: 'Provider',
-                  child: YsSelect(
-                    value: _provider,
-                    options: [for (final p in providers) (p.slug, p.name)],
-                    onChanged: (v) => setState(() {
-                      _provider = v;
-                      _model = '';
-                    }),
-                    semanticLabel: 'Provider',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final (i, p) in providers.indexed) ...[
+                        if (i > 0) const SizedBox(height: YsSpace.sm),
+                        _ProviderCard(
+                          provider: p,
+                          selected: p.slug == _provider,
+                          onPressed: () => setState(() {
+                            _provider = p.slug;
+                            _model = '';
+                          }),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 if (models.isNotEmpty)
@@ -529,6 +648,12 @@ final class _ProfileStepState extends ConsumerState<_ProfileStep> {
       narrow: true,
       children: [
         const _StepDots(OnboardingStep.profile),
+        const Center(
+          child: HermuseMascot(
+            height: YsLayout.mascotSmallHeight,
+            stageWidth: YsLayout.mascotSmallStageWidth,
+          ),
+        ),
         const YsDialogTitle('Meet your Hermes'),
         const YsDialogBody(
           'A short guided chat presents this assistant, then learns who you '
@@ -602,7 +727,7 @@ final class _ReadyStep extends ConsumerWidget {
     return YsDialogCard(
       narrow: true,
       children: [
-        const YsDialogIcon(YsIcon.check),
+        Center(child: YsArtView(YsArt.ready, size: YsLayout.artStep)),
         const YsDialogTitle('All set'),
         YsDialogBody('$label is ready to chat.'),
         YsDialogCta(

@@ -62,7 +62,7 @@ void main() {
     // Welcome → add-instance form.
     await _waitFor(tester, find.text('Connect to a Hermes'));
     await tester.tap(
-      find.widgetWithText(YsButton, 'Connect to a Hermes').first,
+      find.widgetWithText(YsChoiceCard, 'Connect to a Hermes').first,
     );
     await tester.pumpAndSettle();
 

@@ -32,11 +32,15 @@ final class InstanceStatusDot extends ConsumerWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 8,
-            height: 8,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          YsPing(
+            live: color == palette.successColor,
+            color: color,
+            child: SizedBox(
+              width: YsLayout.statusDot,
+              height: YsLayout.statusDot,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
             ),
           ),
           const SizedBox(width: 6),
