@@ -77,6 +77,9 @@ jobs:
           if ($code -eq 0) { throw 'signing without an Artifact Signing account cannot succeed' }
           if ($text -notmatch 'signing 1 file\(s\) with Artifact Signing') { throw 'sign.ps1 did not reach signtool' }
           if ($status -ne 'NotSigned') { throw "the target was modified: $status" }
+          if ($text -notmatch 'SignerSign\(\) failed') { throw 'signtool did not fail in the Artifact Signing dlib' }
+          # The expected failure left sign.ps1's exit code behind.
+          exit 0
 
       - name: Tesseract (pinned installer)
         run: |
