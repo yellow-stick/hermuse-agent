@@ -299,17 +299,27 @@ jobs:
           checksum: 6590717592ace991ff83a63fef799e3ad9d33ecc8f96c5d6bdd732496e79337f
           enable-cache: false
 
-      - name: Plugin tests against Hermes at the pinned commit
+      - name: Pinned Hermes commit, its installer script digests, plugin tests against it
         run: |
           set -euo pipefail
-          pin=$(sed -n "s/^const hermesReleaseCommit = '\([0-9a-f]\{40\}\)';$/\1/p" \
-            packages/hermuse_host/lib/src/installer.dart)
+          installer=packages/hermuse_host/lib/src/installer.dart
+          pin=$(sed -n "s/^const hermesReleaseCommit = '\([0-9a-f]\{40\}\)';$/\1/p" "$installer")
           [ -n "$pin" ] || { echo "::error::no hermesReleaseCommit in installer.dart"; exit 1; }
           src="$RUNNER_TEMP/hermes-agent"
           git init -q "$src"
           git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$pin"
           git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
           [ "$(git -C "$src" rev-parse HEAD)" = "$pin" ]
+          # The app runs only the pinned commit's installer scripts, byte for byte.
+          for script in install.sh=hermesInstallShSha256 install.ps1=hermesInstallPs1Sha256; do
+            want=$(tr -d ' \n' <"$installer" | grep -o "const${script#*=}='[0-9a-f]\{64\}'" | cut -d"'" -f2 || true)
+            got=$(git -C "$src" cat-file blob "HEAD:scripts/${script%%=*}" | sha256sum | cut -d' ' -f1)
+            if [ -z "$want" ] || [ "$got" != "$want" ]; then
+              echo "::error::scripts/${script%%=*} at $pin has SHA-256 $got, installer.dart pins '${want:-nothing}' (${script#*=})"
+              exit 1
+            fi
+            echo "scripts/${script%%=*} at $pin: $got"
+          done
           (cd "$src" && uv sync --frozen --extra dev --python 3.12)
           cd hermes-plugin/hermuse
           HERMES_AGENT_DIR="$src" "$src/.venv/bin/python" -m pytest tests/ -q
