@@ -4,16 +4,23 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 /// Paper card of the product pages: r22, 20 padding, 12 gaps (web parity).
 final class ProductCard extends StatelessWidget {
-  const ProductCard({required this.children, super.key});
+  const ProductCard({
+    required this.children,
+    this.highlighted = false,
+    super.key,
+  });
 
   final List<Widget> children;
+
+  /// Hovered or pressed (a card that opens something): the row hover wash.
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: palette.paperColor,
+        color: highlighted ? palette.neutralFilmColor : palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.bubble),
       ),
       child: Padding(

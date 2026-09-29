@@ -138,11 +138,14 @@ final class _CategoryRow extends StatelessWidget {
     return YsPressable(
       onPressed: onPressed,
       semanticLabel: 'Create a $label goal',
-      builder: (context, state) => Container(
+      builder: (context, state) => AnimatedContainer(
+        duration: const Duration(milliseconds: YsMotion.fast),
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: palette.paperColor,
+          color: state.hovered || state.pressed
+              ? palette.neutralFilmColor
+              : palette.paperColor,
           borderRadius: BorderRadius.circular(YsRadius.row),
         ),
         child: Row(
@@ -221,12 +224,16 @@ final class _TrackingRowState extends ConsumerState<_TrackingRow> {
             YsPressable(
               onPressed: _busy ? null : () => unawaited(_complete()),
               semanticLabel: 'Mark ${goal.title} complete',
-              builder: (context, state) => Container(
+              builder: (context, state) => AnimatedContainer(
+                duration: const Duration(milliseconds: YsMotion.fast),
                 width: 22,
                 height: 22,
                 margin: const EdgeInsets.only(top: 1),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(6),
+                  color: state.hovered || state.pressed
+                      ? palette.neutralFilmColor
+                      : null,
                   border: Border.all(color: palette.contentMutedColor),
                 ),
               ),

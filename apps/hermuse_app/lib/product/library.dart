@@ -194,8 +194,16 @@ final class _ArtifactRow extends StatelessWidget {
     return YsPressable(
       onPressed: onPressed,
       semanticLabel: 'Open ${artifact.title}',
-      builder: (context, state) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+      // Web `.hermuse-lib-row`: 12 padding, row radius, hover wash.
+      builder: (context, state) => AnimatedContainer(
+        duration: const Duration(milliseconds: YsMotion.fast),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: state.hovered || state.pressed
+              ? palette.neutralFilmColor
+              : null,
+          borderRadius: BorderRadius.circular(YsRadius.row),
+        ),
         child: Row(
           children: [
             Container(
@@ -298,8 +306,16 @@ final class _SystemFiles extends StatelessWidget {
             key: ValueKey(name),
             onPressed: () => onEdit(name),
             semanticLabel: 'Edit $name',
-            builder: (context, state) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
+            // Web `.hermuse-lib-file`: 12 padding, row radius, hover wash.
+            builder: (context, state) => AnimatedContainer(
+              duration: const Duration(milliseconds: YsMotion.fast),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: state.hovered || state.pressed
+                    ? palette.neutralFilmColor
+                    : null,
+                borderRadius: BorderRadius.circular(YsRadius.row),
+              ),
               child: Text(
                 name,
                 style: YsType.navRow.flutter.copyWith(
