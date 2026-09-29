@@ -45,10 +45,18 @@ Running:
 
 ```bash
 cd apps/hermuse_app && flutter run -d linux   # or macos / windows / device
-cd apps/hermuse_web && jaspr serve            # http://localhost:8080
+tool/serve-web.sh                             # jaspr serve; http://localhost:8080 in the main checkout
 cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
+
+Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
+(`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with
+the main checkout) and `tool/orca/archive-worktree.sh` on archive (stops every
+process rooted in the tree). In a linked worktree `tool/serve-web.sh` picks a
+port triple derived from the path (printed on start; `HERMUSE_WEB_PORT`
+overrides). Jaspr always binds the Dart VM service to 8181: a second concurrent
+`jaspr serve` logs a DDS "address already in use" error but keeps serving.
 
 ## Generated code — never edit by hand
 

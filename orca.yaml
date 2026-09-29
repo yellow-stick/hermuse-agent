@@ -1,0 +1,6 @@
+# Orca provisions every new worktree from the repository's main checkout.
+# Agents wait for setup so they never analyze an unresolved pub workspace.
+setupAgentStartupPolicy: wait-for-setup
+scripts:
+  setup: bash "$ORCA_WORKTREE_PATH/tool/orca/setup-worktree.sh"
+  archive: bash "$ORCA_ROOT_PATH/tool/orca/archive-worktree.sh"
