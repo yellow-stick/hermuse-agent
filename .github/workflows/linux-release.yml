@@ -4,7 +4,10 @@
 #                                 \-> attest (tag runs of the canonical repository only)
 #
 # Pull requests: version read from apps/hermuse_app/pubspec.yaml, checks, build,
-# package and every smoke leg, without secrets and without publication.
+# package, the `fresh` smoke legs (both guests, both formats) and the container
+# checks, without secrets and without publication. Dispatch without a tag: a
+# test run of the dispatched branch over every leg, or those matching `legs`;
+# never published.
 # Tag push (hermuse/v*) or dispatch with an existing tag: the tag is resolved to
 # its commit, must name exactly the pubspec version, and that exact commit is
 # built. Publication needs the `release` environment (required reviewers), then
@@ -34,8 +37,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag (hermuse/vX.Y.Z or hermuse/vX.Y.Z-rc.N)
-        required: true
+        description: Existing release tag (hermuse/vX.Y.Z or hermuse/vX.Y.Z-rc.N) to build and publish; empty = test run of this branch, never published
+        required: false
+        type: string
+      legs:
+        description: Test runs only (no tag), regex over leg names, e.g. docker-rootless|adopt; empty = every leg
+        required: false
         type: string
 
 permissions:
@@ -43,7 +50,7 @@ permissions:
 
 concurrency:
   group: linux-release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.tag || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.tag == '') }}
 
 env:
   BUILDER_IMAGE: hermuse-linux-builder:ci
@@ -69,6 +76,8 @@ jobs:
       run_label: ${{ steps.source.outputs.run_label }}
       smoke_matrix: ${{ steps.legs.outputs.smoke }}
       compat_matrix: ${{ steps.legs.outputs.compat }}
+      smoke_count: ${{ steps.legs.outputs.smoke_count }}
+      compat_count: ${{ steps.legs.outputs.compat_count }}
     steps:
       - name: Resolve the source commit
         id: source
@@ -76,6 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_LEGS: ${{ inputs.legs }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
@@ -84,9 +94,20 @@ jobs:
           set -euo pipefail
           echo "run_label=$RUN_LABEL" >>"$GITHUB_OUTPUT"
           if [ "$EVENT" = pull_request ]; then
-            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; } >>"$GITHUB_OUTPUT"
+            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; echo set=pr; echo filter=; } >>"$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ "$EVENT" = workflow_dispatch ] && [ -z "$INPUT_TAG" ]; then
+            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; echo set=full; } >>"$GITHUB_OUTPUT"
+            echo "filter=$INPUT_LEGS" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$INPUT_LEGS" ]; then
+            echo "::error::a release runs every leg: 'legs' is for test runs without a tag"
+            exit 1
+          fi
+          echo set=full >>"$GITHUB_OUTPUT"
+          echo filter= >>"$GITHUB_OUTPUT"
           tag=${INPUT_TAG:-$REF_NAME}
           if ! [[ $tag =~ ^hermuse/v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
             echo "::error::'$tag' is not a hermuse/vX.Y.Z[-rc.N] tag"
@@ -126,10 +147,19 @@ jobs:
 
       - name: Smoke legs
         id: legs
+        env:
+          SET: ${{ steps.source.outputs.set }}
+          FILTER: ${{ steps.source.outputs.filter }}
         run: |
           set -euo pipefail
-          echo "smoke=$(python3 packaging/smoke/proof_summary.py matrix guests)" >>"$GITHUB_OUTPUT"
-          echo "compat=$(python3 packaging/smoke/proof_summary.py matrix containers)" >>"$GITHUB_OUTPUT"
+          smoke=$(python3 packaging/smoke/proof_summary.py matrix guests --set "$SET" --filter "$FILTER")
+          compat=$(python3 packaging/smoke/proof_summary.py matrix containers --set "$SET" --filter "$FILTER")
+          {
+            echo "smoke=$smoke"
+            echo "compat=$compat"
+            echo "smoke_count=$(jq '.include | length' <<<"$smoke")"
+            echo "compat_count=$(jq '.include | length' <<<"$compat")"
+          } | tee -a "$GITHUB_OUTPUT"
 
   checks:
     name: Checks
@@ -362,6 +392,7 @@ jobs:
   smoke:
     name: Smoke ${{ matrix.name }}
     needs: [metadata, package]
+    if: needs.metadata.outputs.smoke_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 340
     strategy:
@@ -474,6 +505,7 @@ jobs:
   compat:
     name: Compat ${{ matrix.name }}
     needs: [metadata, package]
+    if: needs.metadata.outputs.compat_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -543,12 +575,15 @@ jobs:
           pattern: compat-*
           path: legs
 
-      - name: Roll up every leg
+      - name: Roll up every leg of this run
+        env:
+          SMOKE_MATRIX: ${{ needs.metadata.outputs.smoke_matrix }}
+          COMPAT_MATRIX: ${{ needs.metadata.outputs.compat_matrix }}
         run: |
           set -uo pipefail
           status=0
-          python3 packaging/smoke/proof_summary.py collect legs --out proof-summary.json \
-            --markdown proof-summary.md || status=$?
+          python3 packaging/smoke/proof_summary.py collect legs --matrix "$SMOKE_MATRIX" --matrix "$COMPAT_MATRIX" \
+            --out proof-summary.json --markdown proof-summary.md || status=$?
           cat proof-summary.md >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 

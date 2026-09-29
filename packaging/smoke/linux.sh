@@ -143,7 +143,7 @@ SPOOL_SEQ=0
 declare -A CRITERION=()
 EXPECTED=()
 
-log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 T() { echo $(($1 * TIMEOUT_SCALE)); }
 rel() { realpath -m --relative-to="$OUT" "$1"; }
 
@@ -214,7 +214,8 @@ finalize() {
   keyring_watcher_stop
   local id
   for id in "${EXPECTED[@]}"; do
-    jq -e --arg id "$id" 'select(.id == $id)' "$CHECKS" >/dev/null 2>&1 ||
+    # Slurped: jq 1.6 (Ubuntu 22.04) takes the -e status from the last input only.
+    jq -se --arg id "$id" 'any(.[]; .id == $id)' "$CHECKS" >/dev/null 2>&1 ||
       check "$id" reached fail "the scenario stopped before this criterion (runner exit $rc)"
   done
   cp -a "$STATE/out/." "$EVID/session/" 2>/dev/null
@@ -248,6 +249,10 @@ tester_env() { # env(1) arguments of the tester's non-graphical login environmen
     "PATH=/usr/local/bin:/usr/bin:/bin" "XDG_RUNTIME_DIR=/run/user/$TESTER_UID" \
     "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$TESTER_UID/bus"
 }
+
+# Directories in the tester's home are created by the tester: `install -d -o`
+# would leave the parents it creates (~/.local, ~/.local/share) owned by root.
+tester_mkdir() { runuser -u "$TESTER" -- mkdir -p "$@"; }
 
 tester_run() { # <command...> as the tester, user bus, outside the graphical session
   local -a env_args
@@ -299,7 +304,7 @@ if [ "$(tty)" = /dev/tty1 ]; then exec /bin/sh /opt/hermuse-smoke/guest/session.
 EOF
   chown "$TESTER:$TESTER" "$TESTER_HOME/.bash_profile"
   # Default browser of the tester: a recorder (guest/fake-browser.sh).
-  install -d -o "$TESTER" -g "$TESTER" "$TESTER_HOME/.local/share/applications"
+  tester_mkdir "$TESTER_HOME/.local/share/applications"
   cat >"$TESTER_HOME/.local/share/applications/hermuse-smoke-browser.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -386,10 +391,10 @@ app_launch() { # <label> [raw shell command]
   return 0
 }
 
-app_close() {
+app_close() { # [timeout-s]: a running install stage or APT transaction finishes first
   app_gone && return 0
   gui_close "$WINDOW_TITLE"
-  wait_until "$(T 300)" 2 app_gone
+  wait_until "${1:-$(T 300)}" 2 app_gone
 }
 
 ui_click() { # <label> <timeout-s> [line|any]: 0 clicked, 1 not found
@@ -511,20 +516,38 @@ install_artifact() { # <id>
     bundle_integrity "$id" "$DEB_ROOT"
     return 0
   fi
-  # AppImage: no FUSE on the machine at all, then the file placed and marked
-  # executable the way a file manager does it; nothing else is prepared.
+  # AppImage: a machine where FUSE cannot be used, then the file placed and
+  # marked executable the way a file manager does it; nothing else is
+  # prepared. The mount helpers and libfuse2 are purged; a FUSE library the
+  # boot chain depends on (grub-common needs libfuse3) stays installed but is
+  # unusable: the device node is removed and the module may not load.
   local fuse=() pkg
-  for pkg in fuse fuse3 libfuse2 libfuse2t64 libfuse3-3 libfuse3-4; do
+  for pkg in fuse fuse3 libfuse2 libfuse2t64; do
     dpkg-query -W -f '${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' && fuse+=("$pkg")
   done
   if [ ${#fuse[@]} -gt 0 ]; then
     apt-get purge -y "${fuse[@]}" >"$EVID/logs/apt-purge-fuse.log" 2>&1
   fi
-  local ok=0
-  command -v fusermount >/dev/null || command -v fusermount3 >/dev/null && ok=1
-  ldconfig -p | grep -q 'libfuse\.so\.2' && ok=1
-  pass_or_fail "$id" no-fuse "$ok" "no FUSE runtime (purged: ${fuse[*]:-none})"
-  install -d -o "$TESTER" -g "$TESTER" "$TESTER_HOME/Applications"
+  local helper path diverted=()
+  for helper in fusermount fusermount3; do
+    # Only when a purge could not remove it (a dependency of the base system).
+    path=$(command -v "$helper") || continue
+    dpkg-divert --local --rename --divert "$path.hermuse-smoke-disabled" --add "$path" \
+      >>"$EVID/logs/apt-purge-fuse.log" 2>&1 && diverted+=("$path")
+  done
+  printf 'install fuse /bin/false\n' >/etc/modprobe.d/hermuse-smoke-no-fuse.conf
+  modprobe -r fuse 2>/dev/null
+  rm -f /dev/fuse
+  local ok=0 found=()
+  command -v fusermount >/dev/null && found+=(fusermount)
+  command -v fusermount3 >/dev/null && found+=(fusermount3)
+  [ -e /dev/fuse ] && found+=(/dev/fuse)
+  ldconfig -p | grep -q 'libfuse\.so\.2' && found+=(libfuse.so.2)
+  [ ${#found[@]} -eq 0 ] || ok=1
+  pass_or_fail "$id" no-fuse "$ok" \
+    "FUSE unusable: no fusermount/fusermount3, no /dev/fuse, no libfuse2 (purged: ${fuse[*]:-none}${diverted[*]:+; diverted: ${diverted[*]}})${found[*]:+; still present: ${found[*]}}" \
+    "$EVID/logs/apt-purge-fuse.log"
+  tester_mkdir "$TESTER_HOME/Applications"
   APPIMAGE_PATH=$TESTER_HOME/Applications/$(basename "$APPIMAGE_FILE")
   install -o "$TESTER" -g "$TESTER" -m 0644 "$APPIMAGE_FILE" "$APPIMAGE_PATH"
   tester_run chmod u+x "$APPIMAGE_PATH"
@@ -684,7 +707,7 @@ c2_prepare() {
   wait_until "$(T 900)" 10 deps_ready
   helper_plan "$EVID/logs/helper-plan-after.jsonl"
   ok=0
-  jq -e 'select(.event == "missing")' "$EVID/logs/helper-plan-after.jsonl" >/dev/null 2>&1 && ok=1
+  jq -se 'any(.[]; .event == "missing")' "$EVID/logs/helper-plan-after.jsonl" >/dev/null 2>&1 && ok=1
   pass_or_fail "$id" dependencies-satisfied "$ok" "bundled helper plan reports nothing missing" \
     "$EVID/logs/helper-plan-after.jsonl"
   dpkg_snapshot "$EVID/logs/dpkg-after-prepare.txt"
@@ -697,7 +720,8 @@ c2_prepare() {
 }
 
 deps_ready() {
-  helper_plan "$STATE/plan-poll.jsonl" && ! jq -e 'select(.event == "missing")' "$STATE/plan-poll.jsonl" >/dev/null 2>&1
+  helper_plan "$STATE/plan-poll.jsonl" &&
+    jq -se 'any(.[]; .result.ok == true) and all(.[]; .event != "missing")' "$STATE/plan-poll.jsonl" >/dev/null 2>&1
 }
 
 secret_roundtrip() { # <id>: fixture secret through the real Secret Service
@@ -821,7 +845,12 @@ c4_hermes_fresh() {
   pass_or_fail "$id" journal "$ok" "journal written before the stages, pinned to $PIN_COMMIT" "$EVID/logs/journal-at-close.json"
   local interrupted
   interrupted=$(jq -r '.current_stage' "$journal")
-  app_close
+  # The running stage (python-deps or node-deps can take minutes) completes first.
+  if app_close "$(T 1800)"; then
+    check "$id" close-mid-stage pass "closing during '$interrupted' let the stage finish, then the app exited"
+  else
+    check "$id" close-mid-stage fail "the app did not exit after closing during '$interrupted'"
+  fi
   jq . "$journal" >"$EVID/logs/journal-after-close.json" 2>/dev/null
   if ! app_launch resume; then
     check "$id" resume fail "no window on relaunch after closing during stage $interrupted"
@@ -930,6 +959,16 @@ c5_plugin() {
 computer_ready() {
   rest GET /api/plugins/hermuse/computer/status "$EVID/probe/computer-status.json" &&
     jq -e '.body.state == "running" or .body.state == "stopped"' "$EVID/probe/computer-status.json" >/dev/null
+}
+
+# The local setup ran to its end: plugin installed and scheduled, and the
+# computer running (the app checks the bridge before the computer).
+setup_done() {
+  [ -f "$HERMES_HOME/plugins/hermuse/plugin.yaml" ] &&
+    rest GET /api/plugins/hermuse/cron "$EVID/probe/cron-setup.json" &&
+    jq -e '[.body.jobs[] | select(.registered)] | length == 4' "$EVID/probe/cron-setup.json" >/dev/null &&
+    rest GET /api/plugins/hermuse/computer/status "$EVID/probe/computer-status.json" &&
+    jq -e '.body.state == "running"' "$EVID/probe/computer-status.json" >/dev/null
 }
 
 in_docker_group() { id -nG "$TESTER" | grep -qw docker; }
@@ -1067,7 +1106,7 @@ c8_extras() {
   # One-shot no-agent job run by the ticker of the app-supervised backend
   # (never `cron run`/`tick` from here): heartbeat, final state, output.
   local nonce=hermuse-cron-$RUN_ID-$RANDOM out=$EVID/logs/cron-oneshot.txt
-  install -d -o "$TESTER" -g "$TESTER" "$HERMES_HOME/scripts"
+  tester_mkdir "$HERMES_HOME/scripts"
   printf '#!/bin/sh\necho %s\n' "$nonce" >"$HERMES_HOME/scripts/hermuse-smoke-cron.sh"
   chown "$TESTER:$TESTER" "$HERMES_HOME/scripts/hermuse-smoke-cron.sh"
   hermes_cli cron create 'in 1m' --name hermuse-smoke-oneshot --script hermuse-smoke-cron.sh \
@@ -1228,6 +1267,19 @@ docker_fingerprint() { # <file> <root|tester>
   } >"$1"
 }
 
+# The user's own rootless engine, set up the documented way inside the
+# session. The user journal of a failed start is kept as evidence.
+fixture_rootless() {
+  if ! grep -q "^$TESTER:" /etc/subuid || ! grep -q "^$TESTER:" /etc/subgid; then
+    usermod --add-subuids 231072-296607 --add-subgids 231072-296607 "$TESTER" >>"$EVID/logs/fixture.log" 2>&1
+  fi
+  if in_session rootless-setup 900 'dockerd-rootless-setuptool.sh install && docker context use rootless'; then
+    return 0
+  fi
+  in_session rootless-journal 60 'journalctl --user -u docker.service -n 80 --no-pager; systemctl --user status docker.service --no-pager'
+  return 1
+}
+
 fixture_docker() { # <variant> -> engine owner on stdout
   local variant=$1
   case $variant in
@@ -1248,8 +1300,7 @@ fixture_docker() { # <variant> -> engine owner on stdout
         apt-get install -y docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras uidmap \
           slirp4netns >>"$EVID/logs/fixture.log" 2>&1 &&
         systemctl disable --now docker.service docker.socket >>"$EVID/logs/fixture.log" 2>&1 &&
-        in_session rootless-setup 900 'dockerd-rootless-setuptool.sh install && docker context use rootless' &&
-        docker_resources tester && echo tester
+        fixture_rootless && docker_resources tester && echo tester
       ;;
     docker-remote-context)
       docker_repo &&
@@ -1296,7 +1347,12 @@ scenario_fresh() {
   c2_prepare || return 1
   c3_keyring
   c4_hermes_fresh || return 1
-  wait_until "$(T 600)" 5 backend_up
+  # The app goes on by itself: plugin, bridge check, computer, then onboarding.
+  if wait_until "$(T 5400)" 15 setup_done; then
+    check c5-plugin setup-completed pass "the local setup went through plugin, bridge check and computer by itself"
+  else
+    check c5-plugin setup-completed fail "the local setup did not complete" "$(gui_shot setup-not-done)"
+  fi
   c5_plugin
   c7_computer root
   c6_bridge
@@ -1333,7 +1389,7 @@ scenario_adopt() { # <compatible|foreign>
     session_restart || check "$id" relogin fail "the tester session did not come back"
   else
     # An incompatible foreign install: version 0.20.0, arbitrary content.
-    install -d -o "$TESTER" -g "$TESTER" "$install_dir" "$TESTER_HOME/.local/bin"
+    tester_mkdir "$install_dir" "$TESTER_HOME/.local/bin"
     printf '#!/bin/sh\necho "Hermes Agent v0.20.0"\n' >"$TESTER_HOME/.local/bin/hermes"
     printf 'foreign install, keep me\n' >"$install_dir/README.foreign"
     chmod 0755 "$TESTER_HOME/.local/bin/hermes"
@@ -1464,7 +1520,7 @@ scenario_docker() { # <variant>
 }
 
 lifecycle_fixtures() { # <file>: data the package lifecycle must preserve
-  install -d -o "$TESTER" -g "$TESTER" "$HERMES_HOME/hermuse/feed"
+  tester_mkdir "$HERMES_HOME/hermuse/feed"
   printf '# fixture\nhermuse smoke %s\n' "$RUN_ID" >"$HERMES_HOME/hermuse/feed/fixture.md"
   chown -R "$TESTER:$TESTER" "$HERMES_HOME"
   printf '%s' "fixture-$RUN_ID" | tester_run secret-tool store --label='Hermuse smoke fixture' hermuse-smoke lifecycle
@@ -1561,7 +1617,7 @@ scenario_lifecycle() {
     # The first release has a single AppImage, so the replacement is the same
     # bytes under a new path; data lives outside the file and the extraction.
     rm -f "$APPIMAGE_PATH"
-    install -d -o "$TESTER" -g "$TESTER" "$TESTER_HOME/Downloads"
+    tester_mkdir "$TESTER_HOME/Downloads"
     APPIMAGE_PATH=$TESTER_HOME/Downloads/$(basename "$APPIMAGE_FILE")
     install -o "$TESTER" -g "$TESTER" -m 0644 "$APPIMAGE_FILE" "$APPIMAGE_PATH"
     tester_run chmod u+x "$APPIMAGE_PATH"
@@ -1602,8 +1658,15 @@ scenario_compat() {
     pass_or_fail "$id" apt-resolution $? "APT resolved and installed $(basename "$DEB_FILE") on a bare $GUEST" \
       "$EVID/logs/apt-install.log"
     root=$DEB_ROOT
-    for elf in "$root/hermuse_app" "$root"/lib/*.so*; do
-      ldd "$elf" 2>&1 | grep 'not found' | sed "s|^|$elf: |" >>"$unresolved"
+    # hermuse_app loads every bundled library through its RUNPATH $ORIGIN/lib;
+    # the plugin libraries find libflutter_linux_gtk.so the same way at run
+    # time (already loaded by the executable), so ldd gets that directory.
+    # shellcheck disable=SC2016 # a literal $ORIGIN
+    readelf -d "$root/hermuse_app" 2>/dev/null | grep -E '(RUNPATH|RPATH).*\$ORIGIN/lib' \
+      >"$EVID/logs/hermuse_app-runpath.txt" || echo "$root/hermuse_app: no \$ORIGIN/lib RUNPATH" >>"$unresolved"
+    ldd "$root/hermuse_app" 2>&1 | grep 'not found' | sed "s|^|$root/hermuse_app: |" >>"$unresolved"
+    for elf in "$root"/lib/*.so*; do
+      LD_LIBRARY_PATH=$root/lib ldd "$elf" 2>&1 | grep 'not found' | sed "s|^|$elf: |" >>"$unresolved"
     done
   else
     appimage_extract_root /root/compat

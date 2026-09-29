@@ -4,24 +4,29 @@
 The legs listed here are the single source of truth: the workflow matrix is
 generated from them and the summary fails any leg or result that is absent.
 
-  proof_summary.py matrix guests|containers    GitHub matrix JSON of the smoke legs
+  proof_summary.py matrix guests|containers [--set full|pr] [--filter REGEX]
+                                               GitHub matrix JSON of the selected legs
   proof_summary.py leg <leg-dir> <scenario>    exit 1 when a result of one leg failed or is missing
-  proof_summary.py collect <root> --out F --markdown M
-                                               roll every leg up (fail on any fail/missing)
+  proof_summary.py collect <root> --matrix JSON [--matrix JSON] --out F --markdown M
+                                               roll the legs of the matrices up (fail on any
+                                               fail/missing); `complete` = every leg ran
   proof_summary.py finalize --summary F [--model <leg-dir>] --out F --markdown M
                                                add the model-account proof, decide
                                                public_ready (printed as key=value)
 
 A result is pass | fail | manual-gate | skipped-missing-prereq (see
-packaging/smoke/linux.sh). The release may go public only when no result
-failed or is missing, every manual gate carries its recorded evidence, and the
-real conversation with the capped test account passed.
+packaging/smoke/linux.sh). The release may go public only when every leg ran,
+no result failed or is missing, every manual gate carries its recorded
+evidence, and the real conversation with the capped test account passed.
+Pull requests run the `pr` set (the fresh scenario of both guests and formats,
+plus the containers); tags run the `full` set.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +34,9 @@ from typing import Any
 GUESTS = ("ubuntu-22.04", "debian-12")
 CONTAINERS = ("ubuntu-24.04", "ubuntu-26.04", "debian-13")
 FORMATS = ("deb", "appimage")
+
+# The legs a pull request runs; tags and dispatches run every leg.
+PR_SCENARIOS = ("fresh",)
 
 # scenario -> formats, result ids (as linux.sh `expect`s them)
 SCENARIOS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -97,7 +105,10 @@ def load_leg(leg_dir: Path, ids: tuple[str, ...]) -> list[dict[str, Any]]:
 
 def cmd_matrix(args: argparse.Namespace) -> int:
     kind = "smoke" if args.which == "guests" else "compat"
-    include = [dict(leg, name=leg_name(leg)) for leg in legs() if leg["kind"] == kind]
+    pattern = re.compile(args.filter) if args.filter else None
+    include = [dict(leg, name=leg_name(leg)) for leg in legs() if leg["kind"] == kind
+               and (args.set == "full" or kind == "compat" or leg["scenario"] in PR_SCENARIOS)
+               and (pattern is None or pattern.search(leg_name(leg)))]
     print(json.dumps({"include": include}, separators=(",", ":")))
     return 0
 
@@ -116,9 +127,12 @@ def cmd_leg(args: argparse.Namespace) -> int:
 
 def cmd_collect(args: argparse.Namespace) -> int:
     root = Path(args.root)
+    selected = {leg["name"] for matrix in args.matrix for leg in json.loads(matrix)["include"]}
     rows = []
     for leg in legs():
         name = leg_name(leg)
+        if name not in selected:
+            continue
         for result in load_leg(root / name, expected_ids(leg["scenario"])):
             rows.append({"leg": name, **{k: leg[k] for k in ("target", "scenario", "format")},
                          "id": result["id"], "criterion": result.get("criterion", "?"),
@@ -127,7 +141,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     failed = [r for r in rows if r["status"] == "fail"]
     summary = {"schema": 1, "rows": rows, "failed": len(failed),
                "manual_gates": sum(r["status"] == "manual-gate" for r in rows),
-               "smoke_ok": not failed, "external_gates": list(EXTERNAL_GATES)}
+               "smoke_ok": not failed and bool(rows),
+               "complete": selected == {leg_name(leg) for leg in legs()},
+               "external_gates": list(EXTERNAL_GATES)}
     Path(args.out).write_text(json.dumps(summary, indent=2))
     Path(args.markdown).write_text(render(summary, None))
     return 0 if not failed else 1
@@ -152,7 +168,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     model = model_proof(Path(args.model) if args.model else None)
     summary["model_proof"] = {k: v for k, v in model.items() if k != "results"}
     summary["model_results"] = model.get("results", [])
-    summary["public_ready"] = bool(summary["smoke_ok"]) and model["status"] == "pass"
+    summary["public_ready"] = (bool(summary["smoke_ok"]) and bool(summary.get("complete"))
+                               and model["status"] == "pass")
     Path(args.out).write_text(json.dumps(summary, indent=2))
     Path(args.markdown).write_text(render(summary, model))
     print(f"public_ready={'true' if summary['public_ready'] else 'false'}")
@@ -162,7 +179,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 def render(summary: dict[str, Any], model: dict[str, Any] | None) -> str:
     lines = ["## Linux release proof", ""]
     lines.append(f"Smoke results: {'no failure' if summary['smoke_ok'] else str(summary['failed']) + ' failed'}, "
-                 f"{summary['manual_gates']} manual gate(s).")
+                 f"{summary['manual_gates']} manual gate(s), "
+                 f"{'every leg ran' if summary.get('complete') else 'a subset of the legs ran'}.")
     if model is not None:
         lines.append(f"Model-account proof: **{model['status']}** ({model['detail']}).")
         verdict = "may be published" if summary.get("public_ready") else "stays a draft"
@@ -190,6 +208,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     matrix = sub.add_parser("matrix")
     matrix.add_argument("which", choices=("guests", "containers"))
+    matrix.add_argument("--set", choices=("full", "pr"), default="full")
+    matrix.add_argument("--filter", default="")
     matrix.set_defaults(run=cmd_matrix)
     leg = sub.add_parser("leg")
     leg.add_argument("leg_dir")
@@ -197,6 +217,8 @@ def main() -> int:
     leg.set_defaults(run=cmd_leg)
     collect = sub.add_parser("collect")
     collect.add_argument("root")
+    collect.add_argument("--matrix", action="append", required=True,
+                         help="GitHub matrix JSON of the legs this run started")
     collect.add_argument("--out", required=True)
     collect.add_argument("--markdown", required=True)
     collect.set_defaults(run=cmd_collect)

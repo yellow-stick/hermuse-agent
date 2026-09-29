@@ -31,10 +31,15 @@ gui_shot() { # <name>
 }
 
 # OCR words of a screenshot as Tesseract TSV (2x upscaled grayscale: small UI
-# text reads far better). Coordinates stay in the upscaled space.
+# text reads far better). A dark screenshot is negated first: light text on a
+# dark UI is read reliably by every Tesseract of the guests (4.1 to 5.5) only
+# as dark text on light. No -normalize: with Tesseract 5.3 it wipes out the
+# text of a dark window next to the black root window. Coordinates stay in
+# the upscaled space.
 gui_ocr() { # <png> -> TSV on stdout
-  local base="$GUI_TMP/ocr"
-  convert "$1" -colorspace Gray -resize 200% -normalize "$base.png" 2>/dev/null || return 1
+  local base="$GUI_TMP/ocr" invert=()
+  [ "$(convert "$1" -colorspace Gray -format '%[fx:mean<0.5?1:0]' info: 2>/dev/null)" = 1 ] && invert=(-negate)
+  convert "$1" -colorspace Gray -resize 200% "${invert[@]}" "$base.png" 2>/dev/null || return 1
   tesseract "$base.png" "$base" --psm 11 tsv >/dev/null 2>&1 || return 1
   cat "$base.tsv"
 }
@@ -222,7 +227,9 @@ gui_polkit() { # accept|cancel <password-file> <timeout-s>
 gui_keyring_prompt() { # accept|cancel <password-file> <timeout-s>
   local action=$1 password=$2 id shot kind=unlock
   id=$(gui_window_by_class 'gcr-prompter' "$3") || return 1
-  shot=$(gui_shot "keyring-prompt-$action") || return 1
+  # The prompt window alone: its light dialog, not the dark app behind it.
+  shot="$GUI_EVIDENCE/screens/$(date +%H%M%S)-keyring-prompt-$action.png"
+  import -window "$id" "$shot" 2>/dev/null || shot=$(gui_shot "keyring-prompt-$action") || return 1
   gui_focus "$id"
   if [ "$action" = cancel ]; then
     xdotool key Escape
