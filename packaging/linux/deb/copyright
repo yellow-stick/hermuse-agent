@@ -1,0 +1,43 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Hermuse Agent
+Upstream-Contact: Yellow Stick <contact@yellow-stick.com>
+Source: https://yellow-stick.com
+Comment: Full licence texts and third-party notices are installed in
+ /usr/share/doc/hermuse-agent/notices/. The package also ships components
+ built or downloaded at release time:
+ - the Flutter engine, the Dart runtime and the Dart packages
+   (BSD-3-Clause and others, every licence in notices/flutter-NOTICES.txt);
+ - CLIProxyAPI as /opt/hermuse-agent/lib/cliproxy
+   (MIT, notices/cliproxyapi-MIT.txt);
+ - SQLite as /opt/hermuse-agent/lib/libsqlite3.so
+   (public domain, notices/sqlite-public-domain.txt).
+
+Files: *
+Copyright: Yellow Stick
+License: AGPL-3.0-only
+
+Files: packages/yellow_stick_ui/fonts/*
+ apps/hermuse_web/web/fonts/*
+Copyright: 2016 The Inter Project Authors (https://github.com/rsms/inter)
+License: OFL-1.1
+
+Files: packages/yellow_stick_ui_core/lib/src/icons.dart
+Copyright: Lucide Icons and Contributors
+ 2013-present Cole Bemis
+License: ISC and MIT
+
+License: AGPL-3.0-only
+ The full text is in
+ /usr/share/doc/hermuse-agent/notices/hermuse-agent-AGPL-3.0.txt.
+ A commercial licence is available from Yellow Stick
+ <contact@yellow-stick.com>.
+
+License: OFL-1.1
+ The full text is in /usr/share/doc/hermuse-agent/notices/inter-OFL-1.1.txt.
+
+License: ISC
+ The full text is in /usr/share/doc/hermuse-agent/notices/lucide-ISC.txt.
+
+License: MIT
+ The full text (icons derived from Feather) is in
+ /usr/share/doc/hermuse-agent/notices/lucide-ISC.txt.

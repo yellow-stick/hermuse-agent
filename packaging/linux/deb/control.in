@@ -1,0 +1,17 @@
+Package: hermuse-agent
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Yellow Stick <contact@yellow-stick.com>
+Installed-Size: @INSTALLED_SIZE@
+Depends: @DEPENDS@
+Section: utils
+Priority: optional
+Homepage: https://yellow-stick.com
+Description: personal agent that works with Hermes Agent
+ Hermuse Agent by Yellow Stick: ask in plain words and the agent gets to
+ work in your calendar, your apps and on the web, checking with you before
+ anything that matters.
+ .
+ On first launch the app prepares the system keyring, a local Hermes Agent
+ with the Hermuse plugin, the subscription bridge and the agent's computer.
+ System packages are installed after one administrator approval.

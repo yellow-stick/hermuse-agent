@@ -1,0 +1,49 @@
+#!/bin/sh
+# Hermuse Agent AppImage entry point (AppDir/AppRun).
+#
+# Contract with hostEnvironment() in packages/hermuse_host: before this script
+# changes anything, it records the host value of every variable it or the
+# linuxdeploy GTK hook may set (HERMUSE_ORIG_<NAME>, only when the variable
+# was set) and exports HERMUSE_APPIMAGE_ENV_SAVED=1. The app gives its child
+# processes (Hermes, installer, bridge, browser) that host environment back,
+# so the bundled GTK libraries never leak into them. Keep the list identical
+# to the Dart constant.
+hermuse_saved_names='LD_LIBRARY_PATH GTK_DATA_PREFIX GTK_THEME GDK_BACKEND XDG_DATA_DIRS GTK_EXE_PREFIX GTK_PATH GTK_IM_MODULE_FILE GDK_PIXBUF_MODULE_FILE GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR GI_TYPELIB_PATH PATH'
+
+if [ "${HERMUSE_APPIMAGE_ENV_SAVED:-}" = 1 ]; then
+  # Started from an environment that already carries saved host values (a
+  # process that inherited this app's environment): return to that host
+  # environment first, exactly as hostEnvironment() would.
+  for hermuse_name in $hermuse_saved_names; do
+    if eval "[ \"\${HERMUSE_ORIG_$hermuse_name+set}\" = set ]"; then
+      eval "export $hermuse_name=\"\${HERMUSE_ORIG_$hermuse_name}\""
+    else
+      unset "$hermuse_name"
+    fi
+  done
+fi
+
+for hermuse_name in $hermuse_saved_names; do
+  unset "HERMUSE_ORIG_$hermuse_name"
+  if eval "[ \"\${$hermuse_name+set}\" = set ]"; then
+    eval "export HERMUSE_ORIG_$hermuse_name=\"\${$hermuse_name}\""
+  fi
+done
+export HERMUSE_APPIMAGE_ENV_SAVED=1
+unset hermuse_name hermuse_saved_names
+
+# The runtime extracts the image and runs this script from there; an
+# extracted squashfs-root/AppRun works the same way.
+APPDIR="$(dirname "$(readlink -f "$0")")"
+export APPDIR
+
+# GTK resources bundled by linuxdeploy-plugin-gtk (theme, schemas, pixbuf
+# loaders, input methods; X11 backend, XWayland under Wayland).
+# shellcheck source=/dev/null # installed into the AppDir by linuxdeploy-plugin-gtk
+. "$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+
+export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Host GIO modules are built against the host GLib, not the bundled one.
+export GIO_MODULE_DIR="$APPDIR/usr/lib/gio/modules"
+
+exec "$APPDIR/usr/bin/hermuse_app" "$@"
