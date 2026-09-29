@@ -63,12 +63,17 @@ ComputerMode _mode(Object? value) =>
 ComputerControl _control(Object? value) =>
     value == 'human' ? ComputerControl.human : ComputerControl.agent;
 
+/// `hint` of a [ComputerState.dockerMissing] status under the Hermuse desktop
+/// app (`HERMES_DESKTOP=1`): its setup assistant installs Docker.
+const computerDesktopSetupHint = 'desktop_setup';
+
 /// `GET /computer/status` (and the `POST /computer/setup` result). Shape:
-/// `{state, detail, control?, mode?}`.
+/// `{state, detail, hint?, control?, mode?}`.
 final class ComputerStatus {
   const ComputerStatus({
     required this.state,
     this.detail = '',
+    this.hint = '',
     this.control = ComputerControl.agent,
     this.mode = ComputerMode.browser,
   });
@@ -76,6 +81,7 @@ final class ComputerStatus {
   factory ComputerStatus.fromJson(Map<String, Object?> json) => ComputerStatus(
     state: ComputerState.fromWire(json['state']),
     detail: json['detail'] as String? ?? '',
+    hint: json['hint'] as String? ?? '',
     control: _control(json['control']),
     mode: _mode(json['mode']),
   );
@@ -85,8 +91,16 @@ final class ComputerStatus {
   /// Cause of [ComputerState.daemonDown] and [ComputerState.error] (a
   /// daemon message, a failed image build…); may be empty.
   final String detail;
+
+  /// Who fixes [state] ([computerDesktopSetupHint]); empty when the plugin
+  /// gives none.
+  final String hint;
   final ComputerControl control;
   final ComputerMode mode;
+
+  /// Docker is missing and the desktop app's setup assistant installs it.
+  bool get needsDesktopSetup =>
+      state == ComputerState.dockerMissing && hint == computerDesktopSetupHint;
 }
 
 /// One page of the agent's Chromium. Shape: `{id, url, title, active}`.

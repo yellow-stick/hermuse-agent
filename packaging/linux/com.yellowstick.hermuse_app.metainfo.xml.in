@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.yellowstick.hermuse_app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-only</project_license>
+  <name>Hermuse Agent</name>
+  <summary>Your personal agent that works with Hermes Agent</summary>
+  <developer id="com.yellow-stick">
+    <name>Yellow Stick</name>
+  </developer>
+  <!-- AppStream 0.15 (Ubuntu 22.04) only reads developer_name. -->
+  <developer_name>Yellow Stick</developer_name>
+  <description>
+    <p>
+      Ask in plain words. Hermuse Agent gets to work in your calendar, your apps
+      and on the web, and checks with you before anything that matters.
+    </p>
+    <ul>
+      <li>A main chat that knows you, plus side chats for each trip or project</li>
+      <li>Activity and Approvals: a plain record of what it did, and nothing goes out without you</li>
+      <li>Feed, Ideas, Goals and Library, stored as readable Markdown and JSON files</li>
+      <li>Its own computer in plain sight: watch it browse and take control when it needs you</li>
+    </ul>
+    <p>
+      On first launch the app prepares what it needs on this computer: the system
+      keyring, a local Hermes Agent with the Hermuse plugin, the subscription bridge
+      and the agent's computer. System packages are installed after one
+      administrator approval. You can also connect to a Hermes Agent you already run.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.yellowstick.hermuse_app.desktop</launchable>
+  <url type="homepage">https://yellow-stick.com</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="@VERSION@" date="@DATE@"/>
+  </releases>
+</component>

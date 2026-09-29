@@ -3,9 +3,10 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+import '../platform/open_url.dart';
 
 /// Renders an agent reply's Markdown (web `markdown_view.dart` parity:
 /// 8 gaps, 22 list indent, canvas code blocks, primary-2 links).
@@ -157,9 +158,7 @@ final class _MarkdownViewState extends State<MarkdownView> {
 
   TapGestureRecognizer _tap(String href) {
     final recognizer = TapGestureRecognizer()
-      ..onTap = () => unawaited(
-        launchUrl(Uri.parse(href), mode: LaunchMode.externalApplication),
-      );
+      ..onTap = () => unawaited(openExternalUrl(href));
     _recognizers.add(recognizer);
     return recognizer;
   }

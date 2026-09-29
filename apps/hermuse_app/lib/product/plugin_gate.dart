@@ -5,11 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:hermuse_state/hermuse_state.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../host/linux_setup.dart';
 import '../platform/local_host.dart';
+import '../platform/open_url.dart';
 import 'route.dart';
 
 /// Gates [child] on the Hermuse plugin backend of [instance].
@@ -18,7 +19,8 @@ import 'route.dart';
 /// install of the bundled plugin; any other instance installs it through its
 /// dashboard, with the commands to run on its host as a fallback. When
 /// the local install could not set up the agent's computer for lack of
-/// Docker, a notice stays under [child] while the route is open.
+/// Docker, a notice stays under [child] while the route is open; on Linux
+/// it opens the setup assistant, which installs or starts Docker.
 final class PluginGate extends ConsumerStatefulWidget {
   const PluginGate({
     required this.instance,
@@ -53,6 +55,16 @@ final class _PluginGateState extends ConsumerState<PluginGate> {
             Expanded(child: widget.child),
             _DockerNotice(
               dockerMissing: _computer == ComputerSetup.dockerMissing,
+              onSetUp: ref.watch(linuxSetupServicesProvider) == null
+                  ? null
+                  : () {
+                      setState(() => _computer = null);
+                      unawaited(
+                        ref
+                            .read(linuxSetupProvider.notifier)
+                            .prepare(LinuxSetupGoal.computer),
+                      );
+                    },
             ),
           ],
         ),
@@ -88,10 +100,13 @@ final class _PluginGateState extends ConsumerState<PluginGate> {
 /// Non-blocking notice after an install whose computer step needs Docker:
 /// the plugin works, the agent's browser stays hidden until Docker runs.
 final class _DockerNotice extends StatelessWidget {
-  const _DockerNotice({required this.dockerMissing});
+  const _DockerNotice({required this.dockerMissing, this.onSetUp});
 
   /// Docker is not installed (else installed but not running).
   final bool dockerMissing;
+
+  /// Opens the setup assistant (Linux), which installs or starts Docker.
+  final VoidCallback? onSetUp;
 
   @override
   Widget build(BuildContext context) {
@@ -115,16 +130,16 @@ final class _DockerNotice extends StatelessWidget {
                         : "Start Docker to let Hermuse show the agent's browser.",
                   ),
                 ),
-                if (dockerMissing) ...[
+                if (onSetUp case final setUp?) ...[
+                  const SizedBox(width: 12),
+                  YsButton.neutral(label: 'Set up Docker', onPressed: setUp),
+                ] else if (dockerMissing) ...[
                   const SizedBox(width: 12),
                   YsButton.neutral(
                     label: 'Get Docker',
                     onPressed: () => unawaited(
-                      launchUrl(
-                        Uri.parse(
-                          'https://docs.docker.com/get-started/get-docker/',
-                        ),
-                        mode: LaunchMode.externalApplication,
+                      openExternalUrl(
+                        'https://docs.docker.com/get-started/get-docker/',
                       ),
                     ),
                   ),
@@ -175,16 +190,39 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
       final install = await host.installPlugin(
         await ref.read(registryProvider.future),
       );
-      if (mounted) widget.onInstalled(install.computerSetup);
       // The backend restarted on a new port: reopen the connection and the
       // chats that held the old one.
       ref.invalidate(connectionProvider(widget.instance.id));
       ref.invalidate(chatSessionProvider);
+      // With the setup assistant the backend sets the computer up itself:
+      // it alone uses the Docker engine the assistant chose.
+      final computer =
+          install.computerSetup ?? (mounted ? await _setupComputer() : null);
+      if (!mounted) return;
+      if (computer != null) widget.onInstalled(computer);
       ref.invalidate(pluginStatusProvider(widget.instance.id));
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
     if (mounted) setState(() => _busy = false);
+  }
+
+  /// The computer step through the restarted backend; never fails the
+  /// install (the computer viewer retries).
+  Future<ComputerSetup> _setupComputer() async {
+    try {
+      final rest = await ref.read(
+        restClientProvider(widget.instance.id).future,
+      );
+      return switch ((await ComputerClient(rest).setup()).state) {
+        ComputerState.dockerMissing => ComputerSetup.dockerMissing,
+        ComputerState.daemonDown => ComputerSetup.dockerNotRunning,
+        ComputerState.error || ComputerState.missing => ComputerSetup.failed,
+        _ => ComputerSetup.ready,
+      };
+    } on HermesException {
+      return ComputerSetup.failed;
+    }
   }
 
   /// Installs through the remote dashboard (see [installHermusePlugin]);

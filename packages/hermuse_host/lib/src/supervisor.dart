@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'errors.dart';
+import 'host_environment.dart';
 
 /// Lifecycle of a [Supervisor]-owned child process.
 enum SupervisorState {
@@ -61,6 +62,7 @@ final class Supervisor {
     required this.executable,
     required this.arguments,
     this.environment,
+    this.adaptEnvironment,
     this.workingDirectory,
     this.readiness,
     this.startTimeout = const Duration(seconds: 90),
@@ -70,6 +72,7 @@ final class Supervisor {
       List<String> args, {
       String? workingDirectory,
       Map<String, String>? environment,
+      bool includeParentEnvironment,
       bool runInShell,
     })?
     spawn,
@@ -79,8 +82,15 @@ final class Supervisor {
   final String executable;
   final List<String> arguments;
 
-  /// Extra/dropped environment entries merged over [Platform.environment].
+  /// Entries merged over [hostEnvironment] for the child, which never
+  /// inherits the app's own environment.
   final Map<String, String>? environment;
+
+  /// Applied to the complete child environment ([hostEnvironment] plus
+  /// [environment]) before each spawn, so it can also remove inherited
+  /// entries (the supervised backend's `DockerEndpoint.applyTo`).
+  final Map<String, String> Function(Map<String, String> environment)?
+  adaptEnvironment;
   final String? workingDirectory;
 
   /// Matches readiness on a stdout line and returns the parsed payload (e.g.
@@ -100,6 +110,7 @@ final class Supervisor {
     List<String> args, {
     String? workingDirectory,
     Map<String, String>? environment,
+    bool includeParentEnvironment,
     bool runInShell,
   })
   _spawn;
@@ -249,9 +260,8 @@ final class Supervisor {
         executable,
         arguments,
         workingDirectory: workingDirectory,
-        environment: environment == null
-            ? null
-            : {...Platform.environment, ...environment!},
+        environment: _childEnvironment(),
+        includeParentEnvironment: false,
         runInShell: false,
       );
       _attachLogs(process);
@@ -259,6 +269,11 @@ final class Supervisor {
     } on ProcessException catch (e) {
       throw ProcessFailed('cannot spawn $executable: ${e.message}');
     }
+  }
+
+  Map<String, String> _childEnvironment() {
+    final environment = {...hostEnvironment(), ...?this.environment};
+    return adaptEnvironment?.call(environment) ?? environment;
   }
 
   void _attachLogs(Process process) {

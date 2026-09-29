@@ -13,6 +13,12 @@ HERMES_AGENT = Path(os.environ.get(
     "HERMES_AGENT_DIR", str(Path.home() / ".hermes" / "hermes-agent")))
 
 
+@pytest.fixture(autouse=True)
+def _server_hermes(monkeypatch):
+    """Every test runs as a server Hermes unless it opts into the desktop app."""
+    monkeypatch.delenv("HERMES_DESKTOP", raising=False)
+
+
 @pytest.fixture()
 def hermes_home(tmp_path, monkeypatch):
     home = tmp_path / "home"

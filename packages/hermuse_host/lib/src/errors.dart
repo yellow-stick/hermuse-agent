@@ -26,13 +26,29 @@ final class InstallerUnavailable extends HostException {
   const InstallerUnavailable(super.message);
 }
 
+/// The install cannot start or resume on its own, and nothing was modified:
+/// the target directory holds a checkout Hermuse did not install, or the
+/// install journal cannot be read. The user resolves it (the message says
+/// how); retrying a stage does not.
+final class InstallBlocked extends HostException {
+  const InstallBlocked(super.message);
+}
+
 /// A required prerequisite (tool, OS capability) is missing.
 final class PrerequisiteMissing extends HostException {
   const PrerequisiteMissing(super.message, {this.fixCommand});
   final String? fixCommand;
 }
 
-/// `cliproxy.lock` is missing, unreadable, or a hash does not match.
+/// The CLIProxyAPI binary cannot be trusted: incomplete bundle metadata,
+/// wrong platform, missing binary or `cliproxy.lock`, or a hash mismatch.
 final class CliproxyVerificationFailed extends HostException {
   const CliproxyVerificationFailed(super.message);
+}
+
+/// The Linux setup helper cannot be used: this build carries no helper
+/// digest (`HERMUSE_LINUX_HELPER_SHA256`), or the development helper was
+/// asked for outside a development build.
+final class LinuxSetupUnavailable extends HostException {
+  const LinuxSetupUnavailable(super.message);
 }

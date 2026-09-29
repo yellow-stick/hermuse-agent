@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.4
+Name=Hermuse Agent
+GenericName=Personal AI Agent
+Comment=Personal AI agent that works with Hermes Agent
+Exec=@EXEC@
+Icon=com.yellowstick.hermuse_app
+Terminal=false
+Categories=Utility;
+Keywords=AI;agent;assistant;chat;
+StartupNotify=true
+StartupWMClass=com.yellowstick.hermuse_app

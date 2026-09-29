@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "resolved_at": "2026-09-29",
+  "purpose": "Pinned guests of the Linux release smoke (packaging/smoke). Refresh by resolving a newer dated image and re-verifying its official checksum file; never point at current/latest.",
+  "guests": {
+    "ubuntu-22.04": {
+      "description": "Ubuntu 22.04 LTS (jammy) server cloud image, amd64",
+      "url": "https://cloud-images.ubuntu.com/releases/jammy/release-20260926/ubuntu-22.04-server-cloudimg-amd64.img",
+      "serial": "release-20260926",
+      "format": "qcow2",
+      "size": 735731200,
+      "sha256": "0c9811a81e6329acacbb5ae4e701a7650f85cd3f19852cd159d79ab8357b210e",
+      "checksum_source": "https://cloud-images.ubuntu.com/releases/jammy/release-20260926/SHA256SUMS",
+      "checksum_signature": "SHA256SUMS.gpg verified against UEC Image Automatic Signing Key <cdimage@ubuntu.com>, fingerprint D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
+    },
+    "debian-12": {
+      "description": "Debian 12 (bookworm) generic cloud image, amd64 (full kernel: virtual consoles for the tty1 test session)",
+      "url": "https://cloud.debian.org/images/cloud/bookworm/20260923-2610/debian-12-generic-amd64-20260923-2610.qcow2",
+      "serial": "20260923-2610",
+      "format": "qcow2",
+      "size": 447741952,
+      "sha256": "30da13ad03a8713f3cf2b9b2830b4db892e2e7dca2572f9eb690f86ad4e8fe97",
+      "sha512": "b789a983661b93ae280dcebbcecc425e7a05f15ab4a60d08e0bf130759a4f84dd26de39bd0e77e33b3f513910e5c5e84bdb335324b5138b4c43a0899a1733455",
+      "checksum_source": "https://cloud.debian.org/images/cloud/bookworm/20260923-2610/SHA512SUMS",
+      "checksum_signature": "Debian publishes SHA512SUMS only: the sha512 matched that file, the sha256 was computed over the same downloaded bytes"
+    }
+  },
+  "containers": {
+    "ubuntu-24.04": {
+      "image": "docker.io/library/ubuntu:24.04",
+      "digest": "sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+      "linux_amd64_manifest": "sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4"
+    },
+    "ubuntu-26.04": {
+      "image": "docker.io/library/ubuntu:26.04",
+      "digest": "sha256:da6fc2be547864451aa253836dd926da33623312df4a9a243e35dc877c378a78",
+      "linux_amd64_manifest": "sha256:61ebaa5cc23ca45450db85eac015435199ec569e28ec222ea13f2aed2110b8a6"
+    },
+    "debian-13": {
+      "image": "docker.io/library/debian:13",
+      "digest": "sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c",
+      "linux_amd64_manifest": "sha256:d5ce19d4736f0ebbacd686d1040271a5aeb0cc920f5990c1bfae1717627f0674"
+    }
+  }
+}

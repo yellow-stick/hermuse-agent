@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
+import 'package:crypto/crypto.dart' as crypto;
 
 import 'errors.dart';
 
@@ -150,80 +150,147 @@ String assetOsFor(String platformKey) {
   return os == 'macos' ? 'darwin' : os;
 }
 
-/// Locates the CLIProxyAPI sidecar binary and verifies it against
-/// `cliproxy.lock` before the first launch.
+/// Locates the CLIProxyAPI sidecar binary and verifies it before the first
+/// launch.
 ///
-/// Bundle layout (checked first): Linux `<exe dir>/lib/cliproxy`,
-/// macOS `Contents/MacOS/cliproxy` (next to the executable inside the .app),
-/// Windows `<exe dir>\cliproxy.exe`. Dev fallback:
-/// `build/cliproxy/<os>-<arch>/cliproxy[.exe]` under the package root.
-/// `packageRoot` defaults to the current working directory; the shipped app
-/// finds the binary in the bundle slot first, dev tooling passes the package
-/// root explicitly.
+/// A distributed build is compiled with `--dart-define` metadata of the
+/// binary it bundles: `HERMUSE_CLIPROXY_SHA256` (lowercase hex digest) and
+/// `HERMUSE_CLIPROXY_PLATFORM` (lock key, e.g. `linux-amd64`). With either
+/// set, [locate] only accepts the bundle slot — Linux `<exe dir>/lib/cliproxy`,
+/// macOS `Contents/MacOS/cliproxy` next to the executable, Windows
+/// `<exe dir>\cliproxy.exe` — holding exactly that digest for this machine's
+/// platform, and fails otherwise: no fallback to the working directory,
+/// `PATH` or a development tree.
+///
+/// A development build (both empty) verifies
+/// `build/cliproxy/<os>-<arch>/cliproxy[.exe]` against `cliproxy.lock`
+/// under an explicit package root. The app gets it from the
+/// `HERMUSE_CLIPROXY_DEV_ROOT` define, the absolute path of
+/// `packages/hermuse_host` after `dart run tool/fetch_cliproxy.dart`:
+/// `flutter run -d linux
+/// --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host`
+/// from `apps/hermuse_app`.
 final class CliproxyBinary {
-  /// A sidecar binary. Prefer [locate], which verifies the lock hash; direct
+  /// A sidecar binary. Prefer [locate], which verifies the digest; direct
   /// construction is for tests and callers that verified out of band.
-  const CliproxyBinary({required this.path, required this.entry});
+  const CliproxyBinary({required this.path, required this.sha256});
 
-  /// Resolves and verifies the binary for [platformKey] (defaults to the
-  /// current VM). Throws [CliproxyVerificationFailed] when the binary is
-  /// missing or its sha256 differs from the lock.
+  /// Resolves and verifies the binary for this machine.
+  ///
+  /// [bundleSha256], [bundlePlatform] and [packageRoot] default to the
+  /// compile-time defines described on [CliproxyBinary]; [platformKey]
+  /// defaults to [currentPlatformKey] and [executableDir] to the directory
+  /// of [Platform.resolvedExecutable]. Throws [CliproxyVerificationFailed]
+  /// when the metadata is incomplete, the binary is absent, or its sha256
+  /// differs.
   static Future<CliproxyBinary> locate({
+    String bundleSha256 = const String.fromEnvironment(
+      'HERMUSE_CLIPROXY_SHA256',
+    ),
+    String bundlePlatform = const String.fromEnvironment(
+      'HERMUSE_CLIPROXY_PLATFORM',
+    ),
+    String packageRoot = const String.fromEnvironment(
+      'HERMUSE_CLIPROXY_DEV_ROOT',
+    ),
     String? platformKey,
     String? executableDir,
-    String? packageRoot,
     Future<String> Function(String path)? readText,
-    Future<List<int>> Function(String path)? readBytes,
+    Stream<List<int>> Function(String path)? openRead,
     Future<bool> Function(String path)? fileExists,
   }) async {
     final key = platformKey ?? currentPlatformKey();
     final exists = fileExists ?? ((path) => File(path).exists());
-    final read = readText ?? ((path) => File(path).readAsString());
-    final readBin = readBytes ?? ((path) => File(path).readAsBytes());
-
-    final root = packageRoot ?? Directory.current.path;
+    final read = openRead ?? ((path) => File(path).openRead());
+    Future<String> digestOf(String path) async =>
+        '${await crypto.sha256.bind(read(path)).first}';
     final sep = Platform.pathSeparator;
-    final lockPath = '$root${sep}cliproxy.lock';
-    if (!await exists(lockPath)) {
+
+    if (bundleSha256.isNotEmpty || bundlePlatform.isNotEmpty) {
+      if (bundleSha256.isEmpty || bundlePlatform.isEmpty) {
+        throw CliproxyVerificationFailed(
+          'incomplete CLIProxyAPI bundle metadata: this build needs both '
+          'HERMUSE_CLIPROXY_SHA256 (got "$bundleSha256") and '
+          'HERMUSE_CLIPROXY_PLATFORM (got "$bundlePlatform")',
+        );
+      }
+      if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(bundleSha256)) {
+        throw CliproxyVerificationFailed(
+          'HERMUSE_CLIPROXY_SHA256 is not a lowercase hex sha256: '
+          '"$bundleSha256"',
+        );
+      }
+      if (bundlePlatform != key) {
+        throw CliproxyVerificationFailed(
+          'this build bundles the $bundlePlatform CLIProxyAPI binary; '
+          'this machine is $key',
+        );
+      }
+      final dir =
+          executableDir ?? File(Platform.resolvedExecutable).parent.path;
+      final bundled = switch (key.split('-').first) {
+        'windows' => '$dir${sep}cliproxy.exe',
+        // Contents/MacOS, next to the executable inside the .app.
+        'macos' => '$dir${sep}cliproxy',
+        _ => '$dir${sep}lib${sep}cliproxy',
+      };
+      if (!await exists(bundled)) {
+        throw CliproxyVerificationFailed(
+          'the bundled CLIProxyAPI binary is missing: $bundled',
+        );
+      }
+      final digest = await digestOf(bundled);
+      if (digest != bundleSha256) {
+        throw CliproxyVerificationFailed(
+          'bundled CLIProxyAPI hash mismatch for $bundled: expected '
+          '$bundleSha256, got $digest',
+        );
+      }
+      return CliproxyBinary(path: bundled, sha256: digest);
+    }
+
+    if (packageRoot.isEmpty) {
       throw const CliproxyVerificationFailed(
-        'cliproxy.lock is missing; run tool/fetch_cliproxy.dart',
+        'development build without CLIProxyAPI metadata: run '
+        'tool/fetch_cliproxy.dart in packages/hermuse_host, then build with '
+        '--dart-define=HERMUSE_CLIPROXY_DEV_ROOT=<absolute path of '
+        'packages/hermuse_host>',
       );
     }
-    final lock = CliproxyLock.parse(await read(lockPath));
+    final lockPath = '$packageRoot${sep}cliproxy.lock';
+    if (!await exists(lockPath)) {
+      throw CliproxyVerificationFailed(
+        '$lockPath is missing; run tool/fetch_cliproxy.dart',
+      );
+    }
+    final lock = CliproxyLock.parse(
+      await (readText ?? ((path) => File(path).readAsString()))(lockPath),
+    );
     if (lock.version != cliproxyVersion) {
       throw CliproxyVerificationFailed(
         'cliproxy.lock pins ${lock.version}, this build expects $cliproxyVersion',
       );
     }
-    final entry = lock.entryFor(key);
-
-    final dir = executableDir ?? File(Platform.resolvedExecutable).parent.path;
-    final bundled = Platform.isWindows
-        ? '$dir${sep}cliproxy.exe'
-        : '$dir${sep}lib${sep}cliproxy';
-    // macOS: the executable lives in Contents/MacOS next to the binary.
-    final macApp = '$dir${sep}cliproxy';
-
+    final expected = lock.entryFor(key).binarySha256.toLowerCase();
     final devName = key.startsWith('windows-') ? 'cliproxy.exe' : 'cliproxy';
-    final dev = '$root${sep}build${sep}cliproxy$sep$key$sep$devName';
-
-    final candidates = [if (Platform.isMacOS) macApp, bundled, dev];
-    for (final candidate in candidates) {
-      if (!await exists(candidate)) continue;
-      final digest = sha256.convert(await readBin(candidate)).toString();
-      if (digest != entry.binarySha256.toLowerCase()) {
-        throw CliproxyVerificationFailed(
-          'sidecar hash mismatch for $candidate: expected '
-          '${entry.binarySha256}, got $digest',
-        );
-      }
-      return CliproxyBinary(path: candidate, entry: entry);
+    final dev = '$packageRoot${sep}build${sep}cliproxy$sep$key$sep$devName';
+    if (!await exists(dev)) {
+      throw CliproxyVerificationFailed(
+        'CLIProxyAPI binary not found at $dev; run tool/fetch_cliproxy.dart',
+      );
     }
-    throw CliproxyVerificationFailed(
-      'CLIProxyAPI binary not found; checked ${candidates.join(', ')}',
-    );
+    final digest = await digestOf(dev);
+    if (digest != expected) {
+      throw CliproxyVerificationFailed(
+        'sidecar hash mismatch for $dev: expected $expected, got $digest',
+      );
+    }
+    return CliproxyBinary(path: dev, sha256: digest);
   }
 
+  /// Absolute path of the verified binary.
   final String path;
-  final CliproxyLockEntry entry;
+
+  /// Lowercase hex sha256 the binary was verified against.
+  final String sha256;
 }

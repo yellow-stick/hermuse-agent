@@ -9,6 +9,7 @@ import 'package:hermes_client/hermes_client.dart';
 
 import 'cliproxy_binary.dart';
 import 'errors.dart';
+import 'host_environment.dart';
 import 'supervisor.dart';
 
 /// Well-known [SecretStore] keys for the CLIProxyAPI sidecar, stored under
@@ -61,8 +62,8 @@ discovery:
 /// endpoint.
 ///
 /// The sidecar starts lazily via [ensureStarted] (first bridge card or login),
-/// binds loopback on a free port with a generated config, and is verified
-/// against `cliproxy.lock` before the first launch ([CliproxyBinary]).
+/// binds loopback on a free port with a generated config, and its binary is
+/// verified by [CliproxyBinary.locate] before the first launch.
 /// Readiness is an authenticated `GET /v0/management/config` probe — the
 /// route only exists once the management key is configured
 /// (`server.go hasManagementSecret`). Remote management stays disabled
@@ -210,7 +211,12 @@ final class CliproxySupervisor {
   }
 
   static Future<void> _chmod(String mode, String path) async {
-    final result = await Process.run('chmod', [mode, path]);
+    final result = await Process.run(
+      'chmod',
+      [mode, path],
+      includeParentEnvironment: false,
+      environment: hostEnvironment(),
+    );
     if (result.exitCode != 0) {
       throw ProcessFailed('chmod $mode $path failed: ${result.stderr}');
     }

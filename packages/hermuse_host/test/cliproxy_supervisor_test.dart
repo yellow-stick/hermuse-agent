@@ -125,12 +125,5 @@ void main() {
   });
 }
 
-CliproxyBinary _fakeBinary() => const CliproxyBinary(
-  path: '/sidecar/cliproxy',
-  entry: CliproxyLockEntry(
-    asset: 'asset',
-    archiveSha256: 'a',
-    binary: 'cliproxy',
-    binarySha256: 'b',
-  ),
-);
+CliproxyBinary _fakeBinary() =>
+    const CliproxyBinary(path: '/sidecar/cliproxy', sha256: 'b');

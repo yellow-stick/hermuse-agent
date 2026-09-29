@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "builder": {
+    "image": "docker.io/library/ubuntu:22.04",
+    "digest": "sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02",
+    "apt_snapshot": "20260928T000000Z",
+    "apt_snapshot_url": "https://snapshot.ubuntu.com/ubuntu"
+  },
+  "flutter": {
+    "version": "3.47.5",
+    "channel": "stable",
+    "commit": "6a19cca56475dbfba1478ee68d7bd0c2ef891da1",
+    "dart": "3.13.4",
+    "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.5-stable.tar.xz",
+    "sha256": "2132e990f236f8d22e7c6314b29a191a95b10d7cbcfec9b4e2e303d996652cbb"
+  },
+  "melos": {
+    "version": "8.9.0"
+  },
+  "tools": {
+    "linuxdeploy": {
+      "revision": "1-alpha-20251107-1",
+      "commit": "cc7b86472c3caa3fd729b9dc502fd2aa78394257",
+      "url": "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage",
+      "sha256": "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d",
+      "source": {
+        "url": "https://github.com/linuxdeploy/linuxdeploy/archive/cc7b86472c3caa3fd729b9dc502fd2aa78394257.tar.gz",
+        "sha256": "adb33f7dcbd75566706fb713ad17c53a335f0a9108c1e9dd2ed6479b81d6b7d0"
+      }
+    },
+    "linuxdeploy_plugin_gtk": {
+      "commit": "3b67a1d1c1b0c8268f57f2bce40fe2d33d409cea",
+      "url": "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/3b67a1d1c1b0c8268f57f2bce40fe2d33d409cea/linuxdeploy-plugin-gtk.sh",
+      "sha256": "b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171",
+      "source": {
+        "url": "https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/archive/3b67a1d1c1b0c8268f57f2bce40fe2d33d409cea.tar.gz",
+        "sha256": "9f77cb0d2921b9d749e98213774da2786e6bf54f3b32e3d2ff1e6e47059a8b9a"
+      }
+    },
+    "appimagetool": {
+      "revision": "1.9.1",
+      "commit": "8c8c91f762b412a19f4e8d2c4b35afb98f2d7c81",
+      "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage",
+      "sha256": "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0",
+      "source": {
+        "url": "https://github.com/AppImage/appimagetool/archive/8c8c91f762b412a19f4e8d2c4b35afb98f2d7c81.tar.gz",
+        "sha256": "ea8f1e90fb14730a9d64ea2d8bd1ae21c22b595f613ee4383338535781984ba8"
+      }
+    },
+    "uruntime": {
+      "revision": "v0.8.1",
+      "commit": "6ec68e66782d632f22666ba2c661b3afd7c3a565",
+      "variant": "uruntime-appimage-squashfs-lite-x86_64",
+      "url": "https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-squashfs-lite-x86_64",
+      "sha256": "32c6024a14ff375749ee3bed3330c1586a6dd2bfeddbbd7ceacc053aec2b27a3",
+      "policy": {
+        "URUNTIME_EXTRACT": "1",
+        "URUNTIME_UNSHARE": "0",
+        "URUNTIME_CLEANUP": "1"
+      },
+      "configured_sha256": "8d0590ea88d855958912fe5871febd85673ebc57499c718ce64c82115ca4f8e8",
+      "source": {
+        "url": "https://github.com/VHSgunzo/uruntime/archive/6ec68e66782d632f22666ba2c661b3afd7c3a565.tar.gz",
+        "sha256": "0cb935051fbeae7d202a6d17f7298a35e7d7456aa5019d648d8390c1a53b63f8"
+      }
+    }
+  },
+  "runtime_embedded_sources": [
+    {
+      "name": "squashfuse-static",
+      "revision": "v0.6.3.r2",
+      "license": "MIT (build recipe)",
+      "url": "https://github.com/VHSgunzo/squashfuse-static/archive/6a4acb585b00309563a1fcffa1c143f21d9ac96b.tar.gz",
+      "sha256": "deed44a673130c8c113e36f12c453386c8498f54e30d2cd9d2b5ccd7bd19ffdb"
+    },
+    {
+      "name": "squashfs-tools-static",
+      "revision": "v4.7.5.r2",
+      "license": "MIT (build recipe)",
+      "url": "https://github.com/VHSgunzo/squashfs-tools-static/archive/7b2e08bfc1787d8c4f06ffd399b25b1b9c29d6df.tar.gz",
+      "sha256": "c0c15e8a6415515080f52f408c31d3bca5caf6628509f59f2ed14c0e69b9c2c1"
+    },
+    {
+      "name": "squashfuse",
+      "revision": "0.6.3",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/vasi/squashfuse/archive/1a211e20fff55e9ce4c74ad03f0aa26a7b760bd3.tar.gz",
+      "sha256": "7d795e06806f048d9ffbb5497834d21b34be969ebd1046c4eb9d70ba93639f25"
+    },
+    {
+      "name": "squashfs-tools",
+      "revision": "4.7.5",
+      "license": "GPL-2.0-or-later",
+      "url": "https://github.com/plougher/squashfs-tools/archive/708c59ae80853b0845017c33b42e56061cc546cd.tar.gz",
+      "sha256": "cf0541e42ab1d115bbdde1ea85e2b1f9ccede93133cbd2f64dfe5b8ed5d0666c"
+    },
+    {
+      "name": "libfuse",
+      "revision": "3.18.2",
+      "license": "LGPL-2.1",
+      "url": "https://github.com/libfuse/libfuse/archive/033844748010a3b8265bf1c90b9ae8ffe4cd9ca7.tar.gz",
+      "sha256": "5aeef2f7c616bb0fa03322d034d415b793a2c95a0ba5a9f83125d6dec7259c9f"
+    },
+    {
+      "name": "lzo",
+      "revision": "0083878c235a89ef96a009d1ff0b500f3a364e4b",
+      "license": "GPL-2.0-or-later",
+      "url": "https://github.com/nemequ/lzo/archive/0083878c235a89ef96a009d1ff0b500f3a364e4b.tar.gz",
+      "sha256": "1521328bb6a79d2a863f4ba3de42b6ea26794f9f094d9cdbc813a0948d5f10b1"
+    },
+    {
+      "name": "xz",
+      "revision": "5.8.2",
+      "license": "0BSD",
+      "url": "https://github.com/tukaani-project/xz/archive/9fc6f5cd8774ebef8d4e030f7081fb6984c0dc3f.tar.gz",
+      "sha256": "a3267827f68a8ebfa1f023259b64084e094e690ab769a59a210d489cdfd44858"
+    },
+    {
+      "name": "zlib",
+      "revision": "1.3.2",
+      "license": "Zlib",
+      "url": "https://github.com/madler/zlib/archive/e3dc0a85b7032e98380dec011bc8f2c2ee0d8fca.tar.gz",
+      "sha256": "33356dac6140d584347fe46bcf7083bd949dec49ac4b52417ae334ec70e3dbc3"
+    },
+    {
+      "name": "lz4",
+      "revision": "1.10.0",
+      "license": "BSD-2-Clause",
+      "url": "https://github.com/lz4/lz4/archive/0774d05537f9762f838f7ab541b7765f1a729cb5.tar.gz",
+      "sha256": "d0da082c615dd42d8d20c2d46ec2716779e1be05fbf171ac27e2d506ec0e8d7f"
+    },
+    {
+      "name": "zstd",
+      "revision": "1.5.7",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/facebook/zstd/archive/d9c0c7e2cf8a8bf9fb98d3bee546dcf8dc9ac59a.tar.gz",
+      "sha256": "7063c3a4ea22beae558077cb36d3558eee28c56f10abb93c60b71f27a42f483e"
+    },
+    {
+      "name": "mimalloc",
+      "revision": "2.1.7",
+      "license": "MIT",
+      "url": "https://github.com/microsoft/mimalloc/archive/8c532c32c3c96e5ba1f2283e032f69ead8add00f.tar.gz",
+      "sha256": "5b419de5ed9273f63b8537d26ff9d49549808224036f483589ed8524a56461f7"
+    }
+  ],
+  "ci": {
+    "actionlint": {"version": "1.7.12", "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz", "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"},
+    "shellcheck": {"version": "0.11.0", "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz", "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"}
+  }
+}

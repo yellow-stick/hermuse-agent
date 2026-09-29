@@ -1,0 +1,604 @@
+#!/bin/sh
+# hermuse-linux-setup — the bounded system helper of Hermuse Agent on Linux.
+#
+# Hermuse Agent runs this file in exactly two ways:
+#
+#   sh hermuse-linux-setup plan
+#       As the desktop user, read-only: reports the operating system and what
+#       `apply` would change.
+#   pkexec /usr/bin/sh -c <constant verifier> hermuse-verify <sha256> <path> \
+#       apply CATEGORY...
+#       As root, once per administrator consent. The verifier copies this file
+#       once into a private directory under /run, checks the SHA-256 of that
+#       copy against the digest compiled into the app, runs the copy, then
+#       deletes it.
+#
+# Categories are fixed; nothing else is accepted (no package name, command,
+# URL, user, path or HERMES_HOME):
+#
+#   hermes-tools    install the missing ones of: git curl tar ca-certificates
+#                   build-essential python3-dev libffi-dev libatomic1 ripgrep
+#                   ffmpeg
+#   secret-service  install the missing ones of: gnome-keyring libsecret-1-0;
+#                   gnome-keyring is never added next to another
+#                   org.freedesktop.secrets provider
+#   docker-install  install the distribution's docker.io, only when no Docker
+#                   installation exists at all (packages, binaries, socket,
+#                   units, /var/lib/docker, /etc/docker, snap, rootless)
+#   docker-start    systemctl enable --now docker.socket docker.service, only
+#                   for an installed, stopped system engine
+#   docker-group    usermod -aG docker <the calling user>
+#
+# `apply` runs them in that order whatever the argument order. The account it
+# acts for comes only from PKEXEC_UID (set by pkexec) resolved with
+# `getent passwd`; root and unknown callers are refused. APT uses the
+# configured repositories: `apt-get update`, then
+# `apt-get install --no-remove --no-install-recommends` of the missing
+# packages. Nothing is removed, upgraded globally or reconfigured, and Docker
+# containers, images, volumes and configuration are never touched.
+#
+# Output protocol. stdout carries JSON lines only, built from fixed codes;
+# every command's own output goes to stderr.
+#
+#   {"event":"os","code":"supported","base":"jammy|noble|resolute|bookworm|trixie"}
+#   {"event":"os","code":"unsupported-distribution|unsupported-release|unsupported-architecture|os-release-unreadable"}
+#   plan only:
+#   {"event":"missing","category":"<category>","package":"<package>"}
+#   {"event":"docker-footprint","code":"package|binary|socket|unit|data|config|snap|rootless"}
+#   {"event":"secret-provider","code":"present|absent"}
+#   apply only:
+#   {"event":"begin","category":"<category>"}
+#   {"event":"install","category":"<category>","package":"<package>"}
+#   {"event":"apt-update","code":"ok|failed"}
+#   {"event":"note","category":"secret-service","code":"provider-present"}
+#   {"event":"skip","category":"<category>","code":"satisfied|already-active|already-member"}
+#   {"event":"done","category":"<category>"}
+#   {"event":"fail","category":"<category>","code":"<result code>"}
+#   {"event":"docker-footprint","code":"..."}   (before a docker-present failure)
+#
+# The last stdout line is always the result:
+#
+#   {"result":{"ok":<bool>,"code":"<code>","applied":[<category>,...],"exit":<status>}}
+#
+# `applied` lists, in the fixed order, the requested categories whose state
+# holds after this run (installed now or already satisfied). A failed
+# `apt-get update` is reported, not fatal: the install that follows decides.
+#
+# Result codes and exit statuses:
+#
+#   0  ok
+#   2  usage                 unknown mode or category, duplicate or extra argument
+#   3  caller-invalid        PKEXEC_UID missing, not a plain uid, 0 or unknown;
+#                            `plan` run as root
+#   3  not-root              `apply` without root privileges
+#   4  unsupported-os        not Debian/Ubuntu family, supported release, amd64
+#   5  apt-failed            apt-get install failed or left a package missing
+#   5  docker-start-failed   docker.service did not start
+#   5  usermod-failed        the docker group membership was not added
+#   6  docker-present        docker-install refused: Docker is already there
+#   6  docker-unit-missing   docker-start refused: no docker.service unit
+#   6  docker-group-missing  docker-group refused: no docker group
+#   70 internal              the helper itself misbehaved
+#
+# These never collide with pkexec's 126 (dialog dismissed) and 127 (not
+# authorized) nor with the verifier's 90-93.
+#
+# HERMUSE_SETUP_ROOT=<dir> is for tests: `plan` then reads os-release, the
+# dpkg database and every probed path under <dir>. `apply` never reads it.
+
+set -u
+set -f
+IFS=' 	
+'
+nl='
+'
+
+mode=${1-}
+root=''
+if [ "$mode" = plan ]; then
+  root=${HERMUSE_SETUP_ROOT-}
+fi
+unset HERMUSE_SETUP_ROOT CDPATH ENV BASH_ENV LANGUAGE LD_PRELOAD LD_LIBRARY_PATH \
+  LD_AUDIT GCONV_PATH PYTHONPATH PYTHONHOME DOCKER_HOST DOCKER_CONTEXT \
+  DOCKER_CONFIG APPDIR APPIMAGE ARGV0 OWD
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+LC_ALL=C
+export PATH LC_ALL
+umask 022
+cd / || exit 70
+
+# JSON goes to fd 3 (the original stdout); everything else to stderr.
+exec 3>&1 1>&2
+
+PKGS_HERMES_TOOLS='git curl tar ca-certificates build-essential python3-dev libffi-dev libatomic1 ripgrep ffmpeg'
+PKGS_SECRET_SERVICE='gnome-keyring libsecret-1-0'
+PKGS_DOCKER_INSTALL='docker.io'
+DOCKER_PACKAGES='docker.io docker-ce docker-ce-cli docker-ee docker-engine moby-engine moby-cli podman-docker docker-desktop'
+BIN_DIRS='/usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin'
+UNIT_DIRS='/etc/systemd/system /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system /lib/systemd/system'
+DBUS_SERVICE_DIRS='/usr/local/share/dbus-1/services /usr/share/dbus-1/services'
+APT_LOCK_TIMEOUT=600
+
+applied=''
+workdir=''
+user=''
+home=''
+
+json() {
+  printf '%s\n' "$1" >&3
+}
+
+# event NAME [KEY VALUE]... — every value is a fixed token.
+event() {
+  line="{\"event\":\"$1\""
+  shift
+  while [ "$#" -ge 2 ]; do
+    case $2 in
+      '' | *[!a-z0-9.+-]*) internal ;;
+    esac
+    line="$line,\"$1\":\"$2\""
+    shift 2
+  done
+  json "$line}"
+}
+
+# finish CODE STATUS — prints the result line and exits.
+finish() {
+  if [ "$2" -eq 0 ]; then ok=true; else ok=false; fi
+  list=''
+  for category in $applied; do
+    list="$list${list:+,}\"$category\""
+  done
+  json "{\"result\":{\"ok\":$ok,\"code\":\"$1\",\"applied\":[$list],\"exit\":$2}}"
+  exit "$2"
+}
+
+internal() {
+  finish internal 70
+}
+
+exists() {
+  [ -e "$1" ] || [ -L "$1" ]
+}
+
+# resolve_account UID — sets user and home from the account database.
+resolve_account() {
+  entry=$(getent passwd "$1") || return 1
+  entry=${entry%%"$nl"*}
+  IFS=: read -r user _ account_uid _ _ home _ <<EOF
+$entry
+EOF
+  [ "$account_uid" = "$1" ] || return 1
+  case $user in
+    '' | -* | *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  case $home in
+    /*) ;;
+    *) home='' ;;
+  esac
+}
+
+os_value() {
+  value=$(sed -n "s/^$1=//p" "$os_release") || value=''
+  value=${value%%"$nl"*}
+  case $value in
+    \"*\")
+      value=${value#\"}
+      value=${value%\"}
+      ;;
+    \'*\')
+      value=${value#\'}
+      value=${value%\'}
+      ;;
+  esac
+  printf '%s' "$value"
+}
+
+check_os() {
+  os_release=$root/etc/os-release
+  [ -r "$os_release" ] || os_release=$root/usr/lib/os-release
+  if [ ! -r "$os_release" ]; then
+    event os code os-release-unreadable
+    finish unsupported-os 4
+  fi
+  os_id=$(os_value ID)
+  family=''
+  for word in $os_id $(os_value ID_LIKE); do
+    case $word in
+      ubuntu) family=ubuntu ;;
+      debian) [ -n "$family" ] || family=debian ;;
+    esac
+  done
+  base=''
+  case $family in
+    ubuntu)
+      base=$(os_value UBUNTU_CODENAME)
+      if [ -z "$base" ] && [ "$os_id" = ubuntu ]; then
+        base=$(os_value VERSION_CODENAME)
+      fi
+      ;;
+    debian)
+      base=$(os_value DEBIAN_CODENAME)
+      if [ -z "$base" ] && [ "$os_id" = debian ]; then
+        base=$(os_value VERSION_CODENAME)
+      fi
+      ;;
+    *)
+      printf 'hermuse-linux-setup: unsupported distribution (ID=%s)\n' "$os_id"
+      event os code unsupported-distribution
+      finish unsupported-os 4
+      ;;
+  esac
+  case $family/$base in
+    ubuntu/jammy | ubuntu/noble | ubuntu/resolute | debian/bookworm | debian/trixie) ;;
+    *)
+      printf 'hermuse-linux-setup: unsupported %s release (%s)\n' "$family" "$base"
+      event os code unsupported-release
+      finish unsupported-os 4
+      ;;
+  esac
+  arch=$(dpkg --print-architecture 2> /dev/null) || arch=''
+  if [ "$arch" != amd64 ]; then
+    printf 'hermuse-linux-setup: unsupported architecture (%s)\n' "$arch"
+    event os code unsupported-architecture
+    finish unsupported-os 4
+  fi
+  event os code supported base "$base"
+}
+
+dpkg_query() {
+  if [ -n "$root" ]; then
+    dpkg-query --admindir="$root/var/lib/dpkg" "$@"
+  else
+    dpkg-query "$@"
+  fi
+}
+
+# Installed for amd64 or architecture-independent.
+pkg_installed() {
+  # shellcheck disable=SC2016 # dpkg-query format fields, not shell expansions
+  dpkg_query -W -f='${Architecture} ${db:Status-Abbrev}\n' "$1" 2> /dev/null |
+    grep -Eq '^(amd64|all) .i'
+}
+
+# Any trace in the dpkg database: installed, half-installed or config-files.
+pkg_present() {
+  # shellcheck disable=SC2016 # dpkg-query format field, not a shell expansion
+  dpkg_query -W -f='${db:Status-Abbrev}\n' "$1" 2> /dev/null | grep -q '^.[^n]'
+}
+
+# missing_from PACKAGES — sets missing to the ones not installed.
+missing_from() {
+  missing=''
+  for package in $1; do
+    pkg_installed "$package" || missing="$missing${missing:+ }$package"
+  done
+}
+
+secret_provider_file() {
+  for dir in $DBUS_SERVICE_DIRS; do
+    [ -d "$root$dir" ] || continue
+    if grep -RqsE '^[[:space:]]*Name[[:space:]]*=[[:space:]]*org\.freedesktop\.secrets[[:space:]]*$' "$root$dir"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# secret_packages — sets missing to what secret-service installs, and
+# provider to present/absent.
+secret_packages() {
+  missing_from "$PKGS_SECRET_SERVICE"
+  if secret_provider_file; then
+    provider=present
+    kept=''
+    for package in $missing; do
+      [ "$package" = gnome-keyring ] || kept="$kept${kept:+ }$package"
+    done
+    missing=$kept
+  else
+    provider=absent
+  fi
+}
+
+unit_file() {
+  for dir in $UNIT_DIRS; do
+    if exists "$root$dir/$1"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+add_footprint() {
+  case " $footprint " in
+    *" $1 "*) ;;
+    *) footprint="$footprint${footprint:+ }$1" ;;
+  esac
+}
+
+# probe_docker — sets footprint to every trace of an existing Docker.
+probe_docker() {
+  footprint=''
+  for package in $DOCKER_PACKAGES; do
+    if pkg_present "$package"; then add_footprint package; fi
+  done
+  for dir in $BIN_DIRS; do
+    if exists "$root$dir/docker" || exists "$root$dir/dockerd"; then
+      add_footprint binary
+    fi
+  done
+  if exists "$root/run/docker.sock" || exists "$root/var/run/docker.sock"; then
+    add_footprint socket
+  fi
+  if unit_file docker.service || unit_file docker.socket; then
+    add_footprint unit
+  fi
+  if exists "$root/var/lib/docker"; then add_footprint data; fi
+  if exists "$root/etc/docker"; then add_footprint config; fi
+  if exists "$root/snap/bin/docker" || exists "$root/var/snap/docker"; then
+    add_footprint snap
+  fi
+  if [ -n "$home" ]; then
+    if exists "$root$home/.config/systemd/user/docker.service" ||
+      exists "$root$home/bin/dockerd" ||
+      exists "$root$home/.local/share/docker"; then
+      add_footprint rootless
+    fi
+  fi
+}
+
+run_plan() {
+  case $root in
+    '') ;;
+    /*) [ -d "$root" ] || finish usage 2 ;;
+    *) finish usage 2 ;;
+  esac
+  caller_uid=$(id -u) || internal
+  [ "$caller_uid" != 0 ] || finish caller-invalid 3
+  resolve_account "$caller_uid" || home=''
+  check_os
+  missing_from "$PKGS_HERMES_TOOLS"
+  for package in $missing; do
+    event missing category hermes-tools package "$package"
+  done
+  secret_packages
+  for package in $missing; do
+    event missing category secret-service package "$package"
+  done
+  probe_docker
+  for code in $footprint; do
+    event docker-footprint code "$code"
+  done
+  if [ -z "$footprint" ]; then
+    missing_from "$PKGS_DOCKER_INSTALL"
+    for package in $missing; do
+      event missing category docker-install package "$package"
+    done
+  fi
+  event secret-provider code "$provider"
+  finish ok 0
+}
+
+# run_logged COMMAND... — runs COMMAND with its output in a private log that
+# is relayed to stderr: a reader that goes away never interrupts it.
+run_logged() {
+  log=$workdir/command.log
+  : > "$log"
+  "$@" < /dev/null >> "$log" 2>&1 &
+  pid=$!
+  tail -n +1 -f --pid="$pid" -- "$log" 2> /dev/null &
+  relay=$!
+  wait "$pid"
+  status=$?
+  wait "$relay"
+  return "$status"
+}
+
+apt_get() {
+  run_logged apt-get -o "DPkg::Lock::Timeout=$APT_LOCK_TIMEOUT" "$@"
+}
+
+# install_category CATEGORY PACKAGES
+install_category() {
+  event begin category "$1"
+  if [ -z "$2" ]; then
+    event skip category "$1" code satisfied
+  else
+    for package in $2; do
+      event install category "$1" package "$package"
+    done
+    # shellcheck disable=SC2086 # fixed package names, split on purpose
+    if ! apt_get install -y --no-remove --no-install-recommends \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $2; then
+      event fail category "$1" code apt-failed
+      finish apt-failed 5
+    fi
+    for package in $2; do
+      if ! pkg_installed "$package"; then
+        event fail category "$1" code apt-failed
+        finish apt-failed 5
+      fi
+    done
+    event 'done' category "$1"
+  fi
+  applied="$applied $1"
+}
+
+start_docker() {
+  event begin category docker-start
+  if ! unit_file docker.service; then
+    event fail category docker-start code docker-unit-missing
+    finish docker-unit-missing 6
+  fi
+  if systemctl is-active --quiet docker.service; then
+    event skip category docker-start code already-active
+  else
+    units=docker.service
+    if unit_file docker.socket; then units="docker.socket docker.service"; fi
+    # shellcheck disable=SC2086 # fixed unit names, split on purpose
+    if ! run_logged systemctl enable --now $units ||
+      ! systemctl is-active --quiet docker.service; then
+      event fail category docker-start code docker-start-failed
+      finish docker-start-failed 5
+    fi
+    event 'done' category docker-start
+  fi
+  applied="$applied docker-start"
+}
+
+in_docker_group() {
+  for group in $(id -nG "$user" 2> /dev/null); do
+    if [ "$group" = docker ]; then return 0; fi
+  done
+  return 1
+}
+
+join_docker_group() {
+  event begin category docker-group
+  if ! getent group docker > /dev/null; then
+    event fail category docker-group code docker-group-missing
+    finish docker-group-missing 6
+  fi
+  if in_docker_group; then
+    event skip category docker-group code already-member
+  else
+    if ! run_logged usermod -aG docker -- "$user" || ! in_docker_group; then
+      event fail category docker-group code usermod-failed
+      finish usermod-failed 5
+    fi
+    event 'done' category docker-group
+  fi
+  applied="$applied docker-group"
+}
+
+run_apply() {
+  caller_uid=${PKEXEC_UID-}
+  case $caller_uid in
+    '' | 0* | *[!0-9]*) finish caller-invalid 3 ;;
+  esac
+  resolve_account "$caller_uid" || finish caller-invalid 3
+  check_os
+  [ "$(id -u)" = 0 ] || finish not-root 3
+
+  # Once root: finish the running transaction even if the app goes away.
+  trap ':' PIPE
+  workdir=$(mktemp -d /run/hermuse-setup.XXXXXXXXXX) || internal
+  trap 'rm -rf -- "$workdir"' EXIT
+  DEBIAN_FRONTEND=noninteractive
+  NEEDRESTART_MODE=l
+  APT_LISTCHANGES_FRONTEND=none
+  UCF_FORCE_CONFFOLD=1
+  export DEBIAN_FRONTEND NEEDRESTART_MODE APT_LISTCHANGES_FRONTEND UCF_FORCE_CONFFOLD
+
+  # Refusals first, before anything changes.
+  if [ -n "$want_docker_install" ]; then
+    probe_docker
+    if [ -n "$footprint" ]; then
+      for code in $footprint; do
+        event docker-footprint code "$code"
+      done
+      event fail category docker-install code docker-present
+      finish docker-present 6
+    fi
+  fi
+  if [ -n "$want_docker_start" ] && [ -z "$want_docker_install" ] &&
+    ! unit_file docker.service; then
+    event fail category docker-start code docker-unit-missing
+    finish docker-unit-missing 6
+  fi
+  if [ -n "$want_docker_group" ] && [ -z "$want_docker_install" ] &&
+    ! getent group docker > /dev/null; then
+    event fail category docker-group code docker-group-missing
+    finish docker-group-missing 6
+  fi
+
+  tools=''
+  secrets=''
+  engine=''
+  provider=absent
+  if [ -n "$want_tools" ]; then
+    missing_from "$PKGS_HERMES_TOOLS"
+    tools=$missing
+  fi
+  if [ -n "$want_secret" ]; then
+    secret_packages
+    secrets=$missing
+  fi
+  if [ -n "$want_docker_install" ]; then
+    missing_from "$PKGS_DOCKER_INSTALL"
+    engine=$missing
+  fi
+  if [ -n "$tools$secrets$engine" ]; then
+    if apt_get update; then
+      event apt-update code ok
+    else
+      event apt-update code failed
+    fi
+  fi
+
+  if [ -n "$want_tools" ]; then
+    install_category hermes-tools "$tools"
+  fi
+  if [ -n "$want_secret" ]; then
+    if [ "$provider" = present ]; then
+      event note category secret-service code provider-present
+    fi
+    install_category secret-service "$secrets"
+  fi
+  if [ -n "$want_docker_install" ]; then
+    probe_docker
+    if [ -n "$footprint" ]; then
+      event fail category docker-install code docker-present
+      finish docker-present 6
+    fi
+    install_category docker-install "$engine"
+  fi
+  if [ -n "$want_docker_start" ]; then start_docker; fi
+  if [ -n "$want_docker_group" ]; then join_docker_group; fi
+  finish ok 0
+}
+
+want_tools=''
+want_secret=''
+want_docker_install=''
+want_docker_start=''
+want_docker_group=''
+
+case $mode in
+  plan)
+    [ "$#" -eq 1 ] || finish usage 2
+    run_plan
+    ;;
+  apply)
+    shift
+    [ "$#" -ge 1 ] || finish usage 2
+    for category in "$@"; do
+      case $category in
+        hermes-tools)
+          [ -z "$want_tools" ] || finish usage 2
+          want_tools=1
+          ;;
+        secret-service)
+          [ -z "$want_secret" ] || finish usage 2
+          want_secret=1
+          ;;
+        docker-install)
+          [ -z "$want_docker_install" ] || finish usage 2
+          want_docker_install=1
+          ;;
+        docker-start)
+          [ -z "$want_docker_start" ] || finish usage 2
+          want_docker_start=1
+          ;;
+        docker-group)
+          [ -z "$want_docker_group" ] || finish usage 2
+          want_docker_group=1
+          ;;
+        *) finish usage 2 ;;
+      esac
+    done
+    run_apply
+    ;;
+  *) finish usage 2 ;;
+esac

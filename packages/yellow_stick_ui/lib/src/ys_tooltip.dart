@@ -28,26 +28,31 @@ final class _YsTooltipState extends State<YsTooltip> {
         link: _link,
         child: OverlayPortal(
           controller: _controller,
-          overlayChildBuilder: (context) => CompositedTransformFollower(
-            link: _link,
-            targetAnchor: Alignment.topCenter,
-            followerAnchor: Alignment.bottomCenter,
-            offset: const Offset(0, -6),
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: palette.neutralAmbientColor,
-                  borderRadius: BorderRadius.circular(YsRadius.row),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
+          // The overlay hands its children tight, window-sized constraints:
+          // loosen them so the chip sizes to its label.
+          overlayChildBuilder: (context) => Align(
+            alignment: Alignment.topLeft,
+            child: CompositedTransformFollower(
+              link: _link,
+              targetAnchor: Alignment.topCenter,
+              followerAnchor: Alignment.bottomCenter,
+              offset: const Offset(0, -6),
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: palette.neutralAmbientColor,
+                    borderRadius: BorderRadius.circular(YsRadius.row),
                   ),
-                  child: Text(
-                    widget.message,
-                    style: YsType.caption.flutter.copyWith(
-                      color: palette.contentColor,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    child: Text(
+                      widget.message,
+                      style: YsType.caption.flutter.copyWith(
+                        color: palette.contentColor,
+                      ),
                     ),
                   ),
                 ),

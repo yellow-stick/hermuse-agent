@@ -69,6 +69,20 @@ the server:
    `Building the computer image…`) until the computer is `stopped` (ready to
    start).
 
+### From the Hermuse Agent desktop app (Hermes on this computer)
+
+The desktop app bundles a copy of this plugin. It copies it into
+`$HERMES_HOME/plugins/hermuse` (a `plugins/hermuse` that is not this plugin is
+never overwritten), runs `hermes plugins enable hermuse`, restarts the Hermes
+backend it supervises and sets up the agent's computer. That backend and the
+`computer setup` it runs get `HERMES_DESKTOP=1`: the plugin then never installs
+Docker itself, never probes `sudo`, and reports a missing Docker as
+`docker_missing` with `"hint": "desktop_setup"`. On Linux the app's setup
+assistant installs or starts Docker after one administrator authorization,
+registers the background jobs through `/cron/enable`, and runs the computer
+setup through the backend, which alone uses the Docker engine the assistant
+chose (see "The agent's computer").
+
 ### By hand
 
 ```bash
@@ -230,7 +244,9 @@ built-in `browser_*` tools drive the computer's Chromium), then starts the
 1. installs Docker when it is missing, on Linux only and only when
    `sudo -n true` succeeds: `apt-get install docker.io` (or the
    get.docker.com script without apt), `systemctl enable --now docker`, and
-   adds the Hermes user to the `docker` group;
+   adds the Hermes user to the `docker` group. Never under the Hermuse Agent
+   desktop app (`HERMES_DESKTOP=1`): its setup assistant installs Docker with
+   the administrator's consent, and sudo is not even probed;
 2. pulls `ghcr.io/yellow-stick/hermuse-computer:0.2.0` (linux/amd64 and
    linux/arm64, published by `.github/workflows/computer-image.yml`) and tags it
    `hermuse-computer:0.2.0`;
@@ -247,11 +263,16 @@ States (`{state, detail}`), in the order they are checked:
 | State | Detail |
 | --- | --- |
 | `building` | the bootstrap runs: `Installing Docker…`, `Downloading the computer image…` or `Building the computer image…` |
-| `docker_missing` | the command to run when Hermuse cannot install Docker itself: on Linux `curl -fsSL https://get.docker.com \| sudo sh && sudo usermod -aG docker <user>`, elsewhere `Install Docker Desktop: https://docs.docker.com/get-started/get-docker/` |
+| `docker_missing` | the command to run when Hermuse cannot install Docker itself: on Linux `curl -fsSL https://get.docker.com \| sudo sh && sudo usermod -aG docker <user>`, elsewhere `Install Docker Desktop: https://docs.docker.com/get-started/get-docker/`. Under the desktop app: `Open the Hermuse Agent setup to install Docker.`, with `"hint": "desktop_setup"` |
 | `daemon_down` | the first line of the failing `docker version` |
 | `error` / `image_missing` | the image is absent: `Computer image build failed: <last line of build.log>` after a failed pull and build, otherwise not prepared yet |
 | `stopped` / `running` | the container is startable (absent, created or exited) / up |
 | `error` | any other Docker failure |
+
+`stopped` and `running` also say where the image came from, read from Docker
+rather than from the bootstrap: `"image_source": "registry"` with
+`"image_digest": "ghcr.io/yellow-stick/hermuse-computer@sha256:…"` when it was
+pulled, `"image_source": "local"` when it was built on this host.
 
 Before every `browser_*` call the
 `pre_tool_call` hook blocks the tool while the user holds **Take control**, and

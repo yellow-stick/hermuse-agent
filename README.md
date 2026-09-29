@@ -68,6 +68,25 @@ Switch to **Desktop** to see its whole Linux desktop, terminal included.
   <img src="docs/readme/computer-desktop.jpg" alt="The agent's full XFCE desktop: Chromium with a map of Nantes and a terminal window listing the running processes." width="100%">
 </p>
 
+## Download
+
+Hermuse Agent 0.1.0 for Linux is on the
+[releases page](https://github.com/yellow-stick/hermuse-agent/releases), for
+Ubuntu 22.04, 24.04 and 26.04 LTS, Debian 12 and 13 and their derivatives
+(Pop!\_OS, Linux Mint), on x86_64 (amd64) only:
+
+- `hermuse-agent_0.1.0-1_amd64.deb`: install it with
+  `sudo apt install ./hermuse-agent_0.1.0-1_amd64.deb`;
+- `Hermuse-Agent-0.1.0-linux-x86_64.AppImage`: mark it executable and open it,
+  no FUSE needed.
+
+On first launch it prepares what is missing (system packages, keyring, Docker,
+Hermes Agent, the plugin and the agent's computer) after one administrator
+authorization, with a network connection. Your model accounts and API keys
+stay yours to connect. Check the files with `SHA256SUMS.txt` and the build
+provenance with `gh attestation verify <file> --repo yellow-stick/hermuse-agent`.
+Details: [Run Hermes on your computer with the desktop app](docs/guides/desktop.md).
+
 ## Get started
 
 - [Set up Hermuse with Hermes on a server](docs/guides/server.md): a VPS or a
@@ -164,6 +183,30 @@ melos run test
 cd apps/hermuse_app && flutter run -d linux     # or macos / windows / an iOS or Android device
 tool/serve-web.sh                               # jaspr serve, http://localhost:8080 (per-worktree ports elsewhere)
 cd apps/hermuse_web && jaspr build              # static output in build/jaspr
+```
+
+The desktop subscription bridge runs the CLIProxyAPI binary pinned in
+`packages/hermuse_host/cliproxy.lock`. A development build verifies it in the
+package tree: fetch it once for your platform (`linux-amd64`, `macos-arm64`,
+…) and tell the app where that tree is. Release builds embed the binary and
+its digest instead.
+
+```bash
+cd packages/hermuse_host && dart run tool/fetch_cliproxy.dart --platform linux-amd64 --frozen-lockfile
+cd apps/hermuse_app && flutter run -d linux \
+  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
+```
+
+On Linux the app first prepares the computer (keyring, Hermes build tools,
+Docker) with `packaging/linux/hermuse-linux-setup`. A release build embeds the
+helper and its digest; a development build uses the checkout's copy only when
+told where the checkout is, otherwise the preparation screen reports the
+helper as unavailable:
+
+```bash
+cd apps/hermuse_app && flutter run -d linux \
+  --dart-define=HERMUSE_WORKSPACE_ROOT=$(git rev-parse --show-toplevel) \
+  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
 ```
 
 ### Hermes plugin

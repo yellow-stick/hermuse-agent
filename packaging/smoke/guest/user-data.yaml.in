@@ -1,0 +1,71 @@
+#cloud-config
+# Hermuse Agent release smoke: the desktop TEST BASE of an ephemeral guest,
+# rendered by guest.sh (@...@ placeholders, never committed filled in).
+#
+# Installs only what a Debian/Ubuntu desktop session provides (systemd/logind,
+# D-Bus user bus, an X11 display with a window manager, the polkit agent and
+# pkexec, Mesa software GL, xdg-utils) plus the automation/capture tools of the
+# harness (xdotool, wmctrl, x11-utils, ImageMagick, Tesseract, jq, sqlite3,
+# secret-tool, gtk-launch). Deliberately NOT installed, because the app must
+# provision or detect them itself: Hermes, uv, Node, Docker, Flutter/Dart,
+# gnome-keyring or any other Secret Service provider, ffmpeg, ripgrep,
+# build-essential and the rest of the Hermes system tools. The python3 that
+# cloud-init itself needs is not a Hermes runtime.
+#
+# `tester` is the synthetic non-root desktop user: member of `sudo` (the polkit
+# admin identity on both bases) with a per-run random password typed only into
+# the real polkit dialog by the harness, never passed to the app. The harness
+# itself logs in as root with a per-run key; there is no passwordless sudo.
+hostname: @HOSTNAME@
+disable_root: false
+ssh_pwauth: false
+ssh_deletekeys: true
+ssh_genkeytypes: [ed25519]
+ssh_keys:
+  ed25519_private: |
+    @HOST_KEY_PRIVATE@
+  ed25519_public: @HOST_KEY_PUBLIC@
+ssh_authorized_keys:
+  - @HARNESS_PUBKEY@
+users:
+  - name: tester
+    gecos: Hermuse smoke tester
+    shell: /bin/bash
+    groups: [sudo]
+    lock_passwd: false
+    passwd: @TESTER_PASSWORD_HASH@
+package_update: true
+package_upgrade: false
+packages:
+  - xvfb
+  - xauth
+  - x11-utils
+  - openbox
+  - xdotool
+  - wmctrl
+  - imagemagick
+  - tesseract-ocr
+  - fonts-dejavu-core
+  - mesa-utils
+  - libgl1-mesa-dri
+  - libglx-mesa0
+  - libegl-mesa0
+  - libgl1
+  - libegl1
+  - libgles2
+  - dbus-user-session
+  - pkexec
+  - policykit-1-gnome
+  - libgtk-3-bin
+  - desktop-file-utils
+  - xdg-utils
+  - libsecret-tools
+  - libglib2.0-bin
+  - jq
+  - sqlite3
+runcmd:
+  # Deterministic runs: no background apt jobs racing the app for the dpkg
+  # lock (the helper's own bounded lock wait is covered by its shell tests).
+  - [sh, -c, 'systemctl disable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true']
+  - [install, -d, -m, '0755', /opt/hermuse-smoke]
+final_message: "hermuse smoke test base ready after $UPTIME seconds"

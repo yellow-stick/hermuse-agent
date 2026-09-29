@@ -13,3 +13,6 @@ coverage/
 # Python caches (Hermes plugin)
 __pycache__/
 .pytest_cache/
+
+# Linux release artifacts (packaging/linux/build-release.sh)
+/dist/

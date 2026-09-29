@@ -30,7 +30,9 @@ elif args[:2] == ["image", "inspect"]:
     if not os.path.exists(image):
         sys.stderr.write("Error: No such image: " + args[-1] + "\\n")
         sys.exit(1)
-    print("sha256:1")
+    with open(image) as fh:  # the local image store: how the image got here
+        pulled = fh.read() == "registry"
+    print(json.dumps(["{registry}@sha256:" + "1" * 64] if pulled else []))
 elif cmd == "pull":
     time.sleep(0.3)
     if os.environ.get("FAKE_DOCKER_PULL") != "ok":
@@ -38,13 +40,15 @@ elif cmd == "pull":
         sys.exit(1)
     print("Status: Downloaded newer image for " + args[1])
 elif cmd == "tag":
-    open(image, "w").close()
+    with open(image, "w") as fh:
+        fh.write("registry")
 elif cmd == "build":
     print("#5 [1/4] FROM docker.io/library/debian:trixie-slim")
     if os.environ.get("FAKE_DOCKER_BUILD") == "fail":
         print("ERROR: failed to solve: boom")
         sys.exit(1)
-    open(image, "w").close()
+    with open(image, "w") as fh:
+        fh.write("local")
 elif cmd == "inspect":
     sys.stderr.write("Error: No such container: " + args[-1] + "\\n")
     sys.exit(1)
@@ -56,7 +60,8 @@ def fake_docker(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "docker"
-    script.write_text(FAKE_DOCKER.replace("{python}", sys.executable))
+    script.write_text(FAKE_DOCKER.replace("{python}", sys.executable)
+                      .replace("{registry}", runtime.REGISTRY_REPOSITORY))
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_DOCKER_DIR", str(tmp_path))
@@ -80,7 +85,10 @@ def test_missing_image_is_pulled_in_the_background(hermes_home, fake_docker, mon
     assert computer.status(hermes_home) == {
         "state": "building", "detail": "Downloading the computer image…"}
     _bootstrap_to_finish(hermes_home)
-    assert computer.status(hermes_home)["state"] == "stopped"  # startable
+    status = computer.status(hermes_home)
+    assert status["state"] == "stopped"  # startable
+    assert status["image_source"] == "registry"
+    assert status["image_digest"].startswith(runtime.REGISTRY_REPOSITORY + "@sha256:")
     assert ["pull", runtime.REGISTRY_IMAGE] in fake_docker()
     assert ["tag", runtime.REGISTRY_IMAGE] in fake_docker()
     assert not any(call[0] == "build" for call in fake_docker())
@@ -90,7 +98,10 @@ def test_unpublished_image_is_built_locally(hermes_home, fake_docker):
     computer = runtime.DockerComputerRuntime()
     computer.prepare(hermes_home)
     _bootstrap_to_finish(hermes_home)
-    assert computer.status(hermes_home)["state"] == "stopped"
+    status = computer.status(hermes_home)
+    assert status["state"] == "stopped"
+    assert status["image_source"] == "local"  # never presented as the published image
+    assert "image_digest" not in status
     commands = [call[0] for call in fake_docker()]
     assert commands.index("pull") < commands.index("build")
     assert state.read_build(hermes_home)["step"] == "build"
@@ -143,6 +154,13 @@ def test_failed_docker_install_stops_there(hermes_home, scripted):
     failing.add("docker.io")
     assert bootstrap.main(["bootstrap.py", str(hermes_home), "apt"]) == 1
     assert not any(command[0] == "/usr/bin/docker" for command, _ in ran)
+
+
+def test_the_desktop_app_bootstrap_never_installs_docker(hermes_home, scripted, monkeypatch):
+    ran, _ = scripted
+    monkeypatch.setenv("HERMES_DESKTOP", "1")
+    assert bootstrap.main(["bootstrap.py", str(hermes_home), "apt"]) == 1
+    assert ran == []
 
 
 def test_daemon_wait_switches_to_sg_once_the_group_socket_appears(monkeypatch):

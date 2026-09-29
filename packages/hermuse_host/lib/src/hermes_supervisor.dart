@@ -7,7 +7,9 @@ import 'package:hermes_client/hermes_client.dart';
 
 import 'detector.dart';
 import 'errors.dart';
+import 'host_environment.dart';
 import 'installer.dart' show parseBackendReadyPort;
+import 'linux_dependencies.dart';
 import 'supervisor.dart';
 
 /// Supervises the Hermuse-owned local backend:
@@ -15,17 +17,21 @@ import 'supervisor.dart';
 ///
 /// The argv mirrors the Desktop pool spawn (`serveBackendArgs` in
 /// `backend-command.ts`): headless, loopback-only, OS-assigned port. The
-/// spawn environment carries a fresh `HERMES_DASHBOARD_SESSION_TOKEN`
-/// (minted in memory, like the Desktop) plus `HERMES_DESKTOP=1` and
-/// `HERMES_PARENT_PID` so the child opts out of the host rendezvous
-/// multiplexing (`_attach_to_host_backend` requires the desktop-owned
-/// proof: `HERMES_DESKTOP=1` + token env) and self-exits when Hermuse dies
-/// uncleanly. Readiness is the `HERMES_BACKEND_READY port=<n>` fd-1
-/// announcement. Hermuse stops only this owned child and never touches a
-/// user-started `hermes serve`.
+/// spawn environment is the [hostEnvironment] (the user's real `HOME`) with
+/// the install's [DetectedHermes.runtimeEnvironment], a fresh
+/// `HERMES_DASHBOARD_SESSION_TOKEN` (minted in memory, like the Desktop)
+/// plus `HERMES_DESKTOP=1` and `HERMES_PARENT_PID` so the child opts out of
+/// the host rendezvous multiplexing (`_attach_to_host_backend` requires the
+/// desktop-owned proof: `HERMES_DESKTOP=1` + token env) and self-exits when
+/// Hermuse dies uncleanly. Readiness is the `HERMES_BACKEND_READY port=<n>`
+/// fd-1 announcement. With a [DockerEndpoint] (Linux) the child environment
+/// goes through [DockerEndpoint.applyTo], so only this backend targets the
+/// Docker engine the setup assistant chose. Hermuse stops only this owned
+/// child and never touches a user-started `hermes serve`.
 final class HermesSupervisor {
   HermesSupervisor({
     required DetectedHermes hermes,
+    DockerEndpoint? dockerEndpoint,
     Supervisor Function()? supervisorFactory,
   }) : _hermes = hermes,
        _supervisorFactory =
@@ -41,10 +47,12 @@ final class HermesSupervisor {
                '--skip-build',
              ],
              environment: {
+               ...hermes.runtimeEnvironment(),
                'HERMES_DASHBOARD_SESSION_TOKEN': _mintToken(),
                'HERMES_DESKTOP': '1',
                'HERMES_PARENT_PID': '$pid',
              },
+             adaptEnvironment: dockerEndpoint?.applyTo,
              readiness: parseBackendReadyPort,
            ));
 
@@ -140,7 +148,12 @@ final class HermesSupervisor {
   Future<void> update({
     void Function(String stream, String line)? onLine,
   }) async {
-    final process = await Process.start(_hermes.executable, const ['update']);
+    final process = await Process.start(
+      _hermes.executable,
+      const ['update'],
+      includeParentEnvironment: false,
+      environment: {...hostEnvironment(), ..._hermes.runtimeEnvironment()},
+    );
     final tail = <String>[];
     void listen(Stream<List<int>> bytes, String stream) {
       bytes.transform(utf8.decoder).transform(const LineSplitter()).listen((
