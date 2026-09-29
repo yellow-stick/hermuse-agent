@@ -225,10 +225,13 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   }
 
   Future<void> _superviseAndFinish() async {
+    // Registering the instance swaps the welcome routes for the chat, which
+    // disposes this screen while boot still runs: read what the end needs
+    // now, not through a disposed ref.
+    final registry = ref.read(registryProvider.future);
+    final activeThread = ref.read(activeThreadProvider.notifier);
     try {
-      final instance = await widget.host.boot(
-        await ref.read(registryProvider.future),
-      );
+      final instance = await widget.host.boot(await registry);
       if (instance == null) {
         // Install finished but detection still misses: re-detect failed.
         throw const InstallFailed(
@@ -236,7 +239,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
           'Install finished but no Hermes launcher answers --version.',
         );
       }
-      await ref.read(activeThreadProvider.notifier).openInstance(instance.id);
+      await activeThread.openInstance(instance.id);
       widget.onDone(instance);
     } on Object catch (e) {
       if (mounted) {
