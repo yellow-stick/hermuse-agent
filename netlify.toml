@@ -1,0 +1,46 @@
+# Netlify project `hermuse-agent`, served at https://hermuse.app: the static
+# Jaspr build of apps/hermuse_web. GitHub Actions (.github/workflows/web.yml)
+# builds and deploys it with the Netlify CLI; Netlify's own Git builds are
+# stopped, so nothing here runs a build.
+#
+# Manual deploy from the repository root (after `netlify link --id <site id>`):
+#   (cd apps/hermuse_web && jaspr build)
+#   netlify deploy --no-build --dir=apps/hermuse_web/build/jaspr          # draft URL
+#   netlify deploy --no-build --dir=apps/hermuse_web/build/jaspr --prod   # hermuse.app
+#
+# Netlify has no relay: the page loads and runs, but reaching a Hermes instance
+# needs apps/hermuse_relay serving the same build (docs/guides/web-app-and-relay.md).
+[build]
+  publish = "apps/hermuse_web/build/jaspr"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+
+# The service worker must never be served from an HTTP cache, or a new deploy
+# waits for the old worker to expire.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/sqlite3.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+# Not fingerprinted, but versioned by hand and rarely touched.
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"
