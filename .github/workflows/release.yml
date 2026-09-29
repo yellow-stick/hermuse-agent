@@ -1,25 +1,37 @@
-# Linux release of Hermuse Agent: .deb + AppImage (amd64) from one Flutter bundle.
+# Release of Hermuse Agent, one graph and one draft for every platform:
+# Linux .deb + AppImage (amd64, from one Flutter bundle), macOS .dmg (arm64),
+# Windows Setup.exe (x64).
 #
-#   metadata -> checks -> package -> smoke + compat -> smoke-report -> release-approval -> publish
-#                                 \-> attest (tag runs of the canonical repository only)
+#   metadata -> checks -> package (Linux) ----> smoke + compat (QEMU guests, containers) -+
+#                      -> package-macos ------> smoke-macos (on the runner) -------------+-> smoke-report
+#                      -> package-windows ----> smoke-windows (on the runner) -----------+
+#   package + package-macos + package-windows -> assemble -> attest (tag runs of the canonical repository)
+#   smoke-report + assemble + attest -> release-approval -> publish
 #
-# Pull requests: version read from apps/hermuse_app/pubspec.yaml, checks, build,
-# package, the `fresh` smoke legs (both guests, both formats) and the container
-# checks, without secrets and without publication. Dispatch without a tag: a
-# test run of the dispatched branch over every leg, or those matching `legs`;
-# never published.
+# Pull requests: version read from apps/hermuse_app/pubspec.yaml, checks,
+# unsigned builds, packages, the `fresh` smoke legs (both Linux guests and
+# formats, the macOS and Windows runners), the container checks and the
+# assembly, without secrets and without publication. Dispatch without a tag:
+# a test run of the dispatched branch over every leg, or those matching `legs`
+# (the macOS/Windows package jobs only run with their leg); never published.
 # Tag push (hermuse/v*) or dispatch with an existing tag: the tag is resolved to
 # its commit, must name exactly the pubspec version, and that exact commit is
-# built. Publication needs the `release` environment (required reviewers), then
-# creates a DRAFT with the tested bytes and flips it public only when every
+# built. In the canonical repository the macOS and Windows package jobs take
+# their signing secrets from the `release` environment (so its reviewers
+# approve them first); a platform without them builds unsigned and records
+# why. Publication needs the `release` environment again, then creates a DRAFT
+# with the tested bytes of every platform and flips it public only when every
 # proof exists: no failed or missing smoke result, the evidence of each manual
-# gate, and the real conversation with the capped test account.
+# gate, the real conversation with the capped test account, and signed macOS
+# (notarized, stapled) and Windows artifacts.
 #
 # Actions are pinned by commit (tag in the trailing comment, resolved
 # 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
 # tools by URL + SHA-256 in tool/release/toolchain.lock.json and
-# tool/release/guest-images.lock.json.
-name: Linux release
+# tool/release/guest-images.lock.json. The macOS smoke tools (tesseract,
+# imagemagick, cliclick) come from Homebrew bottles, checked by their formula
+# and recorded in the leg's evidence; they never reach an artifact.
+name: Release
 
 on:
   pull_request:
@@ -31,7 +43,7 @@ on:
       - tool/release/**
       - pubspec.yaml
       - pubspec.lock
-      - .github/workflows/linux-release.yml
+      - .github/workflows/release.yml
   push:
     tags: ['hermuse/v*']
   workflow_dispatch:
@@ -49,7 +61,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.tag || github.ref }}
+  group: release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.tag || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.tag == '') }}
 
 env:
@@ -73,11 +85,21 @@ jobs:
       sources_file: ${{ steps.meta.outputs.sources_file }}
       fixture_deb_version: ${{ steps.meta.outputs.fixture_deb_version }}
       fixture_deb_file: ${{ steps.meta.outputs.fixture_deb_file }}
+      dmg_file: ${{ steps.meta.outputs.dmg_file }}
+      windows_setup_file: ${{ steps.meta.outputs.windows_setup_file }}
+      # The macOS/Windows package jobs of a canonical tag run sign with the
+      # secrets of the `release` environment; every other run builds unsigned.
+      signing: ${{ steps.source.outputs.release == 'true' && steps.source.outputs.publishable == 'true' }}
       run_label: ${{ steps.source.outputs.run_label }}
       smoke_matrix: ${{ steps.legs.outputs.smoke }}
       compat_matrix: ${{ steps.legs.outputs.compat }}
+      desktop_matrix: ${{ steps.legs.outputs.desktop }}
+      macos_matrix: ${{ steps.legs.outputs.macos_matrix }}
+      windows_matrix: ${{ steps.legs.outputs.windows_matrix }}
       smoke_count: ${{ steps.legs.outputs.smoke_count }}
       compat_count: ${{ steps.legs.outputs.compat_count }}
+      macos: ${{ steps.legs.outputs.macos }}
+      windows: ${{ steps.legs.outputs.windows }}
     steps:
       - name: Resolve the source commit
         id: source
@@ -154,11 +176,17 @@ jobs:
           set -euo pipefail
           smoke=$(python3 packaging/smoke/proof_summary.py matrix guests --set "$SET" --filter "$FILTER")
           compat=$(python3 packaging/smoke/proof_summary.py matrix containers --set "$SET" --filter "$FILTER")
+          desktop=$(python3 packaging/smoke/proof_summary.py matrix desktop --set "$SET" --filter "$FILTER")
           {
             echo "smoke=$smoke"
             echo "compat=$compat"
+            echo "desktop=$desktop"
             echo "smoke_count=$(jq '.include | length' <<<"$smoke")"
             echo "compat_count=$(jq '.include | length' <<<"$compat")"
+            echo "macos_matrix=$(jq -c '{include: [.include[] | select(.os == "macos")]}' <<<"$desktop")"
+            echo "windows_matrix=$(jq -c '{include: [.include[] | select(.os == "windows")]}' <<<"$desktop")"
+            echo "macos=$(jq '[.include[] | select(.os == "macos")] | length > 0' <<<"$desktop")"
+            echo "windows=$(jq '[.include[] | select(.os == "windows")] | length > 0' <<<"$desktop")"
           } | tee -a "$GITHUB_OUTPUT"
 
   checks:
@@ -206,6 +234,23 @@ jobs:
           done
           actionlint -shellcheck "$(command -v shellcheck)"
           python3 -m py_compile packaging/smoke/*.py packaging/smoke/guest/*.py
+
+      - name: The PowerShell release scripts parse
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(git ls-files 'packaging/*.ps1' 'tool/release/*.ps1')
+          if ($files.Count -eq 0) { throw 'no PowerShell release scripts found' }
+          $failed = $false
+          foreach ($file in $files) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              $failed = $true
+              foreach ($e in $errors) { "::error file=$file,line=$($e.Extent.StartLineNumber)::$($e.Message)" }
+            } else { "parsed: $file" }
+          }
+          if ($failed) { exit 1 }
 
       - name: Linux helper shell tests
         run: sh packaging/linux/tests/run.sh
@@ -270,7 +315,7 @@ jobs:
           HERMES_AGENT_DIR="$src" "$src/.venv/bin/python" -m pytest tests/ -q
 
   package:
-    name: Build and package
+    name: Build and package (Linux)
     needs: [metadata, checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 150
@@ -364,9 +409,206 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  package-macos:
+    name: Build and package (macOS)
+    needs: [metadata, checks]
+    if: needs.metadata.outputs.macos == 'true'
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: ${{ needs.metadata.outputs.signing == 'true' && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: Xcode and the Flutter SDK from toolchain.lock.json
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          sudo xcode-select -s "$(jq -er .macos.xcode.path "$lock")"
+          xcodebuild -version
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/flutter.zip" \
+            "$(jq -er '.flutter.archives["macos-arm64"].url' "$lock")"
+          echo "$(jq -er '.flutter.archives["macos-arm64"].sha256' "$lock")  $RUNNER_TEMP/flutter.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/flutter.zip"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-cli-animations
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+
+      - name: Build, sign when the release environment allows it, package (packaging/macos/build-release.sh)
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ needs.metadata.outputs.signing == 'true' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ needs.metadata.outputs.signing == 'true' && secrets.MACOS_DEVELOPER_ID_P12_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ needs.metadata.outputs.signing == 'true' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_NOTARY_KEY_ID: ${{ needs.metadata.outputs.signing == 'true' && secrets.APPLE_NOTARY_KEY_ID || '' }}
+          APPLE_NOTARY_ISSUER_ID: ${{ needs.metadata.outputs.signing == 'true' && secrets.APPLE_NOTARY_ISSUER_ID || '' }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ needs.metadata.outputs.signing == 'true' && secrets.APPLE_NOTARY_KEY_P8_BASE64 || '' }}
+        run: packaging/macos/build-release.sh
+
+      - name: Artifacts match the release metadata
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          DMG_FILE: ${{ needs.metadata.outputs.dmg_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$DMG_FILE" macos/SHA256SUMS.txt macos/VERSION.json | sort)
+          actual=$(find . -type f | sed 's|^\./||' | sort)
+          [ "$actual" = "$expected" ] || { find . -type f; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          shasum -a 256 -c macos/SHA256SUMS.txt
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg dmg "$DMG_FILE" '
+            .os == "macos" and .arch == "arm64" and .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and [.artifacts[].name] == [$dmg]' macos/VERSION.json
+          jq -r '"macOS signing: signed=\(.signing.signed) notarized=\(.signing.notarized) stapled=\(.signing.stapled) \(.signing.reason // "")"' \
+            macos/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-dist
+          path: |
+            dist/*.dmg
+            dist/macos/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: macos-package-evidence
+          path: ${{ runner.temp }}/hermuse-macos-release/evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  package-windows:
+    name: Build and package (Windows)
+    needs: [metadata, checks]
+    if: needs.metadata.outputs.windows == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 150
+    environment: ${{ needs.metadata.outputs.signing == 'true' && 'release' || '' }}
+    permissions:
+      contents: read
+      id-token: write # Azure login (OIDC) of Artifact Signing; used on signing runs only
+    env:
+      # A partial Azure identity still logs in, and fails loudly.
+      AZURE_LOGIN: ${{ needs.metadata.outputs.signing == 'true' && (secrets.AZURE_CLIENT_ID != '' || secrets.AZURE_TENANT_ID != '' || secrets.AZURE_SUBSCRIPTION_ID != '') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: The Flutter SDK from toolchain.lock.json
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $entry = (Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json).flutter.archives.'windows-x64'
+          $zip = Join-Path $env:RUNNER_TEMP flutter.zip
+          Invoke-WebRequest -Uri $entry.url -OutFile $zip
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($sha -ne $entry.sha256) { throw "Flutter archive sha256 $sha, toolchain.lock.json $($entry.sha256)" }
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE) { throw "tar exited with $LASTEXITCODE" }
+          Remove-Item $zip
+          $bin = Join-Path $env:RUNNER_TEMP 'flutter\bin'
+          & "$bin\flutter.bat" config --no-analytics --no-cli-animations
+          if ($LASTEXITCODE) { throw "flutter config exited with $LASTEXITCODE" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Azure login for Artifact Signing (OIDC, release environment)
+        if: env.AZURE_LOGIN == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build, sign when the release environment allows it, package (packaging/windows/build-release.ps1)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_ENDPOINT: ${{ needs.metadata.outputs.signing == 'true' && secrets.WINDOWS_SIGNING_ENDPOINT || '' }}
+          WINDOWS_SIGNING_ACCOUNT: ${{ needs.metadata.outputs.signing == 'true' && secrets.WINDOWS_SIGNING_ACCOUNT || '' }}
+          WINDOWS_SIGNING_PROFILE: ${{ needs.metadata.outputs.signing == 'true' && secrets.WINDOWS_SIGNING_PROFILE || '' }}
+        run: |
+          pwsh -NoProfile -File packaging/windows/build-release.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Artifacts match the release metadata
+        shell: bash
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          SETUP_FILE: ${{ needs.metadata.outputs.windows_setup_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$SETUP_FILE" windows/SHA256SUMS.txt windows/VERSION.json | sort)
+          actual=$(find . -type f | sed 's|^\./||' | sort)
+          [ "$actual" = "$expected" ] || { find . -type f; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          sha256sum -c windows/SHA256SUMS.txt
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg setup "$SETUP_FILE" '
+            .os == "windows" and .arch == "x64" and .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and [.artifacts[].name] == [$setup]' windows/VERSION.json
+          jq -r '"Windows signing: signed=\(.signing.signed) method=\(.signing.method) \(.signing.reason // "")"' \
+            windows/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-dist
+          path: |
+            dist/*.exe
+            dist/windows/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  assemble:
+    name: Assemble the release files
+    needs: [metadata, package, package-macos, package-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: in/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-sources
+          path: in/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-dist
+          path: in/macos
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-dist
+          path: in/windows
+
+      - name: One release of every platform (tool/release/assemble-release.sh)
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: tool/release/assemble-release.sh --commit "$COMMIT" --linux in/linux --macos in/macos --windows in/windows --out release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   attest:
     name: Provenance attestation
-    needs: [metadata, package]
+    needs: [metadata, assemble]
     if: needs.metadata.outputs.release == 'true' && needs.metadata.outputs.publishable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -377,11 +619,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: linux-dist
-          path: dist
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: linux-sources
+          name: release-dist
           path: dist
       - name: Verify the bytes to attest
         run: cd dist && sha256sum -c SHA256SUMS.txt
@@ -552,9 +790,124 @@ jobs:
       - name: Verdict
         run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" compat
 
+  # The GitHub-hosted macOS arm64 runner is the test machine itself: a new VM
+  # for every job, the runner user's first login state, no nested
+  # virtualization (so no Docker: the computer stays a manual gate).
+  smoke-macos:
+    name: Smoke ${{ matrix.name }}
+    needs: [metadata, package-macos]
+    if: needs.metadata.outputs.macos == 'true'
+    runs-on: ${{ matrix.target }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.metadata.outputs.macos_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && shasum -a 256 -c macos/SHA256SUMS.txt
+
+      - name: Smoke tools (OCR, image processing, pointer events)
+        run: brew install tesseract imagemagick cliclick
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }}) on the runner
+        run: |
+          # The verdict is the result files, not the runner's exit status.
+          packaging/smoke/macos.sh "$SCENARIO" --dist dist --out "$RUNNER_TEMP/legs/$LEG" \
+            --run-id "$RUN_LABEL" --runner "$TARGET" || echo "::warning::scenario runner exited with $?"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO" --target "$TARGET"
+
+  # Same on the Windows Server 2025 runner (interactive desktop of runneradmin).
+  smoke-windows:
+    name: Smoke ${{ matrix.name }}
+    needs: [metadata, package-windows]
+    if: needs.metadata.outputs.windows == 'true'
+    runs-on: ${{ matrix.target }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.metadata.outputs.windows_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        shell: bash
+        run: cd dist && sha256sum -c windows/SHA256SUMS.txt
+
+      - name: Smoke tools (OCR from toolchain.lock.json)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $entry = (Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json).ci.tesseract_windows
+          $setup = Join-Path $env:RUNNER_TEMP tesseract-setup.exe
+          Invoke-WebRequest -Uri $entry.url -OutFile $setup
+          $sha = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+          if ($sha -ne $entry.sha256) { throw "tesseract installer sha256 $sha, toolchain.lock.json $($entry.sha256)" }
+          Start-Process -FilePath $setup -ArgumentList '/S' -Wait
+          & "$env:ProgramFiles\Tesseract-OCR\tesseract.exe" --version
+          if ($LASTEXITCODE) { throw "tesseract exited with $LASTEXITCODE" }
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }}) on the runner
+        shell: pwsh
+        run: |
+          # The verdict is the result files, not the runner's exit status.
+          pwsh -NoProfile -File packaging/smoke/windows.ps1 -Scenario $env:SCENARIO -Dist dist `
+            -Out (Join-Path $env:RUNNER_TEMP "legs\$env:LEG") -RunId $env:RUN_LABEL -Runner $env:TARGET
+          if ($LASTEXITCODE) { "::warning::scenario runner exited with $LASTEXITCODE" }
+          exit 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        shell: bash
+        run: python packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO" --target "$TARGET"
+
   smoke-report:
     name: Smoke report
-    needs: [metadata, smoke, compat]
+    needs: [metadata, smoke, compat, smoke-macos, smoke-windows]
     if: always() && needs.metadata.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -579,11 +932,12 @@ jobs:
         env:
           SMOKE_MATRIX: ${{ needs.metadata.outputs.smoke_matrix }}
           COMPAT_MATRIX: ${{ needs.metadata.outputs.compat_matrix }}
+          DESKTOP_MATRIX: ${{ needs.metadata.outputs.desktop_matrix }}
         run: |
           set -uo pipefail
           status=0
           python3 packaging/smoke/proof_summary.py collect legs --matrix "$SMOKE_MATRIX" --matrix "$COMPAT_MATRIX" \
-            --out proof-summary.json --markdown proof-summary.md || status=$?
+            --matrix "$DESKTOP_MATRIX" --out proof-summary.json --markdown proof-summary.md || status=$?
           cat proof-summary.md >>"$GITHUB_STEP_SUMMARY"
           exit "$status"
 
@@ -599,7 +953,7 @@ jobs:
 
   release-approval:
     name: Release approval
-    needs: [metadata, package, attest, smoke-report]
+    needs: [metadata, assemble, attest, smoke-report]
     if: needs.metadata.outputs.release == 'true' && needs.metadata.outputs.publishable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 340
@@ -641,6 +995,11 @@ jobs:
         with:
           name: linux-dist
           path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-dist
+          path: release
 
       - name: Model test account (release environment secrets only)
         id: model
@@ -739,7 +1098,8 @@ jobs:
           model=()
           [ "$MODEL_AVAILABLE" = true ] && model=(--model "$RUNNER_TEMP/legs/$MODEL_LEG")
           python3 packaging/smoke/proof_summary.py finalize --summary proof/proof-summary.json "${model[@]}" \
-            --out release-proof.json --markdown release-proof.md | tee -a "$GITHUB_OUTPUT"
+            --release-version release/VERSION.json --out release-proof.json --markdown release-proof.md |
+            tee -a "$GITHUB_OUTPUT"
           cat release-proof.md >>"$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -760,7 +1120,7 @@ jobs:
     permissions:
       contents: write
     concurrency:
-      group: linux-release-publish-${{ needs.metadata.outputs.tag }}
+      group: release-publish-${{ needs.metadata.outputs.tag }}
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
@@ -771,15 +1131,12 @@ jobs:
       PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
       PUBLIC_READY: ${{ needs.release-approval.outputs.public_ready }}
       DEB_FILE: ${{ needs.metadata.outputs.deb_file }}
+      DMG_FILE: ${{ needs.metadata.outputs.dmg_file }}
+      SETUP_FILE: ${{ needs.metadata.outputs.windows_setup_file }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: linux-dist
-          path: dist
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: linux-sources
+          name: release-dist
           path: dist
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -792,23 +1149,35 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum -c SHA256SUMS.txt
-          [ "$(find . -maxdepth 1 -type f | wc -l)" = 5 ]
+          [ "$(find . -maxdepth 1 -type f | wc -l)" = 7 ]
           jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" \
-            '.source.commit == $commit and .source.dirty == false and .app.version == $version' VERSION.json
+            '.schema == 2 and .source.commit == $commit and .source.dirty == false and .app.version == $version
+             and (.platforms | keys) == ["linux", "macos", "windows"]' VERSION.json
+          # Every published artifact carries the bytes its platform job packaged and its smoke tested.
+          mapfile -t files < <(jq -r '.artifacts[].name' VERSION.json)
+          [ "${#files[@]}" = 5 ]
+          for file in "${files[@]}"; do
+            jq -e --arg n "$file" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" \
+              '[.platforms[].artifacts[] | select(.name == $n and .sha256 == $sha)] | length == 1' VERSION.json
+          done
 
       - name: Draft release (never overwrites an asset)
         run: |
           set -euo pipefail
           {
-            echo "Hermuse Agent $APP_VERSION for Linux (amd64): Debian/Ubuntu family (Ubuntu 22.04+, Debian 12+ and derivatives)."
+            echo "Hermuse Agent $APP_VERSION for Linux, macOS and Windows."
             echo
-            echo "- \`.deb\`: \`sudo apt-get install ./$DEB_FILE\`"
-            echo "- AppImage: mark it executable and run it; no FUSE needed (it extracts to a temporary directory on each launch)."
+            echo "- Linux (amd64), Debian/Ubuntu family (Ubuntu 22.04+, Debian 12+ and derivatives):"
+            echo "  \`.deb\`: \`sudo apt-get install ./$DEB_FILE\`; AppImage: mark it executable and run it,"
+            echo "  no FUSE needed (it extracts to a temporary directory on each launch)."
+            echo "- macOS 14+ on Apple Silicon (arm64): open \`$DMG_FILE\` and drag Hermuse Agent to Applications."
+            echo "- Windows (x64): run \`$SETUP_FILE\`; it installs for the current user, without administrator rights."
             echo
-            echo "On first launch the app prepares its own dependencies (keyring, Hermes, plugin, bridge, computer image)"
-            echo "after one administrator authorization; it needs network access. Model accounts stay yours to connect."
-            echo "See docs/guides/desktop.md. Source commit \`$COMMIT\`. Checksums: SHA256SUMS.txt; build provenance:"
-            echo "\`gh attestation verify <file> --repo $REPOSITORY\`."
+            echo "On first launch the app installs Hermes and the Hermuse plugin for you; it needs network access."
+            echo "On Linux it also prepares the keyring and the agent's computer image after one administrator"
+            echo "authorization. On macOS and Windows the agent's computer needs a Docker engine you install yourself."
+            echo "Model accounts stay yours to connect. See docs/guides/desktop.md. Source commit \`$COMMIT\`."
+            echo "Checksums: SHA256SUMS.txt; build provenance: \`gh attestation verify <file> --repo $REPOSITORY\`."
           } >notes.md
           flags=(--draft --verify-tag --title "Hermuse Agent $APP_VERSION" --notes-file notes.md)
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)
@@ -839,7 +1208,8 @@ jobs:
         if: env.PUBLIC_READY == 'true'
         run: |
           set -euo pipefail
-          jq -e '.public_ready == true and .smoke_ok == true and .model_proof.status == "pass"' proof/release-proof.json
+          jq -e '.public_ready == true and .smoke_ok == true and .model_proof.status == "pass" and .signing_ok == true' \
+            proof/release-proof.json
           if [ "$PRERELEASE" = true ]; then
             gh release edit "$TAG" -R "$REPOSITORY" --draft=false --prerelease
           else
@@ -854,6 +1224,6 @@ jobs:
         if: env.PUBLIC_READY != 'true'
         run: |
           {
-            echo "$TAG stays a DRAFT: a required proof is missing (see the release-proof artifact)."
+            echo "$TAG stays a DRAFT: a required proof or signature is missing (see the release-proof artifact)."
             cat proof/release-proof.md
           } >>"$GITHUB_STEP_SUMMARY"
