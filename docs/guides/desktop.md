@@ -80,8 +80,12 @@ matches the one built into the app.
 
 ### On Linux
 
-Hermuse Agent first checks this computer and shows **Prepare this computer**
-with the changes it needs. It lists only what is missing:
+Hermuse Agent first checks this computer and shows **Prepare this computer**:
+one checklist of what it needs (system packages, keyring, Docker, Hermes
+Agent, the Hermuse plugin, the subscription bridge, the agent's computer).
+What is already in place is marked **Found — reused**, what it installs is
+marked **Installed now**, and the technical output stays behind **Show
+details**. It changes only what is missing:
 
 - the system packages Hermes Agent needs to build (`git`, `curl`, `tar`,
   `build-essential`, `python3-dev`, `libffi-dev`, `libatomic1`, `ripgrep`,
@@ -94,10 +98,10 @@ with the changes it needs. It lists only what is missing:
   you accept.
 
 Choose **Prepare**: your system asks **once** for the administrator password.
-If you cancel or refuse, nothing is reported as done; steps that did finish are
-listed under **Already done**, and **Prepare** stays available. Closing the app
-or choosing **Cancel** never interrupts a package install: it finishes the
-current step and stops before the next one.
+If you cancel or refuse, nothing is reported as done; steps that did finish
+keep their check, and **Prepare** stays available. Closing the app or choosing
+**Cancel** never interrupts a package install: it finishes the current step
+and stops before the next one.
 
 A Docker you already have is used as it is: Docker CE, a rootless Docker or a
 stopped service (Hermuse only offers to start it). It is never replaced, and

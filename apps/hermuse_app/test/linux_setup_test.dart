@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,6 +19,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
+import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -137,9 +139,49 @@ void main() {
         'complete',
       ]);
       expect((await InstallJournal.read(script.journalPath))!.finished, isTrue);
-      expect(container.read(linuxSetupProvider).phase, isA<SetupFinished>());
+      expect(
+        container.read(linuxSetupProvider),
+        isA<LinuxSetupState>()
+            .having((s) => s.phase, 'phase', isA<SetupFinished>())
+            // Installed by this session, not found in place.
+            .having(
+              (s) => s.parts[SetupPart.hermes],
+              'Hermes Agent',
+              SetupPartReadiness.prepared,
+            ),
+      );
       expect(setup.backendStarts.single.executable, script.launcher);
     });
+
+    test(
+      'should tell the parts found in place from those it prepared',
+      () async {
+        setup.inspections.add(_inspection(missingTools: ['ripgrep']));
+        setup.detect = () async => _compatible(setup.script.hermesHome);
+        setup.serveComputer();
+        final container = setup.container();
+        final controller = container.read(linuxSetupProvider.notifier);
+
+        await controller.prepare(LinuxSetupGoal.local);
+        await controller.authorize();
+
+        expect(
+          container.read(linuxSetupProvider),
+          isA<LinuxSetupState>()
+              .having((s) => s.phase, 'phase', isA<SetupFinished>())
+              .having((s) => s.parts, 'parts', {
+                SetupPart.systemPackages: SetupPartReadiness.prepared,
+                SetupPart.keyring: SetupPartReadiness.found,
+                SetupPart.docker: SetupPartReadiness.found,
+                SetupPart.hermes: SetupPartReadiness.found,
+                SetupPart.plugin: SetupPartReadiness.prepared,
+                SetupPart.bridge: SetupPartReadiness.found,
+                SetupPart.computer: SetupPartReadiness.found,
+              })
+              .having((s) => s.hermesVersion, 'Hermes version', '0.21.5'),
+        );
+      },
+    );
 
     test('should keep an incompatible Hermes as it is', () async {
       setup.inspections.add(_inspection());
@@ -330,18 +372,190 @@ void main() {
       expect(find.byType(InstallFlowScreen), findsOneWidget);
       expect(find.byType(LinuxSetupGate), findsNothing);
     });
+
+    testWidgets('should show a part found in place as checked, never as '
+        'being installed', (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final controller = container.read(linuxSetupProvider.notifier);
+      Future<YsStepState> hermesRow(
+        SetupPhase phase,
+        SetupPartReadiness readiness,
+      ) async {
+        await tester.pumpWidget(
+          _screen(
+            LinuxSetupView(
+              setup: LinuxSetupState(
+                goal: LinuxSetupGoal.local,
+                phase: phase,
+                parts: {SetupPart.hermes: readiness},
+                hermesVersion: '0.21.5',
+              ),
+              controller: controller,
+              canLeave: true,
+            ),
+            reduceMotion: true,
+          ),
+        );
+        return tester
+            .widget<YsChecklist>(find.byType(YsChecklist))
+            .items
+            .singleWhere((item) => item.id == SetupPart.hermes)
+            .state;
+      }
+
+      const starting = SetupWorking(SetupActivity.startingHermes);
+      expect(
+        await hermesRow(starting, SetupPartReadiness.found),
+        YsStepState.checking,
+      );
+      expect(
+        await hermesRow(starting, SetupPartReadiness.prepared),
+        YsStepState.working,
+      );
+      // Ready: a calm check for the one found, the drawn tick for the one
+      // installed now.
+      expect(
+        await hermesRow(const SetupFinished(), SetupPartReadiness.found),
+        YsStepState.found,
+      );
+      expect(
+        await hermesRow(const SetupFinished(), SetupPartReadiness.prepared),
+        YsStepState.done,
+      );
+    });
+
+    testWidgets('should retry a failed install stage from its row, then go '
+        'on with the next ones', (tester) async {
+      final root = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('hermuse_linux_retry'),
+      ))!;
+      addTearDown(() => root.deleteSync(recursive: true));
+      final setup = _Setup(root.path);
+      addTearDown(() => tester.runAsync(setup.dispose));
+      setup.inspections.add(_inspection());
+      setup.serveComputer();
+      setup.script.failing.add('python-deps');
+      final container = setup.container();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          // Rows unfold at once: the tap lands on the button they show.
+          child: _screen(
+            const LinuxSetupGate(canLeave: true),
+            reduceMotion: true,
+          ),
+        ),
+      );
+
+      unawaited(
+        container
+            .read(linuxSetupProvider.notifier)
+            .prepare(LinuxSetupGoal.local),
+      );
+      await _settle(
+        tester,
+        until: () =>
+            container.read(linuxSetupProvider).phase is SetupInstallFailed,
+      );
+      final retry = find.descendant(
+        // Rows are keyed by their item id, an Object.
+        of: find.byKey(const ValueKey<Object>(SetupPart.hermes)),
+        matching: find.widgetWithText(YsButton, 'Retry this stage'),
+      );
+      expect(retry, findsOneWidget);
+      // The failed run releases the install lock (real I/O) before a new
+      // operation may start.
+      await _settle(tester);
+
+      await tester.tap(retry);
+      await _settle(
+        tester,
+        until: () => setup.script.stagesRun.contains('node-deps'),
+      );
+
+      expect(
+        setup.script.stagesRun.where((stage) => stage == 'python-deps'),
+        hasLength(2),
+      );
+      expect(
+        container.read(linuxSetupProvider).phase,
+        isNot(isA<SetupInstallFailed>()),
+      );
+    });
+
+    for (final reduceMotion in [false, true]) {
+      testWidgets(
+        reduceMotion
+            ? 'should go on at once once ready when motion is reduced'
+            : 'should hold its ready moment, then go on',
+        (tester) async {
+          final root = (await tester.runAsync(
+            () => Directory.systemTemp.createTemp('hermuse_linux_ready'),
+          ))!;
+          addTearDown(() => root.deleteSync(recursive: true));
+          final setup = _Setup(root.path);
+          addTearDown(() => tester.runAsync(setup.dispose));
+          setup.inspections.add(_inspection());
+          setup.detect = () async => _compatible(setup.script.hermesHome);
+          setup.serveComputer();
+          final container = setup.container();
+          await tester.runAsync(
+            () => container
+                .read(linuxSetupProvider.notifier)
+                .prepare(LinuxSetupGoal.local),
+          );
+          expect(container.read(linuxSetupProvider).showsReady, isTrue);
+
+          await tester.pumpWidget(
+            UncontrolledProviderScope(
+              container: container,
+              child: _screen(
+                const LinuxSetupGate(canLeave: true),
+                reduceMotion: reduceMotion,
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+
+          expect(
+            container.read(linuxSetupProvider).phase,
+            reduceMotion ? isA<SetupIdle>() : isA<SetupFinished>(),
+          );
+          await tester.pump(const Duration(seconds: 2));
+          await tester.pump();
+          expect(container.read(linuxSetupProvider).phase, isA<SetupIdle>());
+        },
+      );
+    }
   });
 }
 
-/// Pumps while real I/O (journal, lock file) completes.
-Future<void> _settle(WidgetTester tester) async {
-  for (var i = 0; i < 20; i++) {
+/// Pumps while real I/O (journal, lock file) completes; with [until], until
+/// it holds and shows (at most 200 rounds).
+Future<void> _settle(WidgetTester tester, {bool Function()? until}) async {
+  for (var i = 0; i < (until == null ? 20 : 200); i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 10)),
     );
     await tester.pump(const Duration(milliseconds: 20));
+    if (until != null && until()) break;
   }
+  await tester.pump();
+  if (until != null) expect(until(), isTrue, reason: 'never settled');
 }
+
+/// [child] as the app shows it, with [reduceMotion] as the system asks.
+Widget _screen(Widget child, {bool reduceMotion = false}) => MediaQuery(
+  data: MediaQueryData(
+    size: const Size(800, 1400),
+    disableAnimations: reduceMotion,
+  ),
+  child: Directionality(
+    textDirection: TextDirection.ltr,
+    child: YsTheme(palette: YsPalette.dark, child: child),
+  ),
+);
 
 /// Loads Inter, the font the app ships, from the workspace.
 Future<void> _loadInter() async {
@@ -581,6 +795,9 @@ final class _Script {
   final stagesRun = <String>[];
   var manifestReads = 0;
 
+  /// Stages that fail the next time they run.
+  final failing = <String>{};
+
   static const _stages = [
     'prerequisites',
     'repository',
@@ -663,6 +880,14 @@ final class _Script {
     final stage = args[args.indexOf('--stage') + 1];
     stagesRun.add(stage);
     onLine?.call('stdout', 'working on $stage');
+    if (failing.remove(stage)) {
+      return ProcessResult(
+        0,
+        1,
+        '{"ok":false,"stage":"$stage","skipped":false,"reason":"exit code 1"}\n',
+        '',
+      );
+    }
     switch (stage) {
       case 'repository':
         await checkout();

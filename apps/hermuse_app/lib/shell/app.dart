@@ -136,6 +136,10 @@ final class _RootState extends ConsumerState<_Root> {
   _Route _route = _Route.chat;
   String? _overlayInstanceId;
 
+  /// The assistant keeps its state (the checklist's animations) when it
+  /// moves between the full screen and the overlay.
+  final _gateKey = GlobalKey();
+
   /// Whether the Linux setup assistant runs (Linux only, see `main()`).
   bool get _linux => ref.read(linuxSetupServicesProvider) != null;
 
@@ -163,7 +167,11 @@ final class _RootState extends ConsumerState<_Root> {
       case LinuxSetupGoal.reopen || LinuxSetupGoal.computer || null:
         break;
     }
-    Future.microtask(ref.read(linuxSetupProvider.notifier).acknowledge);
+    // A goal the user watched ends with its ready moment, which the
+    // assistant acknowledges itself.
+    if (!next.showsReady) {
+      Future.microtask(ref.read(linuxSetupProvider.notifier).acknowledge);
+    }
   }
 
   /// Connect to a Hermes server; on Linux the keyring comes first.
@@ -200,16 +208,16 @@ final class _RootState extends ConsumerState<_Root> {
     if ((instances == null || instances.isNotEmpty) &&
         (!setup.keystoreVerified ||
             (setup.goal == LinuxSetupGoal.reopen && setup.active))) {
-      return const LinuxSetupGate(canLeave: false);
+      return LinuxSetupGate(key: _gateKey, canLeave: false);
     }
     final content = _routes(palette);
-    if (!setup.active) return content;
+    if (!setup.active && !setup.showsReady) return content;
     return Stack(
       fit: StackFit.expand,
       children: [
         // Kept alive under the assistant, back as it was once it closes.
         ExcludeFocus(child: Offstage(child: content)),
-        const LinuxSetupGate(canLeave: true),
+        LinuxSetupGate(key: _gateKey, canLeave: true),
       ],
     );
   }
