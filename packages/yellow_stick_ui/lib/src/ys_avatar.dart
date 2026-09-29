@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_focus_ring.dart';
 import 'ys_icon_widget.dart';
 import 'ys_pressable.dart';
 import 'ys_theme.dart';
@@ -63,21 +64,25 @@ final class YsAvatar extends StatelessWidget {
                   child: YsPressable(
                     onPressed: onBadgePressed,
                     semanticLabel: badgeSemanticLabel,
-                    builder: (context, state) => AnimatedContainer(
-                      duration: const Duration(milliseconds: YsMotion.fast),
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: state.hovered || state.pressed
-                            ? palette.neutralFilmColor
-                            : palette.neutralAmbientColor,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: YsIconWidget(
-                          badgeIcon,
-                          size: 14,
-                          color: palette.contentColor,
+                    builder: (context, state) => YsFocusRing(
+                      visible: state.focused,
+                      radius: YsRadius.pill,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: YsMotion.fast),
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: state.hovered || state.pressed
+                              ? palette.neutralFilmColor
+                              : palette.neutralAmbientColor,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: YsIconWidget(
+                            badgeIcon,
+                            size: 14,
+                            color: palette.contentColor,
+                          ),
                         ),
                       ),
                     ),

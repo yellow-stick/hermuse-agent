@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_focus_ring.dart';
 import 'ys_icon_widget.dart';
 import 'ys_pressable.dart';
 import 'ys_theme.dart';
@@ -194,14 +195,18 @@ final class YsButton extends StatelessWidget {
         autofocus: autofocus,
         focusNode: focusNode,
         // A disabled button neither hovers nor presses; it dims like the web
-        // kit's `:disabled` rule.
+        // kit's `:disabled` rule. Keyboard focus draws the web kit's outline.
         builder: (context, state) => ExcludeSemantics(
-          child: Opacity(
-            opacity: state.disabled ? _disabledOpacity : 1,
-            child: _buildChild(
-              context,
-              YsTheme.of(context),
-              state.disabled ? const YsPressableState(disabled: true) : state,
+          child: YsFocusRing(
+            visible: state.focused && !state.disabled,
+            radius: YsRadius.pill,
+            child: Opacity(
+              opacity: state.disabled ? _disabledOpacity : 1,
+              child: _buildChild(
+                context,
+                YsTheme.of(context),
+                state.disabled ? const YsPressableState(disabled: true) : state,
+              ),
             ),
           ),
         ),
@@ -254,7 +259,7 @@ final class YsButton extends StatelessWidget {
       ),
       YsButtonKind.icon => _CircleShell(
         size: size,
-        background: state.hovered || state.pressed || state.focused
+        background: state.hovered || state.pressed
             ? (hoverBackground ?? palette.neutralFilmColor)
             : (background ?? const Color(0x00000000)),
         child: YsIconWidget(
