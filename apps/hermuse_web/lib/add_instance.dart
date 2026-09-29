@@ -116,7 +116,7 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       ).getStatus().timeout(const Duration(seconds: 15));
       checkSupportedVersion(status.version);
       if (!mounted) return;
-      if (status.authRequired && !status.authProviders.contains('basic')) {
+      if (status.loginMethod == null) {
         setState(() {
           _busy = false;
           _error =
@@ -174,33 +174,28 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       _step = _Step.saving;
     });
     final loopback = token != null;
-    final id = const Uuid().v4();
     final base = Relay.instanceBase(_relay, _upstreamId!);
     final candidate = HermesInstance(
-      id: id,
+      id: const Uuid().v4(),
       label: _label.trim().isEmpty ? base.host : _label.trim(),
       kind: InstanceKind.remote,
       baseUrl: base,
       auth: loopback ? AuthMethod.loopbackToken : AuthMethod.password,
     );
-    final secrets = context.readProvider(secretStoreProvider);
-    // Validate before persisting: a temporary store proves the credentials
-    // against a real transport; only then is anything written.
-    final trial = MemorySecretStore();
-    if (password != null) {
-      await trial.write(id, SecretKeys.username, _username.trim());
-      await trial.write(id, SecretKeys.password, password);
-    }
-    if (token != null) {
-      await trial.write(id, SecretKeys.sessionToken, token);
-    }
     try {
-      final transport = await DashboardTransport.connect(
-        instance: candidate,
-        secrets: trial,
-        httpClient: _http,
-      ).timeout(const Duration(seconds: 30));
-      await transport.close();
+      // Proved on a real connection before anything is stored.
+      await context.container
+          .read(instanceAuthProvider)
+          .add(
+            candidate,
+            secrets: loopback
+                ? {SecretKeys.sessionToken: token}
+                : {
+                    SecretKeys.username: _username.trim(),
+                    SecretKeys.password: ?password,
+                  },
+          )
+          .timeout(const Duration(seconds: 30));
     } on TimeoutException {
       if (mounted) {
         setState(() {
@@ -230,20 +225,6 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
         });
       }
       return;
-    }
-    if (!mounted) return;
-    try {
-      // Registry first: writing secrets beforehand would orphan them under
-      // the new id when the add fails (e.g. DuplicateInstance).
-      final registry = await context.container.read(registryProvider.future);
-      await registry.add(candidate);
-      if (password != null) {
-        await secrets.write(id, SecretKeys.username, _username.trim());
-        await secrets.write(id, SecretKeys.password, password);
-      }
-      if (token != null) {
-        await secrets.write(id, SecretKeys.sessionToken, token);
-      }
     } on DuplicateInstance catch (e) {
       if (mounted) {
         setState(() {
@@ -254,15 +235,16 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       }
       return;
     }
+    if (!mounted) return;
     // Drop secrets from the widget state the moment they are stored.
     setState(() {
       _password = '';
       _token = '';
     });
-    component.onDone(id);
+    component.onDone(candidate.id);
   }
 
-  bool get _loopback => _status != null && !_status!.authRequired;
+  bool get _loopback => _status?.loginMethod == AuthMethod.loopbackToken;
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-screen', [
