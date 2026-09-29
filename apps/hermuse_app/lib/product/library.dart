@@ -81,65 +81,76 @@ final class _LibraryState extends ConsumerState<_Library> {
   String? _detailId;
   String? _editing;
 
+  /// The artifact and system-file dialogs open in the app overlay: their
+  /// scrim covers the whole window, like the other dialogs.
+  final _dialog = OverlayPortalController();
+
+  void _open(VoidCallback pick) {
+    setState(pick);
+    _dialog.show();
+  }
+
+  void _close() {
+    _dialog.hide();
+    setState(() {
+      _detailId = null;
+      _editing = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final artifacts = ref.watch(artifactsProvider(widget.instanceId));
     final all = artifacts.value ?? const <Artifact>[];
     final detail = all.where((a) => a.id == _detailId).firstOrNull;
     final editing = _editing;
-    return Stack(
-      children: [
-        HermuseRoute(
-          wide: true,
-          title: switch (_section) {
-            _Section.artifacts => _kindLabel(_kind),
-            _Section.systemFiles => 'System files',
-            _Section.reflections => 'Reflections',
-          },
-          children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final (label, section, kind) in _nav)
-                  ProductPill(
-                    label: label,
-                    on: _section == section && _kind == kind,
-                    onPressed: () => setState(() {
-                      _section = section;
-                      _kind = kind;
-                    }),
-                  ),
-              ],
-            ),
-            switch (_section) {
-              _Section.artifacts => _artifactList(artifacts, all),
-              _Section.systemFiles => _SystemFiles(
-                onEdit: (name) => setState(() => _editing = name),
-              ),
-              _Section.reflections => _Reflections(
-                instanceId: widget.instanceId,
-              ),
-            },
-          ],
-        ),
-        if (detail != null)
-          Positioned.fill(
-            child: YsDialog(
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => detail != null
+          ? YsDialog(
               title: detail.title,
-              onClose: () => setState(() => _detailId = null),
+              onClose: _close,
               child: _ArtifactDetail(artifact: detail),
-            ),
-          ),
-        if (editing != null)
-          Positioned.fill(
-            child: _SystemFileEditor(
+            )
+          : editing != null
+          ? _SystemFileEditor(
               instanceId: widget.instanceId,
               name: editing,
-              onClose: () => setState(() => _editing = null),
-            ),
+              onClose: _close,
+            )
+          : const SizedBox.shrink(),
+      child: HermuseRoute(
+        wide: true,
+        title: switch (_section) {
+          _Section.artifacts => _kindLabel(_kind),
+          _Section.systemFiles => 'System files',
+          _Section.reflections => 'Reflections',
+        },
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final (label, section, kind) in _nav)
+                ProductPill(
+                  label: label,
+                  on: _section == section && _kind == kind,
+                  onPressed: () => setState(() {
+                    _section = section;
+                    _kind = kind;
+                  }),
+                ),
+            ],
           ),
-      ],
+          switch (_section) {
+            _Section.artifacts => _artifactList(artifacts, all),
+            _Section.systemFiles => _SystemFiles(
+              onEdit: (name) => _open(() => _editing = name),
+            ),
+            _Section.reflections => _Reflections(instanceId: widget.instanceId),
+          },
+        ],
+      ),
     );
   }
 
@@ -171,7 +182,7 @@ final class _LibraryState extends ConsumerState<_Library> {
           _ArtifactRow(
             key: ValueKey(artifact.id),
             artifact: artifact,
-            onPressed: () => setState(() => _detailId = artifact.id),
+            onPressed: () => _open(() => _detailId = artifact.id),
           ),
       ],
     );

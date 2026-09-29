@@ -50,6 +50,23 @@ final class _GoalsState extends ConsumerState<_Goals> {
   String? _detailId;
   String? _createCategory;
 
+  /// The goal dialogs open in the app overlay: their scrim covers the whole
+  /// window (rail, panel, side-by-side chat), like the other dialogs.
+  final _dialog = OverlayPortalController();
+
+  void _open(VoidCallback pick) {
+    setState(pick);
+    _dialog.show();
+  }
+
+  void _close() {
+    _dialog.hide();
+    setState(() {
+      _detailId = null;
+      _createCategory = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final goals = ref.watch(goalsProvider(widget.instanceId));
@@ -60,68 +77,63 @@ final class _GoalsState extends ConsumerState<_Goals> {
     ];
     final detail = all.where((goal) => goal.id == _detailId).firstOrNull;
     final create = _createCategory;
-    return Stack(
-      children: [
-        HermuseRoute(
-          title: 'Goals',
-          children: [
-            if (goals.isLoading && goals.value == null)
-              const HermuseRouteSub('Loading goals…')
-            else if (goals.hasError && goals.value == null)
-              HermuseRouteError('Goals failed: ${goals.error}')
-            else ...[
-              HermuseRouteSection(
-                head: 'Tracking',
-                children: [
-                  if (tracking.isEmpty)
-                    const HermuseRouteSub(
-                      'Nothing tracked yet. Create your first goal below.',
-                    )
-                  else
-                    for (final goal in tracking)
-                      _TrackingRow(
-                        key: ValueKey(goal.id),
-                        instanceId: widget.instanceId,
-                        goal: goal,
-                        onOpen: () => setState(() => _detailId = goal.id),
-                      ),
-                ],
-              ),
-              HermuseRouteSection(
-                head: 'Create a goal',
-                children: [
-                  for (final category in hermuseGoalCategories)
-                    _CategoryRow(
-                      label: goalCategoryLabel(category),
-                      onPressed: () =>
-                          setState(() => _createCategory = category),
-                    ),
-                ],
-              ),
-            ],
-          ],
-        ),
-        if (detail != null)
-          Positioned.fill(
-            child: YsDialog(
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => detail != null
+          ? YsDialog(
               title: detail.title,
-              onClose: () => setState(() => _detailId = null),
+              onClose: _close,
               child: _GoalDetail(instanceId: widget.instanceId, goal: detail),
-            ),
-          ),
-        if (create != null)
-          Positioned.fill(
-            child: YsDialog(
+            )
+          : create != null
+          ? YsDialog(
               title: 'New ${goalCategoryLabel(create).toLowerCase()} goal',
-              onClose: () => setState(() => _createCategory = null),
+              onClose: _close,
               child: _GoalCreate(
                 instanceId: widget.instanceId,
                 category: create,
-                onCreated: () => setState(() => _createCategory = null),
+                onCreated: _close,
               ),
+            )
+          : const SizedBox.shrink(),
+      child: HermuseRoute(
+        title: 'Goals',
+        children: [
+          if (goals.isLoading && goals.value == null)
+            const HermuseRouteSub('Loading goals…')
+          else if (goals.hasError && goals.value == null)
+            HermuseRouteError('Goals failed: ${goals.error}')
+          else ...[
+            HermuseRouteSection(
+              head: 'Tracking',
+              children: [
+                if (tracking.isEmpty)
+                  const HermuseRouteSub(
+                    'Nothing tracked yet. Create your first goal below.',
+                  )
+                else
+                  for (final goal in tracking)
+                    _TrackingRow(
+                      key: ValueKey(goal.id),
+                      instanceId: widget.instanceId,
+                      goal: goal,
+                      onOpen: () => _open(() => _detailId = goal.id),
+                    ),
+              ],
             ),
-          ),
-      ],
+            HermuseRouteSection(
+              head: 'Create a goal',
+              children: [
+                for (final category in hermuseGoalCategories)
+                  _CategoryRow(
+                    label: goalCategoryLabel(category),
+                    onPressed: () => _open(() => _createCategory = category),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
