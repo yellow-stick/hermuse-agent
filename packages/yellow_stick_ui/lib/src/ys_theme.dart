@@ -26,6 +26,7 @@ extension YsFlutterPalette on YsPalette {
   Color get errorWashColor => Color(errorWash.value);
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
+  Color get shadowColor => Color(shadow.value);
 }
 
 extension YsFlutterType on YsTextStyle {

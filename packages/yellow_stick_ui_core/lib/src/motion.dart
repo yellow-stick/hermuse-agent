@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'icons.dart';
+import 'shape.dart';
 
 /// Cubic-bezier easing, same control points as CSS `cubic-bezier()`.
 final class YsEase {
@@ -724,6 +727,112 @@ final class YsStepMark {
       ),
     ],
   );
+}
+
+/// A page coming on screen (a route, an onboarding step): it fades in while
+/// rising [rise] px over [enter] ms ([YsEase.settle]). Only the incoming
+/// page moves; the previous one is gone at once.
+abstract final class YsPageMotion {
+  static const enter = 280;
+  static const rise = 12.0;
+}
+
+/// A card under the pointer rises [lift] px and casts a soft shadow
+/// ([shadowBlur] blur, [shadowY] down, palette `shadow`) over [duration] ms
+/// ([YsEase.standard]); pressed, it settles back to [press] scale.
+abstract final class YsLiftMotion {
+  static const lift = 2.0;
+  static const duration = YsMotion.base;
+  static const shadowBlur = 28.0;
+  static const shadowY = 8.0;
+  static const press = 0.985;
+}
+
+/// Loading placeholder: a highlight band [band] of the width sweeps across
+/// every block once per [period] ms.
+abstract final class YsShimmerMotion {
+  static const period = 1400;
+  static const band = 0.35;
+}
+
+/// Status dot of a live connection: when it connects, a ring grows from the
+/// dot to [reach] times its size and fades, [pings] times, [period] ms each.
+abstract final class YsPingMotion {
+  static const period = 1600;
+  static const pings = 2;
+  static const reach = 2.6;
+}
+
+/// Composer action changing between voice, send and stop: the new glyph
+/// turns in [turn] of a turn and grows from [from] scale over [swap] ms
+/// ([YsEase.settle]) while the disc behind it fills.
+abstract final class YsMorphMotion {
+  static const swap = 240;
+  static const from = 0.5;
+  static const turn = 0.25;
+}
+
+/// Rail marker of the current destination: it slides to the new item over
+/// [slide] ms ([YsEase.settle]).
+abstract final class YsRailMotion {
+  static const slide = 320;
+}
+
+/// A goal marked done: its box fills and the tick of [YsStepMark.tick]
+/// draws while [YsBurst] sparks fly out; the row holds [hold] ms, then
+/// folds away over [fold] ms.
+abstract final class YsDoneMotion {
+  static const hold = 520;
+  static const fold = 280;
+}
+
+/// Sparks flying out of a completed check: [rays] strokes around the centre
+/// of a [viewBox]-unit square, each travelling from radius [inner] to
+/// [outer] and vanishing over [frames] frames. Even rays are accent, odd
+/// rays success.
+abstract final class YsBurst {
+  static const viewBox = 40.0;
+  static const rays = 8;
+  static const inner = 11.0;
+  static const outer = 19.0;
+  static const frames = 24.0;
+
+  /// One `path` per ray, from the inner to the outer radius.
+  static final String body = [for (var i = 0; i < rays; i++) _ray(i)].join();
+
+  static String _ray(int i) {
+    final a = i * 2 * math.pi / rays - math.pi / 2;
+    String p(double r) =>
+        '${_fixed(viewBox / 2 + r * math.cos(a))} '
+        '${_fixed(viewBox / 2 + r * math.sin(a))}';
+    return '<path d="M${p(inner)} ${p(outer)}"/>';
+  }
+
+  static String _fixed(double v) => v.toStringAsFixed(2);
+
+  /// Each ray draws out from the inner radius, then its tail follows.
+  static final List<YsPartMotion> motion = [
+    for (var i = 0; i < rays; i++)
+      YsPartMotion(
+        part: i,
+        originX: viewBox / 2,
+        originY: viewBox / 2,
+        tracks: const [
+          YsMotionTrack(YsMotionProperty.trimEnd, [
+            YsKeyframe(0, 0, YsEase.settle),
+            YsKeyframe(10, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.trimStart, [
+            YsKeyframe(5, 0, YsEase.standard),
+            YsKeyframe(frames, 1),
+          ]),
+          YsMotionTrack(YsMotionProperty.opacity, [
+            YsKeyframe(0, 0, YsEase.linear),
+            YsKeyframe(0.1, 1),
+          ]),
+        ],
+      ),
+  ];
 }
 
 final _element = RegExp(r'<(path|rect|circle)\b[^>]*/>');

@@ -95,6 +95,45 @@ abstract final class YsLayout {
   /// Icon beside a line of label text (a disclosure's chevron).
   static const inlineIcon = 16.0;
 
+  /// Illustration of a page's empty state (Feed, Ideas, Library…).
+  static const artEmpty = 88.0;
+
+  /// Illustration of an empty state in a side column (chats, panel tabs).
+  static const artCompact = 72.0;
+
+  /// Illustration of a big choice card (welcome).
+  static const artChoice = 80.0;
+
+  /// Narrowest a choice card gets beside another: its title stays on one
+  /// line.
+  static const choiceMin = 292.0;
+
+  /// Illustration heading an onboarding step.
+  static const artStep = 80.0;
+
+  /// The mascot on the welcome screen: its height, and the width of the
+  /// rounded stage behind it.
+  static const mascotHeight = 200.0;
+  static const mascotStageWidth = 132.0;
+
+  /// The mascot greeting in an onboarding step.
+  static const mascotSmallHeight = 132.0;
+  static const mascotSmallStageWidth = 88.0;
+
+  /// Status badge of an onboarding stepper step, and the line joining two.
+  static const stepperBadge = 28.0;
+  static const stepperLine = 2.0;
+
+  /// Marker of the rail's current destination, on the rail's left edge.
+  static const railMarkerWidth = 3.0;
+  static const railMarkerHeight = 20.0;
+
+  /// Sparks around a completed check ([YsBurst] viewBox).
+  static const burst = 44.0;
+
+  /// Connection status dot.
+  static const statusDot = 8.0;
+
   /// At or above this width the panel docks beside the thread.
   static const wideMin = 768.0;
 

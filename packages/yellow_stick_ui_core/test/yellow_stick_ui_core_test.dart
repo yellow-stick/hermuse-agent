@@ -73,4 +73,59 @@ void main() {
       }
     });
   });
+
+  group('illustrations', () {
+    void atRest(YsPartMotion part, double frame, String reason) {
+      for (final track in part.tracks) {
+        var value = track.valueAt(frame);
+        // A full turn looks exactly like no turn.
+        if (track.property == YsMotionProperty.rotate) value %= 360;
+        expect(
+          value,
+          track.property.rest,
+          reason: '$reason ${part.part} ${track.property} at $frame',
+        );
+      }
+    }
+
+    test('motions target existing parts, trims only stroked ones', () {
+      for (final art in YsArt.values) {
+        for (final part in [...art.entrance, ...art.idle, ...art.hover]) {
+          final index = part.part!;
+          expect(index, lessThan(art.parts.length), reason: art.name);
+          if (part.track(YsMotionProperty.trimEnd) != null) {
+            expect(art.parts[index].filled, isFalse, reason: art.name);
+          }
+        }
+      }
+    });
+
+    test('the draw-in ends with every part drawn and in place', () {
+      for (final art in YsArt.values) {
+        for (final part in art.entrance) {
+          atRest(part, art.entranceFrames, '${art.name} entrance');
+        }
+      }
+    });
+
+    test('idle cycles start and end at rest, so loops never jump', () {
+      for (final art in YsArt.values) {
+        for (final part in art.idle) {
+          atRest(part, 0, '${art.name} idle');
+          atRest(part, art.idleFrames, '${art.name} idle');
+        }
+        for (final part in art.hover) {
+          atRest(part, art.hoverFrames, '${art.name} hover');
+        }
+      }
+    });
+
+    test('burst rays vanish by the end', () {
+      for (final part in YsBurst.motion) {
+        final start = part.valueAt(YsMotionProperty.trimStart, YsBurst.frames);
+        final end = part.valueAt(YsMotionProperty.trimEnd, YsBurst.frames);
+        expect(end - start, lessThanOrEqualTo(0));
+      }
+    });
+  });
 }

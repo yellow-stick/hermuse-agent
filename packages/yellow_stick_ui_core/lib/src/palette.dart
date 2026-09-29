@@ -40,6 +40,7 @@ final class YsPalette {
     required this.errorWash,
     required this.logoSurface,
     required this.avatarSurface,
+    required this.shadow,
   });
 
   /// App background.
@@ -106,6 +107,9 @@ final class YsPalette {
   /// readable on [canvas].
   final YsColor avatarSurface;
 
+  /// Soft shadow under a card lifted by the pointer.
+  final YsColor shadow;
+
   /// Yellow Stick dark theme: near-black canvas, warm professional yellow.
   static const dark = YsPalette(
     canvas: YsColor(0xFF181819),
@@ -129,6 +133,7 @@ final class YsPalette {
     errorWash: YsColor(0x14E5484D),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
+    shadow: YsColor(0x73000000),
   );
 
   /// Every role by its CSS custom-property name (`--paper-clear`, ...).
@@ -154,5 +159,6 @@ final class YsPalette {
     'error-wash': errorWash,
     'logo-surface': logoSurface,
     'avatar-surface': avatarSurface,
+    'shadow': shadow,
   };
 }
