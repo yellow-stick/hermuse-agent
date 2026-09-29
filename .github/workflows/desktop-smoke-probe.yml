@@ -1,0 +1,339 @@
+# TEMPORARY feasibility probe of the macOS/Windows smoke automation (screen
+# capture, OCR, accessibility trees, pointer events, process environment,
+# keychain) on the GitHub-hosted runners. Removed before the branch merges.
+name: Desktop smoke probe
+
+on:
+  push:
+    branches: [yellow-stick/desktop-releases]
+    paths: [.github/workflows/desktop-smoke-probe.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-smoke-probe
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Flutter SDK (pinned archive)
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          url=$(jq -er '.flutter.archives["macos-arm64"].url' "$lock")
+          sha=$(jq -er '.flutter.archives["macos-arm64"].sha256' "$lock")
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/flutter.zip" "$url"
+          echo "$sha  $RUNNER_TEMP/flutter.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/flutter.zip"
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+          sudo xcode-select -s "$(jq -er .macos.xcode.path "$lock")"
+          xcodebuild -version
+
+      - name: Build (plain flutter build, not the release package)
+        run: |
+          set -euo pipefail
+          flutter config --no-analytics --no-cli-animations
+          flutter --version
+          flutter pub get --enforce-lockfile
+          cd apps/hermuse_app
+          flutter build macos --release
+          ls build/macos/Build/Products/Release
+
+      - name: Tools
+        run: |
+          set -euo pipefail
+          start=$SECONDS
+          brew install tesseract imagemagick cliclick
+          echo "brew: $((SECONDS - start)) s"
+          tesseract --version
+          magick -version | head -n 1
+          cliclick -V || true
+
+      - name: Probe
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/probe"
+          mkdir -p "$out"
+          app=$(ls -d apps/hermuse_app/build/macos/Build/Products/Release/*.app | head -n 1)
+          name=$(basename "$app" .app)
+          ditto "$app" "/Applications/$name.app"
+          sw_vers | tee "$out/sw_vers.txt"
+          id | tee -a "$out/sw_vers.txt"
+          security list-keychains | tee "$out/keychains.txt"
+          security show-keychain-info ~/Library/Keychains/login.keychain-db 2>&1 | tee -a "$out/keychains.txt"
+          { security add-generic-password -s hermuse-probe -a fixture -w probe-value-1 &&
+            security find-generic-password -s hermuse-probe -a fixture -w &&
+            security delete-generic-password -s hermuse-probe -a fixture; } >"$out/keychain-roundtrip.txt" 2>&1
+          echo "keychain round-trip: $?" | tee -a "$out/keychain-roundtrip.txt"
+          (cd /tmp && open -a "/Applications/$name.app")
+          sleep 25
+          pgrep -lf "$name" | tee "$out/pgrep.txt"
+          osascript -l JavaScript -e 'ObjC.import("AppKit"); const s = $.NSScreen.mainScreen; JSON.stringify({w: s.frame.size.width, h: s.frame.size.height, scale: s.backingScaleFactor})' | tee "$out/screen.json"
+          screencapture -x "$out/shot-1.png"; echo "screencapture: $?"
+          sips -g pixelWidth -g pixelHeight "$out/shot-1.png"
+          cat >"$out/ax.applescript" <<EOF
+          tell application "System Events"
+            set p to first process whose name is "$name"
+            set frontmost of p to true
+            set out to "windows: " & (count of windows of p) & linefeed
+            repeat with w in windows of p
+              set out to out & "window: " & (name of w) & " pos " & ((item 1 of (position of w)) as text) & "," & ((item 2 of (position of w)) as text) & " size " & ((item 1 of (size of w)) as text) & "," & ((item 2 of (size of w)) as text) & linefeed
+            end repeat
+            try
+              set value of attribute "AXEnhancedUserInterface" of p to true
+              set out to out & "AXEnhancedUserInterface set" & linefeed
+            on error e
+              set out to out & "AXEnhancedUserInterface error: " & e & linefeed
+            end try
+            delay 3
+            set els to entire contents of window 1 of p
+            set out to out & "elements: " & (count of els) & linefeed
+            repeat with e in els
+              set line_ to ""
+              try
+                set line_ to line_ & (role of e)
+              end try
+              try
+                set line_ to line_ & " | d=" & (description of e)
+              end try
+              try
+                set line_ to line_ & " | n=" & (name of e)
+              end try
+              try
+                set line_ to line_ & " | t=" & (title of e)
+              end try
+              try
+                set line_ to line_ & " | at " & ((item 1 of (position of e)) as text) & "," & ((item 2 of (position of e)) as text) & " " & ((item 1 of (size of e)) as text) & "x" & ((item 2 of (size of e)) as text)
+              end try
+              set out to out & line_ & linefeed
+            end repeat
+            return out
+          end tell
+          EOF
+          osascript "$out/ax.applescript" >"$out/ax.txt" 2>&1; echo "ax: $?"; cat "$out/ax.txt"
+          screencapture -x "$out/shot-2.png"
+          tesseract "$out/shot-2.png" "$out/ocr-raw" --psm 11 tsv >/dev/null 2>&1
+          magick "$out/shot-2.png" -colorspace HSB -channel B -separate +channel -negate -resize 200% "$out/pre.png"
+          tesseract "$out/pre.png" "$out/ocr-pre" --psm 11 >/dev/null 2>&1
+          echo "--- OCR preprocessed"; cat "$out/ocr-pre.txt"
+          cat >"$out/env.py" <<'EOF'
+          import ctypes, ctypes.util, struct, subprocess, sys, json
+          libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+          def procargs(pid):
+              argmax = ctypes.c_int(0); size = ctypes.c_size_t(ctypes.sizeof(argmax))
+              mib = (ctypes.c_int * 2)(1, 8)
+              libc.sysctl(mib, 2, ctypes.byref(argmax), ctypes.byref(size), None, 0)
+              buf = ctypes.create_string_buffer(argmax.value); size = ctypes.c_size_t(argmax.value)
+              mib = (ctypes.c_int * 3)(1, 49, pid)
+              if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+                  raise OSError(ctypes.get_errno(), "sysctl KERN_PROCARGS2")
+              data = buf.raw[:size.value]
+              argc = struct.unpack("i", data[:4])[0]
+              rest = data[4:]
+              rest = rest[rest.index(b"\0"):].lstrip(b"\0")
+              parts = rest.split(b"\0")
+              env = []
+              for item in parts[argc:]:
+                  if not item:
+                      break
+                  env.append(item.decode(errors="replace"))
+              return [p.decode(errors="replace") for p in parts[:argc]], env
+          pid = int(sys.argv[1])
+          argv, env = procargs(pid)
+          print(json.dumps({"argv": argv, "env_keys": sorted(e.split("=", 1)[0] for e in env)}, indent=1))
+          EOF
+          pid=$(pgrep -n -x "$name" || pgrep -n -f "$name.app/Contents/MacOS")
+          python3 "$out/env.py" "$pid" | tee "$out/env.json"
+          lsof -nP -a -p "$pid" -iTCP 2>&1 | head -20
+          # Click the install button: AX press first, else cliclick at the OCR centre.
+          cat >"$out/press.applescript" <<EOF
+          tell application "System Events"
+            set p to first process whose name is "$name"
+            set frontmost of p to true
+            set b to first UI element of (entire contents of window 1 of p) whose description is "Install Hermes on this computer"
+            set pos to position of b
+            set sz to size of b
+            return ((item 1 of pos) + (item 1 of sz) / 2) as integer & "," & ((item 2 of pos) + (item 2 of sz) / 2) as integer
+          end tell
+          EOF
+          xy=$(osascript "$out/press.applescript" 2>&1); echo "ax button centre: $xy"
+          if [[ $xy =~ ^[0-9]+,[0-9]+$ ]]; then
+            cliclick "c:$xy"; echo "cliclick: $?"
+          fi
+          sleep 15
+          screencapture -x "$out/shot-3-after-click.png"
+          magick "$out/shot-3-after-click.png" -colorspace HSB -channel B -separate +channel -negate -resize 200% "$out/pre3.png"
+          tesseract "$out/pre3.png" - --psm 11 2>/dev/null | grep -v '^\s*$' | head -30
+          pgrep -lf hermes | head
+          exit 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: probe-macos
+          path: ${{ runner.temp }}/probe
+
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Flutter SDK (pinned archive)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json
+          $entry = $lock.flutter.archives.'windows-x64'
+          $zip = Join-Path $env:RUNNER_TEMP flutter.zip
+          Invoke-WebRequest -Uri $entry.url -OutFile $zip
+          $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($got -ne $entry.sha256) { throw "flutter archive sha256 $got, lock $($entry.sha256)" }
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE) { throw "tar $LASTEXITCODE" }
+          Remove-Item $zip
+          Add-Content $env:GITHUB_PATH (Join-Path $env:RUNNER_TEMP 'flutter\bin')
+
+      - name: Build (plain flutter build, not the release package)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter config --no-analytics --no-cli-animations
+          flutter --version
+          flutter pub get --enforce-lockfile
+          Set-Location apps/hermuse_app
+          flutter build windows --release
+          if ($LASTEXITCODE) { throw "build $LASTEXITCODE" }
+
+      - name: Tesseract (pinned installer)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:RUNNER_TEMP tesseract-setup.exe
+          Invoke-WebRequest -Uri https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe -OutFile $exe
+          $got = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          if ($got -ne 'c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9') { throw "sha256 $got" }
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          Start-Process -FilePath $exe -ArgumentList '/S' -Wait
+          "install: $($sw.Elapsed)"
+          & 'C:\Program Files\Tesseract-OCR\tesseract.exe' --version
+          magick -version | Select-Object -First 1
+
+      - name: Probe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $out = Join-Path $env:RUNNER_TEMP probe
+          New-Item -ItemType Directory -Force $out | Out-Null
+          whoami; [Environment]::UserInteractive; (Get-Process -Id $PID).SessionId
+          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public static class ProbeNative {
+            [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int cls, ref PBI pbi, int len, out int ret);
+            [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+            [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, IntPtr size, out IntPtr read);
+            [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] public static extern void mouse_event(int flags, int dx, int dy, int data, IntPtr extra);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+            [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+            [StructLayout(LayoutKind.Sequential)] struct PBI { public IntPtr ExitStatus, Peb, Affinity, Priority, Pid, ParentPid; }
+            static IntPtr ReadPtr(IntPtr h, IntPtr at) {
+              var b = new byte[8]; IntPtr n;
+              if (!ReadProcessMemory(h, at, b, (IntPtr)8, out n)) throw new System.ComponentModel.Win32Exception();
+              return (IntPtr)BitConverter.ToInt64(b, 0);
+            }
+            public static string[] Environment(int pid) {
+              IntPtr h = OpenProcess(0x0410, false, pid);
+              if (h == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+              try {
+                var pbi = new PBI(); int ret;
+                int st = NtQueryInformationProcess(h, 0, ref pbi, Marshal.SizeOf(typeof(PBI)), out ret);
+                if (st != 0) throw new Exception("NtQueryInformationProcess " + st);
+                IntPtr pp = ReadPtr(h, pbi.Peb + 0x20);
+                IntPtr env = ReadPtr(h, pp + 0x80);
+                long size = (long)ReadPtr(h, pp + 0x3F0);
+                var buf = new byte[size]; IntPtr n;
+                if (!ReadProcessMemory(h, env, buf, (IntPtr)size, out n)) throw new System.ComponentModel.Win32Exception();
+                return Encoding.Unicode.GetString(buf, 0, (int)n).Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
+              } finally { CloseHandle(h); }
+            }
+          }
+          '@
+          [ProbeNative]::SetProcessDPIAware() | Out-Null
+          $exe = Resolve-Path apps/hermuse_app/build/windows/x64/runner/Release/hermuse_app.exe
+          $cwd = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP cwd)
+          $p = Start-Process -FilePath $exe -WorkingDirectory $cwd -PassThru
+          Start-Sleep 20
+          $p.Refresh(); "title: $($p.MainWindowTitle) handle: $($p.MainWindowHandle)"
+          [ProbeNative]::ShowWindow($p.MainWindowHandle, 3) | Out-Null
+          [ProbeNative]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+          Start-Sleep 3
+          $screen = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+          "screen: $($screen.Width)x$($screen.Height)"
+          function Shot($name) {
+            $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+            $g = [Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+            $path = Join-Path $out "$name.png"
+            $bmp.Save($path); $g.Dispose(); $bmp.Dispose()
+            $path
+          }
+          $s1 = Shot shot-1
+          $root = [Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+          "root: '$($root.Current.Name)' class $($root.Current.ClassName)"
+          Start-Sleep 3
+          $all = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+          "descendants: $($all.Count)"
+          $lines = foreach ($e in $all) {
+            $c = $e.Current
+            $pat = ($e.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName }) -join ','
+            "{0} | '{1}' | {2} | {3}" -f $c.ControlType.ProgrammaticName, $c.Name, $c.BoundingRectangle, $pat
+          }
+          $lines | Set-Content (Join-Path $out uia.txt)
+          $lines | Select-Object -First 60
+          & 'C:\Program Files\Tesseract-OCR\tesseract.exe' $s1 (Join-Path $out ocr-raw) --psm 11 | Out-Null
+          magick $s1 -colorspace HSB -channel B -separate +channel -negate -resize 200% (Join-Path $out pre.png)
+          & 'C:\Program Files\Tesseract-OCR\tesseract.exe' (Join-Path $out pre.png) (Join-Path $out ocr-pre) --psm 11 | Out-Null
+          '--- OCR preprocessed'; Get-Content (Join-Path $out ocr-pre.txt) | Where-Object { $_.Trim() }
+          try { $envs = [ProbeNative]::Environment($p.Id); "env of app: $($envs.Count) vars, has PATH: $([bool]($envs | Where-Object { $_ -like 'Path=*' }))" } catch { "env read failed: $_" }
+          $cond = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Install Hermes on this computer'
+          $button = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $cond)
+          if ($button) {
+            $r = $button.Current.BoundingRectangle
+            "button rect: $r"
+            $x = [int]($r.X + $r.Width / 2); $y = [int]($r.Y + $r.Height / 2)
+            [ProbeNative]::SetCursorPos($x, $y) | Out-Null
+            Start-Sleep -Milliseconds 300
+            [ProbeNative]::mouse_event(0x0002, 0, 0, 0, [IntPtr]::Zero)
+            [ProbeNative]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)
+            "clicked at $x,$y"
+          } else { 'no UIA element named Install Hermes on this computer' }
+          Start-Sleep 20
+          $s3 = Shot shot-3-after-click
+          magick $s3 -colorspace HSB -channel B -separate +channel -negate -resize 200% (Join-Path $out pre3.png)
+          & 'C:\Program Files\Tesseract-OCR\tesseract.exe' (Join-Path $out pre3.png) - --psm 11 | Where-Object { $_.Trim() } | Select-Object -First 30
+          Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'powershell|python|hermes|uv' } | Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -AutoSize | Out-String -Width 400
+          exit 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: probe-windows
+          path: ${{ runner.temp }}/probe
