@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -331,7 +332,7 @@ final class _GoalDetailState extends ConsumerState<_GoalDetail> {
           ),
           Text(
             [
-              event.at,
+              formatTimestamp(event.at, DateTime.now()),
               if (event.progress.isNotEmpty) event.progress,
             ].join(' · '),
             style: subtle,

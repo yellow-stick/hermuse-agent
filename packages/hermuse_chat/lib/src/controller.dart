@@ -1809,3 +1809,11 @@ String formatTimeAgo(DateTime at, DateTime now) {
   if (age.inDays < 7) return _weekdays[local.weekday - 1];
   return '${_months[local.month - 1]} ${local.day}';
 }
+
+/// A stored timestamp (the plugin's ISO-8601 `created_at`, a timeline
+/// entry's `at`) in the [formatTimeAgo] style; text that is not a timestamp
+/// comes back unchanged.
+String formatTimestamp(String stamp, DateTime now) {
+  final at = DateTime.tryParse(stamp);
+  return at == null ? stamp : formatTimeAgo(at, now);
+}

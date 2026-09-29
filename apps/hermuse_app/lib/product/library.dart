@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -225,7 +226,8 @@ final class _ArtifactRow extends StatelessWidget {
                   Text(
                     [
                       _kindLabel(artifact.kind),
-                      if (artifact.createdAt.isNotEmpty) artifact.createdAt,
+                      if (artifact.createdAt.isNotEmpty)
+                        formatTimestamp(artifact.createdAt, DateTime.now()),
                     ].join(' · '),
                     style: YsType.small.flutter.copyWith(
                       color: palette.contentMutedColor,
@@ -259,7 +261,8 @@ final class _ArtifactDetail extends StatelessWidget {
         Text(
           [
             _kindLabel(artifact.kind),
-            if (artifact.createdAt.isNotEmpty) artifact.createdAt,
+            if (artifact.createdAt.isNotEmpty)
+              formatTimestamp(artifact.createdAt, DateTime.now()),
             if (artifact.size > 0) _formatSize(artifact.size),
           ].join(' · '),
           style: subtle,
