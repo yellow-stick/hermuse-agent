@@ -291,10 +291,12 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final instance = widget.instance;
+    // Outlined, not filled: the neutral buttons and the monogram disc share
+    // the neutral fill and would vanish on it (web `.hermuse-instance-row`).
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: palette.neutralAmbientColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        border: Border.all(color: palette.lineColor, width: ysHairline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -308,27 +310,11 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _renaming
-                      ? SizedBox(
-                          height: 32,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: palette.paperClearColor,
-                              borderRadius: BorderRadius.circular(
-                                YsRadius.pill,
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              child: YsTextField(
-                                controller: _label,
-                                semanticLabel: 'Instance name',
-                                autofocus: true,
-                                onSubmitted: (_) => _rename(),
-                              ),
-                            ),
-                          ),
+                      ? YsInputBox(
+                          controller: _label,
+                          semanticLabel: 'Instance name',
+                          autofocus: true,
+                          onSubmitted: (_) => _rename(),
                         )
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,6 +334,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                           ],
                         ),
                 ),
+                const SizedBox(width: 12),
                 InstanceStatusDot(instance.id),
               ],
             ),
