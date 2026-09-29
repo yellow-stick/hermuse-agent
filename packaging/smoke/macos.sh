@@ -275,12 +275,16 @@ c0_test_base() {
   pass_or_fail "$id" no-prior-state "${#present[@]}" \
     "no Hermes, HERMES_HOME, app, app data or app keychain item before the test${present[*]:+; found: ${present[*]}}" \
     "$EVID/logs/prior-state.txt"
+  rc_fingerprint >"$EVID/logs/rc-before.txt"
   # Recorded, not required: what the hosted image adds over a new Mac. The
-  # app starts from launchd (PATH=/usr/bin:/bin:/usr/sbin:/sbin), so Homebrew
-  # and the tool cache stay out of its reach; Xcode's git and clang do not.
+  # app starts from launchd and gives its processes a login shell's PATH
+  # (/etc/paths, /etc/paths.d), so Homebrew and the tool cache stay out of
+  # their reach; Xcode's git and clang (a new Mac installs them on request) do not.
+  cp /etc/paths "$EVID/logs/etc-paths.txt" 2>/dev/null
+  cat /etc/paths.d/* >>"$EVID/logs/etc-paths.txt" 2>/dev/null
   check "$id" runner-image pass \
     "hosted image extras: Xcode $(xcodebuild -version 2>/dev/null | head -n 1 | cut -d' ' -f2), Homebrew, Docker $(command -v docker >/dev/null && echo present || echo absent)" \
-    "$EVID/logs/tools.txt"
+    "$EVID/logs/tools.txt" "$EVID/logs/etc-paths.txt"
 }
 
 c1_launch() {
@@ -375,6 +379,13 @@ menu_bar_crop() { # <png>: the left half of the menu bar, in screenshot pixels
 
 journal_file() { printf '%s\n' "$APP_SUPPORT/hermes-install.json"; }
 
+rc_fingerprint() { # the user's shell startup files, which the install must not touch
+  local file
+  for file in .zshrc .zprofile .zshenv .bash_profile .bashrc .profile; do
+    printf '%s %s\n' "$file" "$(sha_of "$HOME/$file" || true)"
+  done
+}
+
 c4_hermes() {
   local id=c4-hermes png
   if ! png=$(ui_click "$UI_LOCAL_CHOICE" "$(T 60)"); then
@@ -406,17 +417,30 @@ c4_hermes() {
   [ "$(git -C "$install_dir" rev-parse HEAD 2>/dev/null)" = "$PIN_COMMIT" ] || ok=1
   pass_or_fail "$id" pinned-checkout "$ok" "checkout HEAD and bootstrap marker at $PIN_COMMIT" \
     "$EVID/logs/hermes-bootstrap-complete.json"
-  local launcher version=$EVID/logs/hermes-version.txt
-  for launcher in "$HOME/.local/bin/hermes" "$install_dir/venv/bin/hermes" ""; do
-    [ -n "$launcher" ] && [ -x "$launcher" ] && break
-  done
-  if [ -n "$launcher" ]; then
-    env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin "$launcher" --version >"$version" 2>&1
+  # The stages run with the managed HOME the journal records
+  # (<HERMES_HOME>/runtime), so the launcher and Node shims live there.
+  local runtime launcher version=$EVID/logs/hermes-version.txt
+  runtime=$(jq -r '.runtime_home // empty' "$journal" 2>/dev/null)
+  launcher=${runtime:+$runtime/.local/bin/hermes}
+  if [ -n "$launcher" ] && [ -x "$launcher" ]; then
+    env -i HOME="$HOME" PATH="$runtime/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$launcher" --version >"$version" 2>&1
     pass_or_fail "$id" launcher-version "$(grep -q '0\.21\.' "$version" && echo 0 || echo 1)" \
-      "$launcher answers $(head -n 1 "$version")" "$version"
+      "managed launcher $launcher answers $(head -n 1 "$version")" "$version"
   else
-    check "$id" launcher-version fail "no hermes launcher in ~/.local/bin or the checkout's venv"
+    check "$id" launcher-version fail "no managed launcher under the journal's runtime_home (${runtime:-unset})"
   fi
+  local leak
+  local -a leaked=()
+  for leak in hermes node npm uv; do
+    [ -e "$HOME/.local/bin/$leak" ] && leaked+=("$leak")
+  done
+  rc_fingerprint >"$EVID/logs/rc-after.txt"
+  ok=0
+  [ ${#leaked[@]} -eq 0 ] || ok=1
+  cmp -s "$EVID/logs/rc-before.txt" "$EVID/logs/rc-after.txt" || ok=1
+  pass_or_fail "$id" real-home-untouched "$ok" \
+    "no shim in ~/.local/bin${leaked[*]:+ (found ${leaked[*]})}, the shell startup files unchanged" \
+    "$EVID/logs/rc-before.txt" "$EVID/logs/rc-after.txt"
   ok=0
   jq -e --arg home "$HOME" '.backend.home == $home and .backend.hermes_desktop == "1"
     and ((.backend.hermes_home // "") == "" or .backend.hermes_home == ($home + "/.hermes"))
