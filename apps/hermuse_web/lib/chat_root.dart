@@ -246,31 +246,33 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     return HermuseScope(
       loading: _loadingShell(),
       child: Builder(
-        builder: (context) => HermuseWatch(
-          provider: relayProvider,
-          builder: (context, detected) {
-            if (!detected.hasValue) return _loadingShell();
-            final relay = detected.value;
-            if (relay == null) {
-              return _loadingShell(child: HermuseRelayRequired());
-            }
-            return HermuseWatch(
-              provider: instancesProvider,
-              builder: (context, instances) => HermuseWatch(
-                provider: activeThreadProvider,
-                builder: (context, active) =>
-                    _route(context, relay, instances, active),
+        // The demo answers every call in the browser: no relay to find.
+        builder: (context) => hermuseDemo
+            ? _instancesRoute()
+            : HermuseWatch(
+                provider: relayProvider,
+                builder: (context, detected) {
+                  if (!detected.hasValue) return _loadingShell();
+                  if (detected.value == null) {
+                    return _loadingShell(child: HermuseRelayRequired());
+                  }
+                  return _instancesRoute();
+                },
               ),
-            );
-          },
-        ),
       ),
     );
   }
 
+  Component _instancesRoute() => HermuseWatch(
+    provider: instancesProvider,
+    builder: (context, instances) => HermuseWatch(
+      provider: activeThreadProvider,
+      builder: (context, active) => _route(context, instances, active),
+    ),
+  );
+
   Component _route(
     BuildContext context,
-    Uri relay,
     AsyncValue<List<HermesInstance>> instancesValue,
     AsyncValue<ThreadRef?> activeValue,
   ) {
@@ -474,6 +476,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     );
 
     Component thread() => HermuseThread(
+      readOnly: hermuseDemo,
       switching: switching,
       thread: activeThread,
       instanceId: instance.id,
@@ -486,7 +489,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       onInterrupt: controller.interrupt,
       selectedOffers: state.selectedOffers,
       onToggleReaction: (id) => controller.toggleReaction(id, '👍'),
-      onReply: controller.startReply,
+      onReply: hermuseDemo ? null : controller.startReply,
       onCopy: (id) => _copy(
         id,
         activeThread.messages.firstWhere((m) => m.id == id).plainText,
@@ -510,10 +513,12 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             instances: instances,
             activeInstanceId: instance.id,
             onSelectInstance: (id) => unawaited(_openInstance(id)),
-            onAddInstance: () =>
-                setState(() => _overlay = _Overlay.addInstance),
-            onOpenInstances: () =>
-                setState(() => _overlay = _Overlay.instances),
+            onAddInstance: hermuseDemo
+                ? null
+                : () => setState(() => _overlay = _Overlay.addInstance),
+            onOpenInstances: hermuseDemo
+                ? null
+                : () => setState(() => _overlay = _Overlay.instances),
             destination: _destination,
             onDestination: (target) => setState(() => _destination = target),
             chatsPanelOpen: chatsOpen,
@@ -559,6 +564,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
         HermuseSidebar(
           key: const ValueKey('chats-panel'),
           controller: controller,
+          readOnly: hermuseDemo,
           onOpenThread: (id) => _pickThread(controller, id, pinned: pinned),
           onNewSideChat: () => _newSideChat(controller, pinned: pinned),
           onSetPinned: (value) {
@@ -647,13 +653,14 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
                 builder: (context, press) =>
                     YsIconView(icon, size: YsLayout.bottomNavIconSize),
               ),
-            YsPressable(
-              onPressed: () => setState(() => _overlay = _Overlay.instances),
-              label: 'More',
-              classes: 'hermuse-bottomnav-item',
-              builder: (context, press) =>
-                  YsIconView(YsIcon.more, size: YsLayout.bottomNavIconSize),
-            ),
+            if (!hermuseDemo)
+              YsPressable(
+                onPressed: () => setState(() => _overlay = _Overlay.instances),
+                label: 'More',
+                classes: 'hermuse-bottomnav-item',
+                builder: (context, press) =>
+                    YsIconView(YsIcon.more, size: YsLayout.bottomNavIconSize),
+              ),
           ],
         ),
       ]),
@@ -664,7 +671,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           tab: _tab,
           onTab: (t) => setState(() => _tab = t),
           onClose: () => setState(() => _panelOverride = false),
-          onOpenComputer: controller.openComputer,
+          onOpenComputer: hermuseDemo ? null : controller.openComputer,
         ),
       if (profileOpen)
         div(

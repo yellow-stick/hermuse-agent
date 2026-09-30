@@ -18,8 +18,8 @@ class HermuseRail extends StatelessComponent {
     required this.instances,
     required this.activeInstanceId,
     required this.onSelectInstance,
-    required this.onAddInstance,
-    required this.onOpenInstances,
+    this.onAddInstance,
+    this.onOpenInstances,
     required this.destination,
     required this.onDestination,
     required this.chatsPanelOpen,
@@ -30,8 +30,10 @@ class HermuseRail extends StatelessComponent {
   final List<HermesInstance> instances;
   final String? activeInstanceId;
   final ValueChanged<String> onSelectInstance;
-  final VoidCallback onAddInstance;
-  final VoidCallback onOpenInstances;
+
+  /// Null hides the entry (the read-only demo manages no instances).
+  final VoidCallback? onAddInstance;
+  final VoidCallback? onOpenInstances;
 
   /// Currently shown product surface.
   final HermuseDestination destination;
@@ -109,27 +111,29 @@ class HermuseRail extends StatelessComponent {
               .text(_letter(instance.label)),
             ]),
           ),
-        _item(
-          label: 'Add a Hermes',
-          classes: 'hermuse-rail-add',
-          onPressed: onAddInstance,
-          builder: (state) => YsIconView(
-            YsIcon.plus,
-            size: 20,
-            strokeWidth: YsLayout.railIconStroke * YsLayout.railIconSize / 20,
+        if (onAddInstance case final onAdd?)
+          _item(
+            label: 'Add a Hermes',
+            classes: 'hermuse-rail-add',
+            onPressed: onAdd,
+            builder: (state) => YsIconView(
+              YsIcon.plus,
+              size: 20,
+              strokeWidth: YsLayout.railIconStroke * YsLayout.railIconSize / 20,
+            ),
           ),
-        ),
       ]),
       div(classes: 'hermuse-rail-bottom', [
-        _item(
-          label: 'Instances',
-          onPressed: onOpenInstances,
-          builder: (state) => YsIconView(
-            YsIcon.menu,
-            size: YsLayout.railIconSize,
-            strokeWidth: YsLayout.railIconStroke,
+        if (onOpenInstances case final onOpen?)
+          _item(
+            label: 'Instances',
+            onPressed: onOpen,
+            builder: (state) => YsIconView(
+              YsIcon.menu,
+              size: YsLayout.railIconSize,
+              strokeWidth: YsLayout.railIconStroke,
+            ),
           ),
-        ),
       ]),
     ],
   );

@@ -29,6 +29,7 @@ final chatPanelPinnedProvider = Provider<bool>(
 class HermuseSidebar extends StatefulComponent {
   const HermuseSidebar({
     required this.controller,
+    this.readOnly = false,
     required this.onOpenThread,
     required this.onNewSideChat,
     required this.onSetPinned,
@@ -36,6 +37,10 @@ class HermuseSidebar extends StatefulComponent {
   });
 
   final ChatController controller;
+
+  /// Read-only chats (the demo): no new side chat, rename, archive, delete
+  /// or restore; pins and panel options stay (they are local).
+  final bool readOnly;
 
   /// Opens a thread of [controller]; the shell then closes the panel unless
   /// it is kept visible.
@@ -681,12 +686,13 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
     div(classes: 'hermuse-sidebar-empty-text', [
       h3(classes: 'hermuse-sidebar-empty-title', [.text('Start a side chat')]),
       p(classes: 'hermuse-sidebar-empty-body', [.text(_startBody)]),
-      div(classes: 'hermuse-sidebar-empty-action', [
-        YsButton.neutral(
-          label: 'New side chat',
-          onPressed: component.onNewSideChat,
-        ),
-      ]),
+      if (!component.readOnly)
+        div(classes: 'hermuse-sidebar-empty-action', [
+          YsButton.neutral(
+            label: 'New side chat',
+            onPressed: component.onNewSideChat,
+          ),
+        ]),
     ]),
   ]);
 
@@ -740,13 +746,14 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
             ]),
           ]),
         ),
-        YsButton.icon(
-          icon: YsIcon.plus,
-          label: 'New side chat',
-          onPressed: component.onNewSideChat,
-          size: 24,
-          iconSize: 20,
-        ),
+        if (!component.readOnly)
+          YsButton.icon(
+            icon: YsIcon.plus,
+            label: 'New side chat',
+            onPressed: component.onNewSideChat,
+            size: 24,
+            iconSize: 20,
+          ),
       ]),
       div(
         id: _sectionId,
@@ -909,7 +916,9 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
       },
       [
         YsPressable(
-          onPressed: () => _openMenu(id, archived: true),
+          onPressed: component.readOnly
+              ? null
+              : () => _openMenu(id, archived: true),
           classes: 'hermuse-sidebar-row-main',
           attributes: {'aria-haspopup': 'menu', 'aria-expanded': '$menuOpen'},
           builder: (context, press) => .fragment([
@@ -926,16 +935,20 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
             ]),
           ]),
         ),
-        span(classes: 'hermuse-sidebar-row-more', [
-          YsButton.icon(
-            icon: YsIcon.more,
-            label: 'More thread actions',
-            onPressed: () => _openMenu(id, archived: true),
-            size: 24,
-            iconSize: 20,
-            attributes: {'aria-haspopup': 'menu', 'aria-expanded': '$menuOpen'},
-          ),
-        ]),
+        if (!component.readOnly)
+          span(classes: 'hermuse-sidebar-row-more', [
+            YsButton.icon(
+              icon: YsIcon.more,
+              label: 'More thread actions',
+              onPressed: () => _openMenu(id, archived: true),
+              size: 24,
+              iconSize: 20,
+              attributes: {
+                'aria-haspopup': 'menu',
+                'aria-expanded': '$menuOpen',
+              },
+            ),
+          ]),
       ],
     );
   }
@@ -1064,6 +1077,7 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
       );
     }
     if (menu.archived) {
+      if (component.readOnly) return .fragment([]);
       final row = archived.where((r) => r.sessionId == id).firstOrNull;
       if (row == null) return .fragment([]);
       return YsMenu(
@@ -1095,22 +1109,24 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
             icon: YsIcon.pin,
             onSelected: () => _pin(entry),
           ),
-        YsMenuItem(
-          label: 'Rename',
-          icon: YsIcon.pencil,
-          onSelected: () => _startRename(entry),
-        ),
-        YsMenuItem(
-          label: 'Archive',
-          icon: YsIcon.archive,
-          onSelected: () => _archiveThread(id),
-        ),
-        YsMenuItem(
-          label: 'Delete',
-          icon: YsIcon.trash,
-          destructive: true,
-          onSelected: () => setState(() => _deletingId = id),
-        ),
+        if (!component.readOnly) ...[
+          YsMenuItem(
+            label: 'Rename',
+            icon: YsIcon.pencil,
+            onSelected: () => _startRename(entry),
+          ),
+          YsMenuItem(
+            label: 'Archive',
+            icon: YsIcon.archive,
+            onSelected: () => _archiveThread(id),
+          ),
+          YsMenuItem(
+            label: 'Delete',
+            icon: YsIcon.trash,
+            destructive: true,
+            onSelected: () => setState(() => _deletingId = id),
+          ),
+        ],
       ],
     );
   }

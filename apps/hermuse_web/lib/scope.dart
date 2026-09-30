@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
+import 'package:hermuse_demo/hermuse_demo.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:jaspr/dom.dart';
@@ -15,6 +16,12 @@ import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 import 'relay.dart';
 import 'scope_vm.dart' if (dart.library.js_interop) 'scope_web.dart' as boot;
 import 'screens.dart';
+
+/// Build flag (`jaspr build --dart-define=HERMUSE_DEMO=true`): the app runs
+/// the read-only demo of `package:hermuse_demo` — fictional instances and
+/// chats answered in the browser — instead of reaching Hermes through a
+/// relay. Off in production builds, where the demo code is compiled out.
+const hermuseDemo = bool.fromEnvironment('HERMUSE_DEMO');
 
 /// Owns the web app's [ProviderContainer]: database, secrets, HTTP client.
 ///
@@ -57,7 +64,11 @@ class _HermuseScopeState extends State<HermuseScope> {
 
   Future<void> _boot() async {
     try {
-      final db = await boot.openDatabase();
+      // The demo keeps its own database: seeding it replaces its content.
+      final db = await boot.openDatabase(
+        name: hermuseDemo ? 'hermuse-demo' : 'hermuse',
+      );
+      if (hermuseDemo) await seedDemo(db);
       if (!mounted) {
         await db.close();
         return;
@@ -73,6 +84,7 @@ class _HermuseScopeState extends State<HermuseScope> {
             ref.onDispose(client.close);
             return client;
           }),
+          if (hermuseDemo) ...demoOverrides(),
         ],
       );
       assert(HermuseScope._current == null, 'one HermuseScope per page');
