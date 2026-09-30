@@ -1,0 +1,27 @@
+# Weekly dependency updates, grouped in one pull request per ecosystem (a
+# major pub update comes on its own). The Hermes plugin (hermes-plugin/hermuse)
+# is stdlib-only: it has no Python manifest to watch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+    labels: [dependencies, 'area:tooling']
+    commit-message:
+      prefix: Tooling
+
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      pub:
+        patterns: ['*']
+        update-types: [minor, patch]
+    labels: [dependencies, 'area:tooling']
+    commit-message:
+      prefix: Tooling

@@ -1,0 +1,4 @@
+# The maintainer reviews every change. The workflows have their own line so
+# that a later, narrower rule cannot take them away from the maintainer.
+*                    @remymenard
+.github/workflows/   @remymenard

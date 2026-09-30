@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Hermuse Agent (Yellow Stick) — personal AI agent on top of Hermes Agent.
-Dart pub workspace (Melos 8.9), Flutter 3.47 + Jaspr 0.23. Private repo
-`yellow-stick/hermuse-agent`, default branch `main`.
+Dart pub workspace (Melos 8.9), Flutter 3.47 + Jaspr 0.23. Public repo
+`yellow-stick/hermuse-agent`, default branch `main`; outside contributions come
+as pull requests from forks (`CONTRIBUTING.md`).
 
 ## Layout
 
@@ -52,7 +53,8 @@ cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tes
 
 Web deploy: `.github/workflows/web.yml` builds `apps/hermuse_web` and deploys it
 with the Netlify CLI to project `hermuse-agent` (https://hermuse.app): production
-on push to `main`, draft alias `pr-<N>` on pull requests. Netlify's Git builds
+on push to `main`, draft alias `pr-<N>` on pull requests of this repository once
+ready for review; merge groups only build. Netlify's Git builds
 are stopped; `netlify.toml` (headers, manual deploy commands) is the only site
 config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
 
@@ -81,7 +83,7 @@ Commit subject: `<Area>: <what changed>` — one line, English, present tense, l
 
 Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yellow-stick/orca-worktrees`), cut from `origin/main`. Never commit to `main` directly.
 
-Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Merge with a merge commit (`Merge pull request #N from yellow-stick/<topic>`), not squash or rebase, then delete the branch.
+Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review runs the checks and the builds of every platform, and the merge queue runs the installed-package smoke tests before merging (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
 
 ## Validation per area
 
