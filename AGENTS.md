@@ -20,6 +20,7 @@ as pull requests from forks (`CONTRIBUTING.md`).
 - `packages/hermuse_state/` — shared Riverpod state for both apps.
 - `packages/hermuse_host/` — desktop only: Hermes install, supervision, bridge sidecar.
 - `hermes-plugin/hermuse/` — Hermes plugin: Feed, Ideas, Goals, Library, Reflections, agent's computer. Python, stdlib-only store.
+- `demo/` — read-only web demo (`hermuse_demo`): fictional instances, chats and plugin data answered in the browser; `demo/build.sh` builds the web app with `HERMUSE_DEMO=true` into `demo/build/web` for Netlify.
 - `.agents/skills/` — 41 vendored skills (dart-*, flutter-*, jaspr-*, riverpod, …). Read the matching skill before working in its area.
 
 ## Architecture rules
@@ -88,7 +89,7 @@ Pull requests: target `main`. Title in the commit style, summarizing the whole b
 ## Validation per area
 
 - Dart/Flutter change: `melos run analyze` + the package's tests (`melos run test:dart` / `test:flutter`).
-- Web change: `jaspr build` in `apps/hermuse_web` on top of analyze + tests.
+- Web change: `jaspr build` in `apps/hermuse_web` on top of analyze + tests; `demo/build.sh` too when the chat shell, scope or `demo/` changes.
 - Plugin change: `pytest tests/ -q` in `hermes-plugin/hermuse` plus `plugin_assets_test.dart` after re-syncing assets.
 - Contract change: regenerate + `drift_test.dart`.
 - Do not claim checks passed unless they ran; on failure report what failed.

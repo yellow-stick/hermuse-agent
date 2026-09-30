@@ -1,0 +1,40 @@
+# Netlify site of the read-only demo (fictional chats, no relay, no Hermes
+# instance). Set the site's base directory to `demo`; the build runs outside
+# Netlify (it needs Dart and Jaspr), so nothing here builds.
+#
+# Deploy from the repository root (after `netlify link --id <site id>`):
+#   demo/build.sh
+#   netlify deploy --no-build --dir=demo/build/web          # draft URL
+#   netlify deploy --no-build --dir=demo/build/web --prod
+[build]
+  publish = "build/web"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+
+# A new deploy must not wait for an HTTP-cached service worker to expire.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
+[[headers]]
+  for = "/sqlite3.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=2592000"

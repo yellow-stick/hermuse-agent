@@ -17,6 +17,7 @@ import 'screens.dart';
 /// messages, composer pinned at the bottom.
 class HermuseThread extends StatelessComponent {
   const HermuseThread({
+    this.readOnly = false,
     this.switching = false,
     required this.thread,
     required this.instanceId,
@@ -46,6 +47,9 @@ class HermuseThread extends StatelessComponent {
 
   final Thread thread;
 
+  /// A read-only transcript (the demo): a note replaces the composer.
+  final bool readOnly;
+
   /// Instance of the open chat (drives the model picker).
   final String instanceId;
 
@@ -70,7 +74,9 @@ class HermuseThread extends StatelessComponent {
 
   final Map<String, String> selectedOffers;
   final ValueChanged<String> onToggleReaction;
-  final ValueChanged<String> onReply;
+
+  /// Starts a reply; null hides the Reply action.
+  final ValueChanged<String>? onReply;
   final ValueChanged<String> onCopy;
   final String? copiedId;
   final void Function(String messageId, String answer, int blockIndex) onChoose;
@@ -117,7 +123,10 @@ class HermuseThread extends StatelessComponent {
                       selectedOffer: selectedOffers[thread.messages[i].id],
                       onToggleReaction: () =>
                           onToggleReaction(thread.messages[i].id),
-                      onReply: () => onReply(thread.messages[i].id),
+                      onReply: switch (onReply) {
+                        final reply? => () => reply(thread.messages[i].id),
+                        null => null,
+                      },
                       onCopy: () => onCopy(thread.messages[i].id),
                       copied: copiedId == thread.messages[i].id,
                       onChoose: (answer, blockIndex) =>
@@ -135,81 +144,97 @@ class HermuseThread extends StatelessComponent {
             ]),
           ],
         ),
-        div(classes: 'hermuse-composer-dock', [
-          div(classes: 'hermuse-composer-column', [
-            _ModelPicker(instanceId: instanceId, controller: controller),
-            if (replyTo != null)
-              div(classes: 'hermuse-reply-preview', [
-                YsIconView(YsIcon.reply, size: 16),
-                span(classes: 'hermuse-reply-text', [
-                  span(classes: 'hermuse-reply-label', [.text('Replying to ')]),
-                  .text(replyTo.plainText),
-                ]),
-                YsButton.icon(
-                  icon: YsIcon.close,
-                  label: 'Cancel reply',
-                  onPressed: onCancelReply,
-                  size: 27,
-                ),
-              ]),
-            div(classes: 'hermuse-composer', [
-              div(classes: 'hermuse-composer-attach', [
-                YsTooltip(
-                  label: 'Attach file',
-                  child: YsButton.icon(
-                    icon: YsIcon.plus,
-                    label: 'Attach file',
-                    onPressed: null,
-                    size: 32,
-                  ),
-                ),
-              ]),
-              div(classes: 'hermuse-composer-input', [
-                YsTextArea(
-                  value: draft,
-                  onChanged: onDraft,
-                  onSubmitted: onSend,
-                  placeholder: 'Message',
-                  name: 'message',
-                ),
-              ]),
-              div(classes: 'hermuse-composer-trailing', [
-                _Morph(
-                  action: busy
-                      ? 'stop'
-                      : draft.trim().isEmpty
-                      ? 'voice'
-                      : 'send',
-                  child: busy
-                      ? YsPressable(
-                          onPressed: onInterrupt,
-                          label: 'Stop',
-                          classes: 'hermuse-stop',
-                          builder: (context, press) =>
-                              YsIconView(YsIcon.close, size: 18),
-                        )
-                      : draft.trim().isEmpty
-                      ? YsTooltip(
-                          label: 'Voice',
-                          child: YsButton.icon(
-                            icon: YsIcon.mic,
-                            label: 'Voice',
-                            onPressed: null,
-                            size: 32,
-                          ),
-                        )
-                      : YsPressable(
-                          onPressed: onSend,
-                          label: 'Send',
-                          classes: 'hermuse-send',
-                          builder: (context, press) =>
-                              YsIconView(YsIcon.send, size: 18),
-                        ),
+        if (readOnly)
+          div(classes: 'hermuse-composer-dock', [
+            p(classes: 'hermuse-readonly-note', [
+              YsIconView(YsIcon.chat, size: 16),
+              span([
+                .text(
+                  'Read-only demo with fictional conversations. To chat '
+                  'with your own agent, use the Hermuse desktop or mobile '
+                  'app, or serve this web app through a Hermuse relay.',
                 ),
               ]),
             ]),
+          ])
+        else
+          div(classes: 'hermuse-composer-dock', [
+            div(classes: 'hermuse-composer-column', [
+              _ModelPicker(instanceId: instanceId, controller: controller),
+              if (replyTo != null)
+                div(classes: 'hermuse-reply-preview', [
+                  YsIconView(YsIcon.reply, size: 16),
+                  span(classes: 'hermuse-reply-text', [
+                    span(classes: 'hermuse-reply-label', [
+                      .text('Replying to '),
+                    ]),
+                    .text(replyTo.plainText),
+                  ]),
+                  YsButton.icon(
+                    icon: YsIcon.close,
+                    label: 'Cancel reply',
+                    onPressed: onCancelReply,
+                    size: 27,
+                  ),
+                ]),
+              div(classes: 'hermuse-composer', [
+                div(classes: 'hermuse-composer-attach', [
+                  YsTooltip(
+                    label: 'Attach file',
+                    child: YsButton.icon(
+                      icon: YsIcon.plus,
+                      label: 'Attach file',
+                      onPressed: null,
+                      size: 32,
+                    ),
+                  ),
+                ]),
+                div(classes: 'hermuse-composer-input', [
+                  YsTextArea(
+                    value: draft,
+                    onChanged: onDraft,
+                    onSubmitted: onSend,
+                    placeholder: 'Message',
+                    name: 'message',
+                  ),
+                ]),
+                div(classes: 'hermuse-composer-trailing', [
+                  _Morph(
+                    action: busy
+                        ? 'stop'
+                        : draft.trim().isEmpty
+                        ? 'voice'
+                        : 'send',
+                    child: busy
+                        ? YsPressable(
+                            onPressed: onInterrupt,
+                            label: 'Stop',
+                            classes: 'hermuse-stop',
+                            builder: (context, press) =>
+                                YsIconView(YsIcon.close, size: 18),
+                          )
+                        : draft.trim().isEmpty
+                        ? YsTooltip(
+                            label: 'Voice',
+                            child: YsButton.icon(
+                              icon: YsIcon.mic,
+                              label: 'Voice',
+                              onPressed: null,
+                              size: 32,
+                            ),
+                          )
+                        : YsPressable(
+                            onPressed: onSend,
+                            label: 'Send',
+                            classes: 'hermuse-send',
+                            builder: (context, press) =>
+                                YsIconView(YsIcon.send, size: 18),
+                          ),
+                  ),
+                ]),
+              ]),
+            ]),
           ]),
-        ]),
       ],
     );
   }
@@ -337,6 +362,22 @@ class HermuseThread extends StatelessComponent {
         display: .flex,
         flexDirection: .column,
         gap: .all(8.px),
+      ),
+      // The demo's stand-in for the composer, same column and footprint.
+      css('.hermuse-readonly-note').styles(
+        width: 100.percent,
+        maxWidth: YsLayout.threadMaxWidth.px,
+        margin: .symmetric(horizontal: 16.px),
+        padding: .symmetric(vertical: 12.px, horizontal: 16.px),
+        radius: .circular(YsRadius.row.px),
+        display: .flex,
+        alignItems: .center,
+        gap: .all(10.px),
+        color: .variable('--content-muted'),
+        backgroundColor: .variable('--paper-clear'),
+        fontSize: 13.px,
+        lineHeight: 18.px,
+        raw: {'box-sizing': 'border-box'},
       ),
       // A tab resting on the composer's top edge, so the quote reads as
       // part of the message box.

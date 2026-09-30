@@ -33,7 +33,9 @@ class MessageRow extends StatelessComponent {
   final GroupPosition position;
   final String? selectedOffer;
   final VoidCallback onToggleReaction;
-  final VoidCallback onReply;
+
+  /// Null hides the Reply action (read-only transcripts).
+  final VoidCallback? onReply;
   final VoidCallback onCopy;
 
   /// True while the copy button shows its check state.
@@ -74,7 +76,8 @@ class MessageRow extends StatelessComponent {
           if (isUser)
             div(classes: 'hermuse-actions', [
               _action(YsIcon.copy, 'Copy', onCopy, copied: copied),
-              _action(YsIcon.reply, 'Reply', onReply),
+              if (onReply case final reply?)
+                _action(YsIcon.reply, 'Reply', reply),
             ]),
           div(
             classes: card == null
@@ -187,7 +190,8 @@ class MessageRow extends StatelessComponent {
           if (!isUser)
             div(classes: 'hermuse-actions', [
               _action(YsIcon.smile, 'React', onToggleReaction),
-              _action(YsIcon.reply, 'Reply', onReply),
+              if (onReply case final reply?)
+                _action(YsIcon.reply, 'Reply', reply),
               _action(YsIcon.copy, 'Copy', onCopy, copied: copied),
             ]),
         ]),

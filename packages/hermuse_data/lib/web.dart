@@ -8,16 +8,21 @@ import 'package:drift/wasm.dart';
 
 import 'src/database.dart';
 
-HermuseDatabase openWebDatabase({Uri? sqlite3Uri, Uri? driftWorkerUri}) =>
-    HermuseDatabase(
-      DatabaseConnection.delayed(
-        Future(() async {
-          final result = await WasmDatabase.open(
-            databaseName: 'hermuse',
-            sqlite3Uri: sqlite3Uri ?? Uri.parse('sqlite3.wasm'),
-            driftWorkerUri: driftWorkerUri ?? Uri.parse('drift_worker.js'),
-          );
-          return result.resolvedExecutor;
-        }),
-      ),
-    );
+/// [name] keys the browser storage: databases of different names on one
+/// origin never see each other's data.
+HermuseDatabase openWebDatabase({
+  Uri? sqlite3Uri,
+  Uri? driftWorkerUri,
+  String name = 'hermuse',
+}) => HermuseDatabase(
+  DatabaseConnection.delayed(
+    Future(() async {
+      final result = await WasmDatabase.open(
+        databaseName: name,
+        sqlite3Uri: sqlite3Uri ?? Uri.parse('sqlite3.wasm'),
+        driftWorkerUri: driftWorkerUri ?? Uri.parse('drift_worker.js'),
+      );
+      return result.resolvedExecutor;
+    }),
+  ),
+);

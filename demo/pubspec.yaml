@@ -1,0 +1,20 @@
+name: hermuse_demo
+description: Read-only demo backend of the Hermuse web app — fictional instances, chats and plugin data served in the browser, no Hermes instance or relay needed.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  hermes_client: ^0.1.0
+  hermuse_data: ^0.1.0
+  hermuse_state: ^0.1.0
+  http: ^1.6.0
+  riverpod: ^3.4.3
+
+dev_dependencies:
+  hermuse_chat: ^0.1.0
+  lints: ^6.1.0
+  test: ^1.26.0
