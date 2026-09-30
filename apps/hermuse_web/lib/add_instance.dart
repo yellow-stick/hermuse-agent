@@ -256,34 +256,15 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       baseUrl: Relay.instanceBase(_relay, upstreamId),
       auth: login,
     );
-    String? error;
-    try {
-      // Proved on a real connection before anything is stored.
-      await context.container
-          .read(instanceAuthProvider)
-          .add(
-            candidate,
-            secrets: loopback
-                ? {SecretKeys.sessionToken: secret}
-                : {
-                    SecretKeys.username: _username.trim(),
-                    SecretKeys.password: secret,
-                  },
-          )
-          .timeout(const Duration(seconds: 30));
-    } on TimeoutException {
-      error = 'The connection test timed out. Try again.';
-    } on HermesAuthFailed {
-      error = loopback ? 'Wrong session token.' : 'Wrong username or password.';
-    } on HermesException catch (e) {
-      error = e.message;
-    } on DuplicateInstance catch (e) {
-      error = e.field == 'label'
-          ? 'That name is already used'
-          : 'That Hermes is already registered';
-    } on Object catch (e) {
-      error = '$e';
-    }
+    final error = await _connect(
+      candidate,
+      loopback
+          ? {SecretKeys.sessionToken: secret}
+          : {
+              SecretKeys.username: _username.trim(),
+              SecretKeys.password: secret,
+            },
+    );
     if (!mounted) return;
     if (error != null) {
       setState(() {
@@ -298,6 +279,41 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       _token = '';
     });
     component.onDone(candidate.id);
+  }
+
+  /// Registers [candidate] once [secrets] open a real connection: null when
+  /// it is saved, else why it is not.
+  ///
+  /// Each failure returns its own message. A nullable message assigned in
+  /// the catch clauses and tested after them was compiled by dart2js as set
+  /// on success too (to the new id), so a saved instance never left the
+  /// dialog.
+  Future<String?> _connect(
+    HermesInstance candidate,
+    Map<String, String> secrets,
+  ) async {
+    try {
+      // Proved on a real connection before anything is stored.
+      await context.container
+          .read(instanceAuthProvider)
+          .add(candidate, secrets: secrets)
+          .timeout(const Duration(seconds: 30));
+      return null;
+    } on TimeoutException {
+      return 'The connection test timed out. Try again.';
+    } on HermesAuthFailed {
+      return candidate.auth == AuthMethod.loopbackToken
+          ? 'Wrong session token.'
+          : 'Wrong username or password.';
+    } on HermesException catch (e) {
+      return e.message;
+    } on DuplicateInstance catch (e) {
+      return e.field == 'label'
+          ? 'That name is already used'
+          : 'That Hermes is already registered';
+    } on Object catch (e) {
+      return '$e';
+    }
   }
 
   @override
