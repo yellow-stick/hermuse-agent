@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in Hermuse Agent does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. A security vulnerability does not belong here: report it privately, see [SECURITY.md](https://github.com/yellow-stick/hermuse-agent/blob/main/SECURITY.md). Questions go to [Discussions](https://github.com/yellow-stick/hermuse-agent/discussions).
+  - type: input
+    id: version
+    attributes:
+      label: Hermuse Agent version
+      description: The version in the name of the file you installed, or the commit you built.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: package
+    attributes:
+      label: How you run it
+      options:
+        - .deb (Linux)
+        - AppImage (Linux)
+        - .dmg (macOS)
+        - Setup.exe (Windows)
+        - Web app
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Name and version; on Linux, the desktop too. For the web app, the browser.
+      placeholder: Ubuntu 24.04 (GNOME, Wayland), macOS 15.3, Windows 11 24H2, Firefox 131
+    validations:
+      required: true
+  - type: dropdown
+    id: hermes
+    attributes:
+      label: Hermes Agent
+      options:
+        - On this computer, installed by Hermuse Agent
+        - On this computer, installed before
+        - On a server (remote)
+        - Not set up yet
+    validations:
+      required: true
+  - type: input
+    id: hermes-version
+    attributes:
+      label: Hermes Agent version
+      description: What `hermes --version` prints, if you know it.
+      placeholder: 0.21.5
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Error messages from the app, or what the terminal shows when you start it from one (`hermuse-agent` on Linux). Remove API keys, tokens and personal data first.
+      render: text

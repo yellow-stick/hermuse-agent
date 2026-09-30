@@ -18,8 +18,8 @@
 #   fail                   a check failed, or the scenario stopped before it
 #   manual-gate            automatic checks passed but a GUI proof (listed in
 #                          gui_proof) needs a human reviewer; never a pass
-#   skipped-missing-prereq a prerequisite is absent (model test account on
-#                          PR/fork runs) and the proof is recorded as missing
+#   skipped-missing-prereq a prerequisite is absent (the model test account,
+#                          outside release runs) and the proof is recorded as missing
 #
 # Scenarios: fresh (criteria 1-8), adopt-compatible / adopt-foreign
 # (criterion 4), docker-ce / docker-stopped / docker-rootless /

@@ -4,7 +4,7 @@
 The legs listed here are the single source of truth: the workflow matrices are
 generated from them and the summary fails any leg or result that is absent.
 
-  proof_summary.py matrix guests|containers|desktop [--set full|pr] [--filter REGEX]
+  proof_summary.py matrix guests|containers|desktop [--set full|queue] [--filter REGEX]
                                                GitHub matrix JSON of the selected legs
   proof_summary.py leg <leg-dir> <scenario> [--target T]
                                                exit 1 when a result of one leg failed or is
@@ -13,20 +13,23 @@ generated from them and the summary fails any leg or result that is absent.
                                                roll the legs of the matrices up (fail on any
                                                fail/missing); `complete` = every leg ran
   proof_summary.py finalize --summary F [--model <leg-dir>] [--release-version F]
-                            --out F --markdown M
+                            --out F --markdown M --notes N
                                                add the model-account proof and the signing
                                                of the macOS/Windows artifacts (assembled
-                                               VERSION.json), decide public_ready (printed
-                                               as key=value)
+                                               VERSION.json), decide automated_ok (printed
+                                               as key=value), write the "Not yet proven"
+                                               section of the release notes
 
 A result is pass | fail | manual-gate | skipped-missing-prereq (see
-packaging/smoke/linux.sh, macos.sh, windows.ps1). The release may go public
-only when every leg ran, no result failed or is missing, every manual gate
-carries its recorded evidence, the real conversation with the capped test
-account passed, and the macOS and Windows artifacts are signed (macOS also
-notarized and stapled). Pull requests run the `pr` set (the fresh scenario of
-both guests and formats, the containers, the macOS and Windows runners); tags
-run the `full` set.
+packaging/smoke/linux.sh, macos.sh, windows.ps1). A release is published, as a
+pre-release, only when every leg ran, no result failed or is missing, every
+manual gate carries its recorded evidence and the model-account proof did not
+fail. What the run could not prove (no model test account, unsigned macOS or
+Windows artifacts, manual gates, the checks outside CI) is listed under "Not
+yet proven" in its notes and checked before the manual promotion to latest.
+Merge groups run the `queue` set (the fresh scenario of both guests and
+formats, the containers, the macOS and Windows runners); the nightly run, test
+runs and releases run the `full` set; pull requests run no leg.
 """
 
 from __future__ import annotations
@@ -42,8 +45,8 @@ GUESTS = ("ubuntu-22.04", "debian-12")
 CONTAINERS = ("ubuntu-24.04", "ubuntu-26.04", "debian-13")
 FORMATS = ("deb", "appimage")
 
-# The legs a pull request runs; tags and dispatches run every leg.
-PR_SCENARIOS = ("fresh",)
+# The legs a merge group runs; the nightly run, test runs and releases run every leg.
+QUEUE_SCENARIOS = ("fresh",)
 
 # scenario -> formats, result ids (as linux.sh `expect`s them)
 SCENARIOS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -69,11 +72,14 @@ DESKTOPS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "windows-2025": ("windows", "setup", ("c0-test-base", "c1-launch", "c3-keyring", "c4-hermes", "c5-plugin",
                                           "c6-bridge", "c7-computer", "c10-lifecycle")),
 }
-# Signed artifacts the release needs before it may go public: the fragment of
-# each OS in the assembled VERSION.json (platforms.<os>.signing).
-SIGNED_PLATFORMS = ("macos", "windows")
+# Platforms whose artifacts a release signs, as the assembled VERSION.json
+# records them (platforms.<os>.signing); an unsigned one is not yet proven.
+SIGNED_PLATFORMS = {
+    "macos": "macOS .dmg signature, notarization and stapling",
+    "windows": "Windows Setup.exe signature with Artifact Signing",
+}
 
-# Proofs no CI run can produce; the release approver attests them.
+# Proofs no CI run can produce: not yet proven, checked before the promotion to latest.
 EXTERNAL_GATES = (
     "Real desktop spot check on Pop!_OS 24.04: menu entry and icon, compositor/GPU rendering, "
     "the AppImage under XWayland in a Wayland session, the real administrator dialog.",
@@ -145,7 +151,7 @@ def cmd_matrix(args: argparse.Namespace) -> int:
     for leg in legs():
         if matrix_kind(leg) != args.which:
             continue
-        if args.set != "full" and leg["kind"] == "smoke" and leg["scenario"] not in PR_SCENARIOS:
+        if args.set != "full" and leg["kind"] == "smoke" and leg["scenario"] not in QUEUE_SCENARIOS:
             continue
         if pattern is not None and not pattern.search(leg_name(leg)):
             continue
@@ -208,7 +214,8 @@ def model_proof(leg_dir: Path | None) -> dict[str, Any]:
 
 
 def signing_proof(version_file: Path | None) -> dict[str, Any]:
-    """Whether every macOS/Windows artifact of the assembled release is signed."""
+    """Whether the macOS/Windows artifacts of the assembled release are signed: pass, unsigned (not yet
+    proven), or fail when the assembled VERSION.json cannot tell."""
     if version_file is None:
         return {"status": "fail", "detail": "no assembled VERSION.json: the signing is unknown", "unsigned": []}
     try:
@@ -217,17 +224,33 @@ def signing_proof(version_file: Path | None) -> dict[str, Any]:
         return {"status": "fail", "detail": f"unreadable assembled VERSION.json ({type(exc).__name__})",
                 "unsigned": []}
     unsigned = []
-    for name in SIGNED_PLATFORMS:
+    for name, label in SIGNED_PLATFORMS.items():
         signing = (platforms.get(name) or {}).get("signing") or {}
         if name == "macos":
             ok = bool(signing.get("signed") and signing.get("notarized") and signing.get("stapled"))
         else:
             ok = bool(signing.get("signed")) and signing.get("method") == "artifact-signing"
         if not ok:
-            unsigned.append(f"{name}: {signing.get('reason') or 'not signed'}")
-    return {"status": "pass" if not unsigned else "fail",
+            unsigned.append(f"{label} ({signing.get('reason') or 'not signed'})")
+    return {"status": "pass" if not unsigned else "unsigned",
             "detail": "macOS signed, notarized and stapled; Windows signed (Artifact Signing)" if not unsigned
-            else "unsigned artifacts: " + "; ".join(unsigned), "unsigned": unsigned}
+            else "not signed: " + "; ".join(unsigned), "unsigned": unsigned}
+
+
+def not_yet_proven(summary: dict[str, Any], model: dict[str, Any], signing: dict[str, Any]) -> list[str]:
+    """What the release run could not prove, for the "Not yet proven" section of the release notes."""
+    items = []
+    if model["status"] != "pass":
+        items.append(f"Real conversation and agent one-shot job with the capped model test account "
+                     f"({model['detail']})")
+    items += signing["unsigned"]
+    for row in summary["rows"]:
+        for check in row["checks"]:
+            if check["status"] == "manual-gate":
+                items.append(f"Manual gate {row['id']}/{check['name']} of {row['leg']}: {check['detail']} "
+                             f"(evidence in the {row['leg']} artifact of the release run)")
+    items += [f"Checked outside CI: {gate}" for gate in summary["external_gates"]]
+    return items
 
 
 def cmd_finalize(args: argparse.Namespace) -> int:
@@ -237,12 +260,15 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     summary["model_proof"] = {k: v for k, v in model.items() if k != "results"}
     summary["model_results"] = model.get("results", [])
     summary["signing_proof"] = signing
-    summary["signing_ok"] = signing["status"] == "pass"
-    summary["public_ready"] = (bool(summary["smoke_ok"]) and bool(summary.get("complete"))
-                               and model["status"] == "pass" and summary["signing_ok"])
+    # A failed or missing automated result blocks the publication; what is only
+    # unproven goes out in a pre-release that lists it.
+    summary["automated_ok"] = (bool(summary["smoke_ok"]) and bool(summary.get("complete"))
+                               and model["status"] != "fail" and signing["status"] != "fail")
+    summary["not_yet_proven"] = not_yet_proven(summary, model, signing)
     Path(args.out).write_text(json.dumps(summary, indent=2))
     Path(args.markdown).write_text(render(summary, model, signing))
-    print(f"public_ready={'true' if summary['public_ready'] else 'false'}")
+    Path(args.notes).write_text(render_notes(summary["not_yet_proven"]))
+    print(f"automated_ok={'true' if summary['automated_ok'] else 'false'}")
     return 0
 
 
@@ -256,8 +282,10 @@ def render(summary: dict[str, Any], model: dict[str, Any] | None, signing: dict[
     if signing is not None:
         lines.append(f"Signing: **{signing['status']}** ({signing['detail']}).")
     if model is not None or signing is not None:
-        verdict = "may be published" if summary.get("public_ready") else "stays a draft"
-        lines.append(f"Release {verdict}.")
+        lines.append("No failed or missing automated result: published as a pre-release, "
+                     f"{len(summary['not_yet_proven'])} point(s) not yet proven listed in its notes."
+                     if summary.get("automated_ok") else
+                     "A failed or missing automated result blocks the publication.")
     lines += ["", "| Leg | Result | Criterion | Status |", "| --- | --- | --- | --- |"]
     for row in summary["rows"]:
         lines.append(f"| {row['leg']} | {row['id']} | {row['criterion']} | {row['status']} |")
@@ -270,8 +298,18 @@ def render(summary: dict[str, Any], model: dict[str, Any] | None, signing: dict[
                     evidence = ", ".join(check.get("evidence", [])) or "no evidence"
                     lines.append(f"- **{check['status']}** `{row['leg']}` {row['id']}/{check['name']}: "
                                  f"{check['detail']} ({evidence})")
-    lines += ["", "### Outside CI (the approver attests them)", ""]
+    lines += ["", "### Outside CI (checked before the promotion to latest)", ""]
     lines += [f"- {gate}" for gate in summary["external_gates"]]
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_notes(items: list[str]) -> str:
+    """The "Not yet proven" section of the release notes."""
+    lines = ["## Not yet proven", "",
+             "Every automated check of the release run passed. It could not prove the points below: "
+             "the release stays a pre-release until they are checked.", ""]
+    lines += [f"- {item}" for item in items]
     lines.append("")
     return "\n".join(lines)
 
@@ -281,7 +319,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     matrix = sub.add_parser("matrix")
     matrix.add_argument("which", choices=("guests", "containers", "desktop"))
-    matrix.add_argument("--set", choices=("full", "pr"), default="full")
+    matrix.add_argument("--set", choices=("full", "queue"), default="full")
     matrix.add_argument("--filter", default="")
     matrix.set_defaults(run=cmd_matrix)
     leg = sub.add_parser("leg")
@@ -303,6 +341,7 @@ def main() -> int:
     finalize.add_argument("--release-version", help="the assembled VERSION.json of every platform")
     finalize.add_argument("--out", required=True)
     finalize.add_argument("--markdown", required=True)
+    finalize.add_argument("--notes", required=True, help="the \"Not yet proven\" section of the release notes")
     finalize.set_defaults(run=cmd_finalize)
     args = parser.parse_args()
     return args.run(args)
