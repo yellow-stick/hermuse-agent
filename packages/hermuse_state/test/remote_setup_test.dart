@@ -271,6 +271,12 @@ void main() {
     var s = container.read(remoteSetupProvider(id));
     expect(status(s, RemotePart.plugin), RemotePartStatus.needsUser);
     expect(s[RemotePart.plugin].action, RemoteAction.allowInstall);
+    // Hermes' scan report comes apart from what the user reads first.
+    expect(s[RemotePart.plugin].report, contains('caution verdict'));
+    expect(
+      s[RemotePart.plugin].notes,
+      everyElement(isNot(contains('caution verdict'))),
+    );
     expect(server.plugin, isNull);
 
     await notifier().run(RemotePart.plugin);
@@ -287,6 +293,25 @@ void main() {
     expect(status(s, RemotePart.docker), RemotePartStatus.present);
     expect(status(s, RemotePart.computer), RemotePartStatus.missing);
     expect(s.installable, [RemotePart.jobs, RemotePart.computer]);
+  });
+
+  test('an install that went through shows its part being looked at until '
+      'Hermes answers again, never as it was before', () async {
+    server.caution = false;
+    await looked();
+    final seen = <RemotePartStatus>[];
+    container.listen(remoteSetupProvider(id), (_, next) {
+      final now = next[RemotePart.plugin].status;
+      if (seen.isEmpty || seen.last != now) seen.add(now);
+    });
+
+    await notifier().run(RemotePart.plugin);
+
+    expect(seen, [
+      RemotePartStatus.installing,
+      RemotePartStatus.checking,
+      RemotePartStatus.installed,
+    ]);
   });
 
   test('routes that never mount ask for a dashboard restart', () async {

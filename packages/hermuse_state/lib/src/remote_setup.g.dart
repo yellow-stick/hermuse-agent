@@ -139,7 +139,7 @@ final class RemoteSetupProvider
   }
 }
 
-String _$remoteSetupHash() => r'59cf948da1cfc26bdf9e204a995a9bd8227732d0';
+String _$remoteSetupHash() => r'4a7fc290838c58cc2414a337c0ad0ce67c308153';
 
 /// The component checklist of the Hermes [instanceId] reaches over the
 /// network: each part Hermuse needs there, found in place, or installed

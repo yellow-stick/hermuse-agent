@@ -95,6 +95,7 @@ final class RemotePartState {
     this.summary = '',
     this.notes = const [],
     this.alert = false,
+    this.report,
     this.action,
     this.enabled = true,
     this.command,
@@ -112,6 +113,10 @@ final class RemotePartState {
   /// Whether [notes] report a problem.
   final bool alert;
 
+  /// Hermes' own technical words behind [notes] (the scan report of a
+  /// plugin it flags), shown apart from them in a box that scrolls.
+  final String? report;
+
   final RemoteAction? action;
 
   /// Whether [action] can run now; [summary] says what it waits for.
@@ -126,6 +131,7 @@ final class RemotePartState {
     summary: summary,
     notes: notes,
     alert: alert,
+    report: report,
     action: action,
     enabled: false,
     command: command,
@@ -444,21 +450,26 @@ class RemoteSetup extends _$RemoteSetup {
   Future<void> _setUpComputer(RemotePart part) {
     if (part == RemotePart.docker) _dockerTried = true;
     // What it prepares on the way counts as installed from here too.
-    for (final other in const [RemotePart.docker, RemotePart.computer]) {
-      if (!_row(other).status.settled) _installed.add(other);
-    }
-    return _attempt(part, 'Setting it up…', (rest) async {
+    final touched = {
+      for (final other in const [RemotePart.docker, RemotePart.computer])
+        if (!_row(other).status.settled) other,
+    };
+    _installed.addAll(touched);
+    return _attempt(part, 'Setting it up…', touched: touched, (rest) async {
       final status = await ComputerClient(rest).setup();
       _found = _found?._withComputer(status);
     });
   }
 
   /// Runs [body] as the install of [part], then looks at everything again.
+  /// Until Hermes answers, [part] and the other parts the install [touched]
+  /// show being looked at, not as they were before it.
   Future<void> _attempt(
     RemotePart part,
     String work,
-    Future<void> Function(HermesRestClient rest) body,
-  ) async {
+    Future<void> Function(HermesRestClient rest) body, {
+    Set<RemotePart> touched = const {},
+  }) async {
     _running = part;
     _work = work;
     _installed.add(part);
@@ -474,6 +485,10 @@ class RemoteSetup extends _$RemoteSetup {
     }
     _running = null;
     if (!ref.mounted) return;
+    // A failure or Hermes' prompt is known already; anything else, not yet.
+    if (!_failures.containsKey(part) && _consent == null) {
+      _checking = {..._checking, part, ...touched};
+    }
     _publish();
     await _look();
   }
@@ -531,7 +546,8 @@ class RemoteSetup extends _$RemoteSetup {
     } on Object catch (e) {
       _unreachable = '$e';
     }
-    _checking = {};
+    // Asked to look again meanwhile: this look may predate what changed.
+    if (!_lookAgain) _checking = {};
     if (!ref.mounted) return;
     _publish();
     if (_found?.computer?.state == ComputerState.building) unawaited(_follow());
@@ -737,11 +753,11 @@ class RemoteSetup extends _$RemoteSetup {
         part,
         RemotePartStatus.needsUser,
         summary: 'Hermes asks you to allow it',
-        notes: [
+        notes: const [
           'Hermuse needs permission to install Docker with sudo on this '
               'server (Hermes flags this for review).',
-          report,
         ],
+        report: report,
         action: RemoteAction.allowInstall,
       );
     }
