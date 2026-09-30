@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:test/test.dart';
 
@@ -14,6 +15,11 @@ const posixManifest = '''
 const psManifestWithBanner = '''
 Hermes Agent Installer
 {"protocol_version":1,"stages":[{"name":"uv","title":"Installing uv package manager","category":"prereqs","needs_user_input":false},{"name":"configure","title":"Configuring API keys and models","category":"post-install","needs_user_input":true}]}
+''';
+
+/// `install.ps1 -Manifest` at the pinned commit, as it prints it.
+const windowsManifest = '''
+{"protocol_version":1,"stages":[{"needs_user_input":false,"title":"Installing uv package manager","category":"prereqs","name":"uv"},{"needs_user_input":false,"title":"Installing Git","category":"prereqs","name":"git"},{"needs_user_input":false,"title":"Detecting Node.js","category":"prereqs","name":"node"},{"needs_user_input":false,"title":"Installing ripgrep and ffmpeg","category":"prereqs","name":"system-packages"},{"needs_user_input":false,"title":"Cloning Hermes repository","category":"install","name":"repository"},{"needs_user_input":false,"title":"Verifying Python 3.11","category":"prereqs","name":"python"},{"needs_user_input":false,"title":"Creating Python virtual environment","category":"install","name":"venv"},{"needs_user_input":false,"title":"Installing Python dependencies","category":"install","name":"dependencies"},{"needs_user_input":false,"title":"Installing Node.js dependencies","category":"install","name":"node-deps"},{"needs_user_input":false,"title":"Adding Hermes to PATH","category":"finalize","name":"path"},{"needs_user_input":false,"title":"Writing configuration templates","category":"finalize","name":"config-templates"},{"needs_user_input":false,"title":"Installing messaging platform SDKs","category":"finalize","name":"platform-sdks"},{"needs_user_input":false,"title":"Marking install complete","category":"finalize","name":"bootstrap-marker"},{"needs_user_input":true,"title":"Configuring API keys and models","category":"post-install","name":"configure"},{"needs_user_input":true,"title":"Starting messaging gateway","category":"post-install","name":"gateway"}]}
 ''';
 
 void main() {
@@ -159,64 +165,59 @@ void main() {
       expect(script.stagesRun, isNot(contains('gateway')));
     });
 
-    test('Linux stages pin the commit and stay in the private runtime', () async {
-      await drain(
-        script.installer(
-          environment: {
-            'PATH': '/usr/local/bin:/usr/bin',
-            'HOME': '/home/u',
-            'XDG_DATA_HOME': '/home/u/.local/share',
-            'XDG_BIN_HOME': '/home/u/bin',
-            'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus',
-          },
-        ),
-      );
-      final (args, environment) = script.stageCalls['python-deps']!;
-      expect(
-        args.sublist(1),
-        containsAllInOrder([
-          '--stage',
-          'python-deps',
-          '--commit',
-          hermesReleaseCommit,
-          '--dir',
-          script.installDir,
-          '--skip-browser',
-          '--skip-computer-use',
-          '--non-interactive',
-          '--json',
-        ]),
-      );
-      expect(args, isNot(contains('--ensure')));
-      expect(environment['HOME'], '${script.hermesHome}/runtime');
-      expect(Directory('${script.hermesHome}/runtime').existsSync(), isTrue);
-      expect(environment['HERMES_HOME'], script.hermesHome);
-      expect(
-        environment['PATH'],
-        '${script.hermesHome}/runtime/.local/bin:${script.hermesHome}/node/bin:'
-        '${script.hermesHome}/bin:/usr/local/bin:/usr/bin',
-      );
-      expect(environment.keys, isNot(contains('XDG_DATA_HOME')));
-      expect(environment.keys, isNot(contains('XDG_BIN_HOME')));
-      expect(
-        environment['DBUS_SESSION_BUS_ADDRESS'],
-        'unix:path=/run/user/1000/bus',
-      );
-    });
-
-    test('macOS stages pin the commit and keep the real home', () async {
-      await drain(
-        script.installer(
-          journaled: false,
-          macOS: true,
-          environment: {'PATH': '/usr/bin', 'HOME': '/Users/u'},
-        ),
-      );
-      final (args, environment) = script.stageCalls['venv']!;
-      expect(args, containsAllInOrder(['--commit', hermesReleaseCommit]));
-      expect(args, isNot(contains('--dir')));
-      expect(environment['HOME'], '/Users/u');
-    });
+    for (final macOS in [false, true]) {
+      test('${macOS ? 'macOS' : 'Linux'} stages pin the commit, stay in the '
+          'private runtime and close the journal', () async {
+        await drain(
+          script.installer(
+            macOS: macOS,
+            environment: {
+              'PATH': '/usr/local/bin:/usr/bin',
+              'HOME': '/home/u',
+              'XDG_DATA_HOME': '/home/u/.local/share',
+              'XDG_BIN_HOME': '/home/u/bin',
+              'DBUS_SESSION_BUS_ADDRESS': 'unix:path=/run/user/1000/bus',
+            },
+          ),
+        );
+        final (args, environment) = script.stageCalls['python-deps']!;
+        expect(
+          args.sublist(1),
+          containsAllInOrder([
+            '--stage',
+            'python-deps',
+            '--commit',
+            hermesReleaseCommit,
+            '--dir',
+            script.installDir,
+            '--skip-browser',
+            '--skip-computer-use',
+            '--non-interactive',
+            '--json',
+          ]),
+        );
+        expect(args, isNot(contains('--ensure')));
+        expect(environment['HOME'], '${script.hermesHome}/runtime');
+        expect(Directory('${script.hermesHome}/runtime').existsSync(), isTrue);
+        expect(environment['HERMES_HOME'], script.hermesHome);
+        expect(
+          environment['PATH'],
+          '${script.hermesHome}/runtime/.local/bin:'
+          '${script.hermesHome}/node/bin:${script.hermesHome}/bin:'
+          '/usr/local/bin:/usr/bin',
+        );
+        expect(environment.keys, isNot(contains('XDG_DATA_HOME')));
+        expect(environment.keys, isNot(contains('XDG_BIN_HOME')));
+        expect(
+          environment['DBUS_SESSION_BUS_ADDRESS'],
+          'unix:path=/run/user/1000/bus',
+        );
+        expect(
+          (await InstallJournal.read(script.journalPath))!.finished,
+          isTrue,
+        );
+      });
+    }
 
     test('logs arrive, ANSI-stripped, while their stage still runs', () async {
       const expected = 'log:→ working on repository';
@@ -355,19 +356,6 @@ void main() {
       },
     );
 
-    test('journals are refused off Linux', () {
-      expect(
-        () => HermesInstaller(
-          hermesHome: '/h',
-          installDir: '/h/hermes-agent',
-          journalPath: '/support/hermes-install.json',
-          isWindows: false,
-          isMacOS: true,
-        ),
-        throwsArgumentError,
-      );
-    });
-
     test('runStage() surfaces a missing frame explicitly', () async {
       final installer = HermesInstaller(
         hermesHome: script.hermesHome,
@@ -395,51 +383,338 @@ void main() {
       );
     });
 
-    test(
-      'checkPrerequisites reports missing tools and the macOS fix',
-      () async {
-        HermesInstaller withTools(Set<String> present, {bool macOS = false}) =>
-            HermesInstaller(
-              hermesHome: '/h',
-              installDir: '/h/hermes-agent',
-              isWindows: false,
-              isMacOS: macOS,
-              which: (name) async =>
-                  present.contains(name) ? '/usr/bin/$name' : null,
-            );
+    group('on Windows', () {
+      test('stages pin the commit and the install dir in install.ps1 '
+          'syntax, keep the host environment and close the journal', () async {
+        const environment = {
+          'Path': r'C:\Windows\system32',
+          'LOCALAPPDATA': r'C:\Users\t\AppData\Local',
+        };
+        await drain(script.installer(windows: true, environment: environment));
+        final (args, stageEnvironment) = script.stageCalls['dependencies']!;
         expect(
-          (await withTools({'git', 'curl', 'tar'}).checkPrerequisites()).ok,
+          args,
+          containsAllInOrder([
+            '-File',
+            script.windowsScript,
+            '-Stage',
+            'dependencies',
+            '-Commit',
+            hermesReleaseCommit,
+            '-ForceCommit',
+            '-HermesHome',
+            script.hermesHome,
+            '-InstallDir',
+            script.installDir,
+            '-SkipComputerUse',
+            '-NonInteractive',
+            '-Json',
+          ]),
+        );
+        expect(stageEnvironment, {
+          ...environment,
+          'HERMES_HOME': script.hermesHome,
+        });
+        // The setup wizard and the gateway belong to the app's onboarding.
+        expect(script.stagesRun, isNot(contains('configure')));
+        expect(script.stagesRun, isNot(contains('gateway')));
+        expect(script.stagesRun.last, 'bootstrap-marker');
+        final closed = (await InstallJournal.read(script.journalPath))!;
+        expect(closed.finished, isTrue);
+        expect(closed.runtimeHome, isNull);
+        expect(Directory('${script.hermesHome}/runtime').existsSync(), isFalse);
+      });
+
+      test(
+        'a missing bootstrap marker reopens bootstrap-marker only',
+        () async {
+          script.writesMarker = false;
+          await expectLater(
+            drain(script.installer(windows: true)),
+            throwsA(
+              isA<InstallFailed>().having(
+                (e) => e.stage,
+                'stage',
+                'bootstrap-marker',
+              ),
+            ),
+          );
+          final open = (await InstallJournal.read(script.journalPath))!;
+          expect(open.finished, isFalse);
+          expect(open.currentStage, 'bootstrap-marker');
+
+          script.writesMarker = true;
+          script.stagesRun.clear();
+          await drain(script.installer(windows: true));
+          expect(script.stagesRun, ['bootstrap-marker']);
+          expect(
+            (await InstallJournal.read(script.journalPath))!.finished,
+            isTrue,
+          );
+        },
+      );
+
+      test('the hermes.cmd launcher of a relocatable venv validates', () async {
+        script.windowsLaunchers = {'hermes.cmd'};
+        await drain(script.installer(windows: true));
+        expect(script.versionCalls, ['${script.windowsBin}\\hermes.cmd']);
+        expect(
+          (await InstallJournal.read(script.journalPath))!.finished,
           isTrue,
         );
-        final missing = await withTools({'curl'}).checkPrerequisites();
-        expect(missing.ok, isFalse);
-        expect(missing.missing, ['git', 'tar']);
-        expect(missing.fixCommand, isNull);
-        final mac = await withTools({
-          'curl',
-          'tar',
-        }, macOS: true).checkPrerequisites();
-        expect(mac.fixCommand, 'xcode-select --install');
-      },
-    );
+      });
+    });
 
-    test('InstallerSource mirrors the Desktop resolution order', () {
-      const source = InstallerSource(isWindows: false);
-      expect(source.scriptName, 'install.sh');
-      expect(
-        source.downloadUri().toString(),
-        'https://raw.githubusercontent.com/NousResearch/hermes-agent/'
-        '$hermesReleaseCommit/scripts/install.sh',
+    test('checkPrerequisites reports the tools missing from PATH', () async {
+      HermesInstaller withTools(Set<String> present) => HermesInstaller(
+        hermesHome: '/h',
+        installDir: '/h/hermes-agent',
+        isWindows: false,
+        isMacOS: false,
+        which: (name) async => present.contains(name) ? '/usr/bin/$name' : null,
       );
       expect(
-        source.cachePath('/h'),
-        '/h/bootstrap-cache/install-$hermesReleaseCommit.sh',
+        (await withTools({'git', 'curl', 'tar'}).checkPrerequisites()).ok,
+        isTrue,
       );
-      expect(
-        source.installedAgentScript('/h'),
-        '/h/hermes-agent/scripts/install.sh',
+      final missing = await withTools({'curl'}).checkPrerequisites();
+      expect(missing.ok, isFalse);
+      expect(missing.missing, ['git', 'tar']);
+      expect(missing.fixCommand, isNull);
+      expect(missing.installable, isFalse);
+    });
+
+    group('on macOS', () {
+      const tools = '/Library/Developer/CommandLineTools';
+
+      /// A Mac whose `/usr/bin/git` stub is always on PATH; [developerDir]
+      /// is what `xcode-select -p` prints (null: exit 2, none selected) and
+      /// [gitInstalled] whether that directory holds git.
+      HermesInstaller mac({
+        String? developerDir,
+        bool gitInstalled = true,
+        int installExit = 0,
+      }) => HermesInstaller(
+        hermesHome: '/h',
+        installDir: '/h/hermes-agent',
+        isWindows: false,
+        isMacOS: true,
+        which: (name) async => '/usr/bin/$name',
+        fileExists: (path) async =>
+            gitInstalled && path == '$developerDir/usr/bin/git',
+        runScript: (executable, args, {environment, onLine}) async {
+          if (args.contains('--install')) {
+            return ProcessResult(0, installExit, '', 'already installed');
+          }
+          return developerDir == null
+              ? ProcessResult(0, 2, '', 'unable to get active developer dir')
+              : ProcessResult(0, 0, '$developerDir\n', '');
+        },
       );
-      expect(const InstallerSource(isWindows: true).scriptName, 'install.ps1');
+
+      test(
+        'the git stub does not count without the Command Line Tools',
+        () async {
+          final check = await mac().checkPrerequisites();
+          expect(check.missing, [HermesInstaller.commandLineTools]);
+          expect(check.fixCommand, 'xcode-select --install');
+          expect(check.installable, isTrue);
+
+          final stale = await mac(
+            developerDir: tools,
+            gitInstalled: false,
+          ).checkPrerequisites();
+          expect(stale.missing, [HermesInstaller.commandLineTools]);
+        },
+      );
+
+      test('the Command Line Tools or Xcode provide git', () async {
+        expect(
+          (await mac(developerDir: tools).checkPrerequisites()).ok,
+          isTrue,
+        );
+        expect(
+          (await mac(
+            developerDir: '/Applications/Xcode.app/Contents/Developer',
+          ).checkPrerequisites()).ok,
+          isTrue,
+        );
+      });
+
+      test('a refused installer request surfaces its output', () async {
+        await expectLater(
+          mac(installExit: 1).installPrerequisites(),
+          throwsA(
+            isA<ProcessFailed>().having(
+              (e) => e.outputTail,
+              'outputTail',
+              'already installed',
+            ),
+          ),
+        );
+      });
+    });
+
+    group('installer script', () {
+      const raw = 'raw.githubusercontent.com';
+      const api = 'api.github.com';
+      final genuine = utf8.encode('#!/bin/bash\necho pinned\n');
+      final tampered = utf8.encode('#!/bin/bash\necho tampered\n');
+      final source = InstallerSource(
+        isWindows: false,
+        commit: '0123456789abcdef0123456789abcdef01234567',
+        sha256: '${crypto.sha256.convert(genuine)}',
+      );
+      final downloads = <String>[];
+      final waits = <Duration>[];
+      final ran = <String>[];
+      late String hermesHome;
+      late String cached;
+
+      setUp(() {
+        hermesHome = '${root.path}/hermes-home';
+        cached = source.cachePath(hermesHome);
+        downloads.clear();
+        waits.clear();
+        ran.clear();
+      });
+
+      HermesInstaller installer(Future<List<int>> Function(Uri uri) serve) =>
+          HermesInstaller(
+            hermesHome: hermesHome,
+            installDir: '$hermesHome/hermes-agent',
+            source: source,
+            environment: const {'PATH': '/usr/bin'},
+            isWindows: false,
+            isMacOS: false,
+            download: (uri) {
+              downloads.add(uri.host);
+              return serve(uri);
+            },
+            sleep: (delay) async => waits.add(delay),
+            runScript: (executable, args, {environment, onLine}) async {
+              ran.add(args.first);
+              return ProcessResult(0, 0, posixManifest, '');
+            },
+          );
+
+      test('a rate-limited host falls back to the next one, whose verified '
+          'bytes are cached and run', () async {
+        final manifest = await installer(
+          (uri) async => uri.host == raw
+              ? throw const ScriptDownloadError('HTTP 429', transient: true)
+              : genuine,
+        ).manifest();
+        expect(manifest.stages, hasLength(10));
+        expect(downloads, [raw, api]);
+        expect(waits, isEmpty);
+        expect(ran, [cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+      });
+
+      test(
+        'bytes without the pinned digest are neither cached nor run',
+        () async {
+          await expectLater(
+            installer((_) async => tampered).manifest(),
+            throwsA(
+              isA<InstallerUnavailable>().having(
+                (e) => e.message,
+                'message',
+                allOf(contains('$raw: served SHA-256'), contains(api)),
+              ),
+            ),
+          );
+          expect(waits, isEmpty);
+          expect(ran, isEmpty);
+          expect(File(cached).existsSync(), isFalse);
+        },
+      );
+
+      test('a refused download is tried again no sooner than its server '
+          'asked', () async {
+        var refusals = 0;
+        await installer((uri) async {
+          if (uri.host == api) {
+            throw const ScriptDownloadError('HTTP 404', transient: false);
+          }
+          if (refusals++ == 0) {
+            throw const ScriptDownloadError(
+              'HTTP 429',
+              transient: true,
+              retryAfter: Duration(seconds: 90),
+            );
+          }
+          return genuine;
+        }).manifest();
+        expect(waits, [const Duration(seconds: 90)]);
+        expect(downloads, [raw, api, raw]);
+        expect(ran, [cached]);
+      });
+
+      test('a host that stays unavailable is given up, and every failure is '
+          'reported', () async {
+        await expectLater(
+          installer(
+            (uri) async => throw uri.host == raw
+                ? const ScriptDownloadError('HTTP 429', transient: true)
+                : const ScriptDownloadError(
+                    'HTTP 403',
+                    transient: true,
+                    retryAfter: Duration(minutes: 50),
+                  ),
+          ).manifest(),
+          throwsA(
+            isA<InstallerUnavailable>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('$raw: HTTP 429'), contains('$api: HTTP 403')),
+            ),
+          ),
+        );
+        // An exhausted hourly quota is not waited for; the rate-limited
+        // host is tried again after every wait.
+        expect(downloads.where((host) => host == api), hasLength(1));
+        expect(waits, isNotEmpty);
+        expect(
+          downloads.where((host) => host == raw),
+          hasLength(waits.length + 1),
+        );
+        expect(ran, isEmpty);
+      });
+
+      test('the cached copy runs while its bytes match and is replaced '
+          'otherwise', () async {
+        File(cached)
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(genuine);
+        await installer((_) async => fail('downloaded')).manifest();
+        expect(downloads, isEmpty);
+        File(cached).writeAsBytesSync(tampered);
+        await installer((_) async => genuine).manifest();
+        expect(downloads, [raw]);
+        expect(ran, [cached, cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+      });
+
+      test('the checkout of a previous install refills the cache offline '
+          'when it has the pinned script', () async {
+        final installed = File(source.installedAgentScript(hermesHome))
+          ..createSync(recursive: true)
+          ..writeAsBytesSync(tampered);
+        await installer((_) async => genuine).manifest();
+        expect(downloads, [raw]);
+        File(cached).deleteSync();
+        installed.writeAsBytesSync(genuine);
+        await installer(
+          (_) async =>
+              throw const ScriptDownloadError('offline', transient: true),
+        ).manifest();
+        expect(downloads, [raw]);
+        expect(ran, [cached, cached]);
+        expect(File(cached).readAsBytesSync(), genuine);
+        expect(installed.readAsBytesSync(), genuine);
+      });
     });
   });
 
@@ -452,10 +727,12 @@ void main() {
   });
 }
 
-/// Stands in for `install.sh`: answers `--manifest`, runs stages by
-/// recording them and producing the side effects validation reads (the
-/// checkout's `HEAD`, the bootstrap marker), and answers `--version` for
-/// the managed launcher. Paths live in a real temporary directory.
+/// Stands in for `install.sh` and `install.ps1`: answers `--manifest` /
+/// `-Manifest`, runs stages by recording them and producing the side
+/// effects validation reads (the checkout's `HEAD`, the bootstrap marker),
+/// and answers `--version` for the installed launcher and `xcode-select -p`
+/// for a Mac with the Command Line Tools. Paths live in a real temporary
+/// directory.
 final class FakeInstallerScript {
   FakeInstallerScript(this.root);
 
@@ -464,9 +741,15 @@ final class FakeInstallerScript {
   String get installDir => '$hermesHome/hermes-agent';
   String get journalPath => '$root/support/hermes-install.json';
   String get launcher => '$hermesHome/runtime/.local/bin/hermes';
+  String get windowsScript => '$root/install.ps1';
+  String get windowsBin => '$hermesHome\\bin';
+  static const _developerDir = '/Library/Developer/CommandLineTools';
 
   final stagesRun = <String>[];
   final stageCalls = <String, (List<String>, Map<String, String>)>{};
+
+  /// Launchers that answered `--version`.
+  final versionCalls = <String>[];
 
   /// Result frame per stage; stages absent here succeed.
   final frames = <String, String>{};
@@ -479,23 +762,32 @@ final class FakeInstallerScript {
   /// Commit the `repository` stage checks out.
   String head = hermesReleaseCommit;
   bool launcherAnswers = true;
+  bool writesMarker = true;
+
+  /// The launchers the Windows `path` stage stages in [windowsBin].
+  Set<String> windowsLaunchers = {'hermes.exe'};
 
   HermesInstaller installer({
     Map<String, String> environment = const {'PATH': '/usr/bin'},
     bool journaled = true,
     bool macOS = false,
+    bool windows = false,
   }) => HermesInstaller(
     hermesHome: hermesHome,
     installDir: installDir,
     journalPath: journaled ? journalPath : null,
-    source: const InstallerSource(
-      isWindows: false,
-      localScript: '/fake/install.sh',
+    source: InstallerSource(
+      isWindows: windows,
+      localScript: windows ? windowsScript : '/fake/install.sh',
     ),
     environment: environment,
-    isWindows: false,
+    isWindows: windows,
     isMacOS: macOS,
-    fileExists: (path) async => path == '/fake/install.sh',
+    fileExists: (path) async =>
+        path == '/fake/install.sh' ||
+        path == windowsScript ||
+        path == '$_developerDir/usr/bin/git' ||
+        windowsLaunchers.any((name) => path == '$windowsBin\\$name'),
     which: (_) async => '/usr/bin/tool',
     runScript: _run,
   );
@@ -506,7 +798,11 @@ final class FakeInstallerScript {
     Map<String, String>? environment,
     void Function(String stream, String line)? onLine,
   }) async {
-    if (executable == launcher) {
+    if (executable == '/usr/bin/xcode-select') {
+      return ProcessResult(0, 0, '$_developerDir\n', '');
+    }
+    if (executable == launcher || executable.startsWith('$windowsBin\\')) {
+      versionCalls.add(executable);
       return launcherAnswers
           ? ProcessResult(0, 0, 'Hermes Agent v0.21.5 (2026.9.24)\n', '')
           : ProcessResult(0, 1, '', 'No such file or directory');
@@ -514,7 +810,13 @@ final class FakeInstallerScript {
     if (args.contains('--manifest')) {
       return ProcessResult(0, 0, posixManifest, '');
     }
-    final name = args[args.indexOf('--stage') + 1];
+    if (args.contains('-Manifest')) {
+      return ProcessResult(0, 0, windowsManifest, '');
+    }
+    final windows = args.contains('-Stage');
+    String argument(String posix, String ps1) =>
+        args[args.indexOf(windows ? ps1 : posix) + 1];
+    final name = argument('--stage', '-Stage');
     stagesRun.add(name);
     stageCalls[name] = (args, environment ?? const {});
     await onStage?.call(name);
@@ -524,11 +826,11 @@ final class FakeInstallerScript {
       case 'repository':
         await Directory('$installDir/.git').create(recursive: true);
         await File('$installDir/.git/HEAD').writeAsString('$head\n');
-      case 'complete':
+      case 'complete' || 'bootstrap-marker' when writesMarker:
         await File('$installDir/.hermes-bootstrap-complete').writeAsString(
           jsonEncode({
             'schemaVersion': 1,
-            'pinnedCommit': args[args.indexOf('--commit') + 1],
+            'pinnedCommit': argument('--commit', '-Commit'),
             'pinnedBranch': 'main',
             'completedAt': '2026-09-29T08:00:00.000Z',
           }),

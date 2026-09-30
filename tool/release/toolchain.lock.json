@@ -12,7 +12,17 @@
     "commit": "6a19cca56475dbfba1478ee68d7bd0c2ef891da1",
     "dart": "3.13.4",
     "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.5-stable.tar.xz",
-    "sha256": "2132e990f236f8d22e7c6314b29a191a95b10d7cbcfec9b4e2e303d996652cbb"
+    "sha256": "2132e990f236f8d22e7c6314b29a191a95b10d7cbcfec9b4e2e303d996652cbb",
+    "archives": {
+      "macos-arm64": {
+        "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_3.47.5-stable.zip",
+        "sha256": "d4dd908b5f8f65515831b6d68ae33307a813f2b68947dded7a1994ee5ea7cead"
+      },
+      "windows-x64": {
+        "url": "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.5-stable.zip",
+        "sha256": "0ccd71931f49c2fbe394b1eeb6d79af3d624058a043ea0d03d34160581624fb8"
+      }
+    }
   },
   "melos": {
     "version": "8.9.0"
@@ -144,8 +154,28 @@
       "sha256": "5b419de5ed9273f63b8537d26ff9d49549808224036f483589ed8524a56461f7"
     }
   ],
+  "windows": {
+    "inno_setup": {
+      "version": "6.7.1"
+    },
+    "artifact_signing_client": {
+      "package": "Microsoft.ArtifactSigning.Client",
+      "version": "1.0.128",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.128/microsoft.artifactsigning.client.1.0.128.nupkg",
+      "sha256": "74bd7d27e6ce1051409c38d9b46bc8df0400ecd643d51ffbf2ac00869061e40b"
+    },
+    "timestamp_url": "http://timestamp.acs.microsoft.com"
+  },
+  "macos": {
+    "xcode": {
+      "version": "16.4",
+      "build": "16F6",
+      "path": "/Applications/Xcode_16.4.app"
+    }
+  },
   "ci": {
     "actionlint": {"version": "1.7.12", "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz", "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"},
-    "shellcheck": {"version": "0.11.0", "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz", "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"}
+    "shellcheck": {"version": "0.11.0", "url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz", "sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"},
+    "tesseract_windows": {"version": "5.4.0.20240606", "url": "https://github.com/UB-Mannheim/tesseract/releases/download/v5.4.0.20240606/tesseract-ocr-w64-setup-5.4.0.20240606.exe", "sha256": "c885fff6998e0608ba4bb8ab51436e1c6775c2bafc2559a19b423e18678b60c9"}
   }
 }

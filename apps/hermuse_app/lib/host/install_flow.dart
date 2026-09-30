@@ -48,6 +48,9 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   _Phase _phase = _Phase.working;
   String _status = 'Looking for Hermes…';
   PrerequisiteCheck? _prereqs;
+
+  /// Whether the installer of the missing prerequisites was opened.
+  bool _prereqsRequested = false;
   InstallManifest? _manifest;
   final _done = <String, StageResult>{};
   String? _running;
@@ -55,8 +58,12 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   String? _error;
   final _log = <String>[];
 
-  HermesInstaller get _installer =>
-      widget.installer ?? makeInstaller(widget.host.hermesHome);
+  late final HermesInstaller _installer =
+      widget.installer ??
+      makeInstaller(
+        widget.host.hermesHome,
+        journalPath: widget.host.installJournalPath,
+      );
 
   @override
   void initState() {
@@ -82,7 +89,11 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       await _superviseAndFinish();
       return;
     }
-    setState(() => _status = 'Checking prerequisites…');
+    setState(() {
+      _phase = _Phase.working;
+      _status = 'Checking prerequisites…';
+      _error = null;
+    });
     try {
       _prereqs = await _installer.checkPrerequisites();
     } on Object catch (e) {
@@ -99,6 +110,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       setState(() => _phase = _Phase.failed);
       return;
     }
+    _prereqsRequested = false;
     setState(() => _status = 'Reading install plan…');
     try {
       _manifest = await _installer.manifest();
@@ -114,6 +126,19 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     if (!mounted) return;
     setState(() => _phase = _Phase.stages);
     await _runStages();
+  }
+
+  /// Opens the installer of the missing prerequisites (macOS: Apple's
+  /// Command Line Tools dialog); the user then checks again.
+  Future<void> _installPrerequisites() async {
+    try {
+      await _installer.installPrerequisites();
+      if (mounted) setState(() => _prereqsRequested = true);
+    } on ProcessFailed catch (e) {
+      if (mounted) setState(() => _error = '${e.message}: ${e.outputTail}');
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
   }
 
   Future<void> _runStages() async {
@@ -200,10 +225,13 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   }
 
   Future<void> _superviseAndFinish() async {
+    // Registering the instance swaps the welcome routes for the chat, which
+    // disposes this screen while boot still runs: read what the end needs
+    // now, not through a disposed ref.
+    final registry = ref.read(registryProvider.future);
+    final activeThread = ref.read(activeThreadProvider.notifier);
     try {
-      final instance = await widget.host.boot(
-        await ref.read(registryProvider.future),
-      );
+      final instance = await widget.host.boot(await registry);
       if (instance == null) {
         // Install finished but detection still misses: re-detect failed.
         throw const InstallFailed(
@@ -211,7 +239,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
           'Install finished but no Hermes launcher answers --version.',
         );
       }
-      await ref.read(activeThreadProvider.notifier).openInstance(instance.id);
+      await activeThread.openInstance(instance.id);
       widget.onDone(instance);
     } on Object catch (e) {
       if (mounted) {
@@ -246,19 +274,31 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
                   const SizedBox(height: 16),
                   ..._body(palette),
                   const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 12,
                     children: [
                       YsButton.neutral(
                         label: 'Cancel',
                         onPressed: widget.onCancel,
                       ),
-                      if (_phase == _Phase.failed && _failedStage != null) ...[
-                        const SizedBox(width: 12),
+                      if (_phase == _Phase.failed && _failedStage != null)
                         YsButton.primary(
                           label: 'Retry this stage',
                           onPressed: _retryStage,
+                        ),
+                      if (_phase == _Phase.failed &&
+                          _prereqs != null &&
+                          !_prereqs!.ok) ...[
+                        if (_prereqs!.installable && !_prereqsRequested)
+                          YsButton.primary(
+                            label: 'Install',
+                            onPressed: _installPrerequisites,
+                          ),
+                        YsButton.neutral(
+                          label: 'Check again',
+                          onPressed: _start,
                         ),
                       ],
                     ],
@@ -303,13 +343,31 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
               style: YsType.body.flutter.copyWith(color: palette.errorColor),
               textAlign: TextAlign.center,
             ),
-            if (prereqs.fixCommand != null) ...[
-              const SizedBox(height: 8),
+            const SizedBox(height: 8),
+            if (prereqs.installable)
+              Text(
+                _prereqsRequested
+                    ? 'Finish the installation in the dialog that opened, '
+                          'then check again.'
+                    : 'Install them, then check again.',
+                style: YsType.body.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+                textAlign: TextAlign.center,
+              )
+            else if (prereqs.fixCommand != null)
               SelectableText(
                 prereqs.fixCommand!,
                 style: YsType.body.flutter.copyWith(
                   color: palette.contentColor,
                 ),
+                textAlign: TextAlign.center,
+              ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 8),
+              Text(
+                error,
+                style: YsType.small.flutter.copyWith(color: palette.errorColor),
                 textAlign: TextAlign.center,
               ),
             ],

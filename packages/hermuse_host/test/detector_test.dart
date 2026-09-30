@@ -110,6 +110,65 @@ void main() {
       expect(found.home, r'C:\Users\t\hermes');
     });
 
+    group('on Windows', () {
+      const home = r'C:\Users\t\AppData\Local\hermes';
+      HermesDetector windows({required bool portableGit}) => HermesDetector(
+        isWindows: true,
+        environment: const {'LOCALAPPDATA': r'C:\Users\t\AppData\Local'},
+        homeDirectory: r'C:\Users\t',
+        fileExists: (path) async =>
+            path == '$home\\bin\\hermes.exe' ||
+            (portableGit && path == '$home\\git\\bin\\bash.exe'),
+        runVersion: (_, _) async =>
+            ProcessResult(0, 0, 'Hermes Agent v0.21.5\n', ''),
+        which: (_) async => null,
+      );
+
+      test(
+        "children reach the tools install.ps1 added after the app's start",
+        () async {
+          final found = (await windows(portableGit: true).detect())!;
+          expect(found.managed, isFalse);
+          expect(found.gitBash, '$home\\git\\bin\\bash.exe');
+          // A snapshot taken before the install: Path spelled as Windows
+          // does, the hermes bin dir already listed once.
+          final environment = found.runtimeEnvironment({
+            'Path': '$home\\bin;C:\\Windows\\system32;',
+            'SystemRoot': r'C:\Windows',
+          });
+          expect(environment, {
+            'Path':
+                '$home\\bin;$home\\node;C:\\Windows\\system32;'
+                '$home\\git\\cmd',
+            'HERMES_GIT_BASH_PATH': '$home\\git\\bin\\bash.exe',
+            'PYTHONUTF8': '1',
+          });
+        },
+      );
+
+      test("keeps what the user's environment already sets", () async {
+        final found = (await windows(portableGit: true).detect())!;
+        final environment = found.runtimeEnvironment({
+          'PATH': r'C:\Windows\system32',
+          'HERMES_GIT_BASH_PATH': r'C:\Program Files\Git\bin\bash.exe',
+          'PYTHONUTF8': '0',
+        });
+        expect(environment, {
+          'PATH':
+              '$home\\bin;$home\\node;C:\\Windows\\system32;$home\\git\\cmd',
+        });
+      });
+
+      test('a system Git leaves Git Bash to Hermes', () async {
+        final found = (await windows(portableGit: false).detect())!;
+        expect(found.gitBash, isNull);
+        expect(found.runtimeEnvironment({'Path': r'C:\Windows\system32'}), {
+          'Path': '$home\\bin;$home\\node;C:\\Windows\\system32',
+          'PYTHONUTF8': '1',
+        });
+      });
+    });
+
     test('prefers the runtime Hermuse installed and marks it', () async {
       final detector = fakeDetector(
         versions: {
