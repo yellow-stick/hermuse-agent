@@ -96,7 +96,7 @@ final class YsSkeletonBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: width,
+    width: width ?? double.infinity,
     height: height,
     child: DecoratedBox(
       decoration: BoxDecoration(
