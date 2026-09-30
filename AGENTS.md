@@ -50,6 +50,12 @@ cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
 
+Web deploy: `.github/workflows/web.yml` builds `apps/hermuse_web` and deploys it
+with the Netlify CLI to project `hermuse-agent` (https://hermuse.app): production
+on push to `main`, draft alias `pr-<N>` on pull requests. Netlify's Git builds
+are stopped; `netlify.toml` (headers, manual deploy commands) is the only site
+config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
+
 Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
 (`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with
 the main checkout) and `tool/orca/archive-worktree.sh` on archive (stops every
