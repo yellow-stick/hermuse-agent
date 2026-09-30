@@ -45,14 +45,16 @@ class HermuseOnboarding extends StatelessComponent {
     final state = onboarding.value;
     if (onboarding.isLoading && state == null) {
       return div(classes: 'hermuse-screen', [
-        div(classes: 'hermuse-card', [
+        div(classes: 'hermuse-card hermuse-card-narrow', [
+          HermuseCardArt(YsArt.check, busy: true),
           p(classes: 'hermuse-card-body', [.text('Checking this Hermes…')]),
         ]),
       ]);
     }
     if (state == null) {
       return div(classes: 'hermuse-screen', [
-        div(classes: 'hermuse-card', [
+        div(classes: 'hermuse-card hermuse-card-narrow', [
+          HermuseCardArt(YsArt.unreachable),
           h1(classes: 'hermuse-card-title', [.text('Setup unavailable')]),
           p(classes: 'hermuse-card-error', [.text('${onboarding.error}')]),
           div(classes: 'hermuse-card-actions', [

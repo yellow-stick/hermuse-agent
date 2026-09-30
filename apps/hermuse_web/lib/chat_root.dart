@@ -393,7 +393,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           );
         }
         final controller = _shown;
-        if (controller == null) return _loadingShell();
+        if (controller == null) return _loadingShell(label: 'Opening the chat');
         syncChatListener(controller);
         return HermuseWatch(
           provider: chatPanelPinnedProvider,
@@ -420,12 +420,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     return instances.first;
   }
 
-  /// Static shell skeleton (SSR + loading states): rail/sidebar/thread
-  /// placeholders with the real layout so hydration matches.
-  Component _loadingShell({Component? child}) => div(classes: 'hermuse-shell', [
-    div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
-    child ?? div(classes: 'hermuse-thread-slot', []),
-  ]);
+  /// Static shell (SSR + loading states): the drawing of a wait, [label]
+  /// announced, or [child] in its place, so hydration matches.
+  Component _loadingShell({Component? child, String label = 'Loading'}) =>
+      div(classes: 'hermuse-shell', [
+        div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
+        child ?? HermuseLoading(art: YsArt.chats, label: label),
+      ]);
 
   Component _chatShell(
     BuildContext context, {

@@ -44,24 +44,44 @@ class HermuseRelayRequired extends StatelessComponent {
   static List<StyleRule> get styles => hermuseScreenStyles;
 }
 
-/// Card illustration: [art] draws in when the card shows, plays again under
-/// the pointer and loops while [busy] (work under way). Desktop parity:
-/// `YsDialogArt`.
+/// Card illustration of a full-page status: [art], hero-sized, draws in
+/// when the card shows, plays again under the pointer and loops while
+/// [busy] (work under way). Desktop parity: `YsDialogArt`.
 class HermuseCardArt extends StatelessComponent {
   const HermuseCardArt(this.art, {this.busy = false, super.key});
 
   final YsArt art;
   final bool busy;
 
+  // The drawing ignores the pointer: its host tracks it.
   @override
   Component build(BuildContext context) => YsHover(
-    builder: (context, hovered) =>
-        YsArtView(art, size: YsLayout.artStep, active: hovered, busy: busy),
+    builder: (context, hovered) => span(classes: 'hermuse-card-art', [
+      YsArtView.hero(art, active: hovered, busy: busy),
+    ]),
+  );
+}
+
+/// Full-screen wait: [art] loops in the middle of the canvas until what the
+/// screen waits for arrives; [label] is announced. Desktop parity:
+/// `LoadingScreen`.
+class HermuseLoading extends StatelessComponent {
+  const HermuseLoading({required this.art, required this.label, super.key});
+
+  final YsArt art;
+  final String label;
+
+  @override
+  Component build(BuildContext context) => div(
+    classes: 'hermuse-screen',
+    attributes: {'role': 'status', 'aria-label': label},
+    [HermuseCardArt(art, busy: true)],
   );
 }
 
 /// Shared full-screen card styles (relay-required, welcome, instances…).
 List<StyleRule> get hermuseScreenStyles => [
+  css('.hermuse-card-art').styles(display: .flex),
   css('.hermuse-screen', [
     css('&').styles(
       flex: .grow(1),
