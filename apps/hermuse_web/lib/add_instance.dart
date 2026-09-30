@@ -47,57 +47,11 @@ class HermuseAddInstance extends StatefulComponent {
     css('.hermuse-screen .hermuse-card.hermuse-add')
         .styles(alignItems: .stretch, gap: .all(YsSpace.md.px)),
     css('.hermuse-add', [
-      css('.hermuse-add-head').styles(
-        display: .flex,
-        flexDirection: .row,
-        alignItems: .start,
-        gap: .all(YsSpace.lg.px),
-        margin: .only(bottom: YsSpace.xs.px),
-      ),
-      css('.hermuse-add-art').styles(display: .flex, raw: {'flex-shrink': '0'}),
-      css('.hermuse-add-titles').styles(
-        flex: .grow(1),
-        display: .flex,
-        flexDirection: .column,
-        gap: .all(YsSpace.xs.px),
-        raw: {'min-width': '0'},
-      ),
-      css('.hermuse-add-title').styles(
-        margin: .zero,
-        fontSize: YsType.title.size.px,
-        fontWeight: .w500,
-        lineHeight: YsType.title.lineHeight.px,
-      ),
-      css('.hermuse-add-helper').styles(
-        margin: .zero,
-        color: .variable('--content-muted'),
-        fontSize: YsType.small.size.px,
-        lineHeight: YsType.small.lineHeight.px,
-      ),
       css('.hermuse-add-check').styles(display: .flex),
-      css('.hermuse-add-found').styles(
-        display: .flex,
-        flexDirection: .row,
-        alignItems: .center,
-        gap: .all((YsSpace.sm + YsSpace.xxs).px),
-        color: .variable('--content-muted'),
-        fontSize: YsType.small.size.px,
-        lineHeight: YsType.small.lineHeight.px,
-      ),
-      css('.hermuse-add-found-yes').styles(color: .variable('--success')),
       css('.hermuse-add-credentials').styles(
         display: .flex,
         flexDirection: .column,
         gap: .all(YsSpace.md.px),
-      ),
-      css('.hermuse-add-error').styles(
-        margin: .zero,
-        padding: .all(YsSpace.md.px),
-        radius: .circular(YsRadius.row.px),
-        color: .variable('--error'),
-        backgroundColor: .variable('--error-wash'),
-        fontSize: YsType.small.size.px,
-        lineHeight: YsType.small.lineHeight.px,
       ),
     ]),
   ];
@@ -330,31 +284,19 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
         : () => unawaited(_probe());
     return div(classes: 'hermuse-screen', [
       div(classes: 'hermuse-card hermuse-card-narrow hermuse-add', [
-        div(classes: 'hermuse-add-head', [
-          // Reaching out while a check or a connection runs, unplugged when
-          // the check found no usable Hermes.
-          YsHover(
-            builder: (context, hovered) => span(classes: 'hermuse-add-art', [
-              YsArtView(
-                _probeFailed ? YsArt.unreachable : YsArt.remote,
-                size: YsLayout.artHeader,
-                active: hovered,
-                busy: _busy,
-              ),
-            ]),
-          ),
-          div(classes: 'hermuse-add-titles', [
-            h1(classes: 'hermuse-add-title', [.text('Add a Hermes')]),
-            p(classes: 'hermuse-add-helper', [
-              .text('Paste the web address of your Hermes dashboard.'),
-            ]),
-          ]),
-          YsButton.icon(
+        // Reaching out while a check or a connection runs, unplugged when
+        // the check found no usable Hermes.
+        HermuseDialogHead(
+          art: _probeFailed ? YsArt.unreachable : YsArt.remote,
+          busy: _busy,
+          title: 'Add a Hermes',
+          helper: 'Paste the web address of your Hermes dashboard.',
+          trailing: YsButton.icon(
             icon: YsIcon.close,
             label: 'Cancel',
             onPressed: component.onCancel,
           ),
-        ]),
+        ),
         div(key: _urlField, [
           YsField(
             label: 'Instance URL',
@@ -379,36 +321,22 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
             YsButton.neutral(label: check, onPressed: onCheck),
         ]),
         if (checking || status != null)
-          div(
-            classes: status == null
-                ? 'hermuse-add-found'
-                : 'hermuse-add-found hermuse-add-found-yes',
-            attributes: {'role': 'status'},
-            [
-              YsDoneBox(done: status != null),
-              span([
-                .text(switch (status) {
-                  null =>
-                    'Looking for Hermes at ${_checking?.authority ?? ''}…',
-                  HermesStatus(
-                    loginMethod: AuthMethod.loopbackToken,
-                    :final version,
-                  ) =>
-                    'Hermes $version · paste its session token '
-                        '(HERMES_DASHBOARD_SESSION_TOKEN).',
-                  HermesStatus(:final version) =>
-                    'Hermes $version · sign in with your dashboard account.',
-                }),
-              ]),
-            ],
+          HermuseCheckLine(
+            done: status != null,
+            text: switch (status) {
+              null => 'Looking for Hermes at ${_checking?.authority ?? ''}…',
+              HermesStatus(
+                loginMethod: AuthMethod.loopbackToken,
+                :final version,
+              ) =>
+                'Hermes $version · paste its session token '
+                    '(HERMES_DASHBOARD_SESSION_TOKEN).',
+              HermesStatus(:final version) =>
+                'Hermes $version · sign in with your dashboard account.',
+            },
           ),
         if (status != null) _credentials(status),
-        if (_error case final error?)
-          p(
-            classes: 'hermuse-add-error',
-            attributes: {'role': 'alert'},
-            [.text(error)],
-          ),
+        if (_error case final error?) HermuseErrorNotice(error),
       ]),
     ]);
   }

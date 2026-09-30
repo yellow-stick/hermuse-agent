@@ -116,16 +116,17 @@ class HermuseInstances extends StatelessComponent {
     AsyncValue<HermesRegistry> registry,
   ) => div(classes: 'hermuse-screen hermuse-screen-top', [
     div(classes: 'hermuse-list-card', [
-      div(classes: 'hermuse-list-head', [
-        h1(classes: 'hermuse-list-title', [.text('Instances')]),
-        div(classes: 'hermuse-list-head-spacer', []),
-        YsButton.icon(
+      HermuseDialogHead(
+        art: YsArt.remote,
+        title: 'Instances',
+        helper: 'The Hermes you chat with and the state of each connection.',
+        trailing: YsButton.icon(
           icon: YsIcon.close,
           label: 'Back to chat',
           onPressed: onBack,
           size: 36,
         ),
-      ]),
+      ),
       for (final instance in instances)
         HermuseWatch(
           key: ValueKey(instance.id),
@@ -135,9 +136,13 @@ class HermuseInstances extends StatelessComponent {
             builder: (context, connection) => _InstanceRow(
               instance: instance,
               state: state.value,
+              // Refused credentials, on the first connection or on a later
+              // reconnect (the chat's sign-in banner reads the same).
               authFailed:
-                  state.value == ConnectionState.error &&
-                  connection.error is HermesAuthFailed,
+                  connection.error is HermesAuthFailed ||
+                  (state.value == ConnectionState.error &&
+                      connection.value?.transport.lastError
+                          is HermesAuthFailed),
               isPrimary: registry.value?.primary?.id == instance.id,
               onOpen: () => onOpen(instance.id),
               onRename: (name) => _rename(context, instance, name),
@@ -199,20 +204,8 @@ class HermuseInstances extends StatelessComponent {
       color: .variable('--content'),
       backgroundColor: .variable('--paper'),
     ),
-    css('.hermuse-list-head').styles(
-      display: .flex,
-      flexDirection: .row,
-      alignItems: .center,
-      gap: .all(8.px),
-    ),
-    css('.hermuse-list-title').styles(
-      margin: .zero,
-      flex: .grow(1),
-      fontSize: 22.px,
-      lineHeight: 28.px,
-      fontWeight: .w500,
-    ),
-    css('.hermuse-list-head-spacer').styles(width: 36.px),
+    css('.hermuse-instance-body > .hermuse-check-line')
+        .styles(margin: .only(top: YsSpace.sm.px)),
     css('.hermuse-instance-row').styles(
       padding: .symmetric(vertical: 12.px, horizontal: 12.px),
       radius: .circular(YsRadius.row.px),
@@ -304,12 +297,6 @@ class HermuseInstances extends StatelessComponent {
         .styles(height: 36.px, fontSize: 14.px, lineHeight: 20.px),
     css('.hermuse-instance-signin-field')
         .styles(flex: .grow(1), raw: {'min-width': '0'}),
-    css('.hermuse-instance-signin-error').styles(
-      margin: .zero,
-      fontSize: 13.px,
-      lineHeight: 18.px,
-      color: .variable('--primary-2'),
-    ),
     css('.hermuse-instance-signin-link').styles(
       fontSize: 13.px,
       lineHeight: 18.px,
@@ -361,6 +348,11 @@ class _InstanceRowState extends State<_InstanceRow> {
   var _password = '';
   var _signInBusy = false;
   String? _signInError;
+
+  /// The sign-in under way or just done, as its check line says it; null
+  /// once another action starts.
+  String? _signCheck;
+  var _signedIn = false;
 
   @override
   void initState() {
@@ -432,6 +424,14 @@ class _InstanceRowState extends State<_InstanceRow> {
             ].join(' · '),
           ),
         ]),
+        // The sign-in's line: an empty box while it runs, ticked with
+        // sparks once signed in; it stays until another action starts.
+        if (_signCheck case final check?)
+          HermuseCheckLine(
+            key: const ValueKey('sign-in'),
+            text: check,
+            done: _signedIn,
+          ),
         if (component.authFailed && instance.auth == AuthMethod.password)
           _RowSignIn(
             instanceId: instance.id,
@@ -443,6 +443,7 @@ class _InstanceRowState extends State<_InstanceRow> {
             onToggle: () => setState(() {
               _signingIn = !_signingIn;
               _signInError = null;
+              _signCheck = null;
             }),
             onUsername: (v) => setState(() => _username = v),
             onPassword: (v) => setState(() => _password = v),
@@ -459,6 +460,7 @@ class _InstanceRowState extends State<_InstanceRow> {
             onPressed: () => setState(() {
               _draft = instance.label;
               _editing = !_editing;
+              _signCheck = null;
             }),
             size: 32,
           ),
@@ -477,7 +479,10 @@ class _InstanceRowState extends State<_InstanceRow> {
           YsButton.icon(
             icon: YsIcon.close,
             label: 'Delete',
-            onPressed: () => setState(() => _confirmDelete = true),
+            onPressed: () => setState(() {
+              _confirmDelete = true;
+              _signCheck = null;
+            }),
             size: 32,
           ),
         ],
@@ -487,16 +492,19 @@ class _InstanceRowState extends State<_InstanceRow> {
 
   Future<void> _signIn(BuildContext context) async {
     if (_signInBusy || _username.isEmpty || _password.isEmpty) return;
+    final username = _username;
     setState(() {
       _signInBusy = true;
       _signInError = null;
+      _signCheck = 'Signing in as $username…';
+      _signedIn = false;
     });
     try {
       await HermuseScope.container
           .read(instanceAuthProvider)
           .signIn(
             component.instance.id,
-            username: _username,
+            username: username,
             password: _password,
           );
       if (mounted) {
@@ -504,15 +512,22 @@ class _InstanceRowState extends State<_InstanceRow> {
           _username = '';
           _password = '';
           _signingIn = false;
+          _signCheck = 'Signed in as $username';
+          _signedIn = true;
         });
       }
     } on HermesAuthFailed {
-      if (mounted) setState(() => _signInError = 'Wrong username or password.');
+      if (mounted) _failSignIn('Wrong username or password.');
     } on Object catch (e) {
-      if (mounted) setState(() => _signInError = '$e');
+      if (mounted) _failSignIn('$e');
     }
     if (mounted) setState(() => _signInBusy = false);
   }
+
+  void _failSignIn(String message) => setState(() {
+    _signInError = message;
+    _signCheck = null;
+  });
 }
 
 /// Collapsed "Sign in" link expanding to an inline credential form.
@@ -561,6 +576,7 @@ class _RowSignIn extends StatelessComponent {
             placeholder: 'Username',
             name: 'row-username-$instanceId',
             label: 'Username',
+            icon: YsIcon.user,
             autocomplete: 'username',
           ),
         ]),
@@ -573,18 +589,18 @@ class _RowSignIn extends StatelessComponent {
             name: 'row-password-$instanceId',
             label: 'Password',
             obscure: true,
+            icon: YsIcon.lock,
             autocomplete: 'current-password',
           ),
         ]),
         YsButton.primary(
-          label: busy ? '…' : 'Sign in',
+          label: busy ? 'Signing in…' : 'Sign in',
           onPressed: busy || username.isEmpty || password.isEmpty
               ? null
               : onSubmit,
         ),
       ]),
-      if (error case final message?)
-        p(classes: 'hermuse-instance-signin-error', [.text(message)]),
+      if (error case final message?) HermuseErrorNotice(message),
     ]);
   }
 }

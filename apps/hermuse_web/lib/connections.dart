@@ -9,6 +9,7 @@ import 'package:universal_web/web.dart' as web;
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'route.dart';
 import 'scope.dart';
 import 'screens.dart';
 
@@ -43,6 +44,7 @@ class HermuseConnections extends StatefulComponent {
       lineHeight: 20.px,
       color: .variable('--content-muted'),
     ),
+    css('.hermuse-conn-retry-row').styles(display: .flex),
     css('.hermuse-conn-group').styles(
       margin: .only(top: 8.px),
       fontSize: 13.px,
@@ -105,6 +107,18 @@ class HermuseConnections extends StatefulComponent {
       textOverflow: .ellipsis,
       raw: {'white-space': 'nowrap'},
     ),
+    css('.hermuse-conn-dot').styles(
+      width: YsLayout.statusDot.px,
+      height: YsLayout.statusDot.px,
+      radius: .circular(YsRadius.pill.px),
+      raw: {'flex-shrink': '0'},
+    ),
+    css('.hermuse-conn-dot-connected')
+        .styles(backgroundColor: .variable('--success')),
+    css('.hermuse-conn-dot-pending')
+        .styles(backgroundColor: .variable('--primary')),
+    css('.hermuse-conn-dot-error')
+        .styles(backgroundColor: .variable('--error')),
     css('.hermuse-conn-action').styles(
       fontSize: 14.px,
       lineHeight: 20.px,
@@ -216,36 +230,47 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
               pendingLogin: state?.pendingLogin,
             ),
         ]);
+    // The drawing loops while the list loads and shows a pulled plug when
+    // it cannot load (desktop `ConnectionsScreen` parity).
+    final failed = connections.hasError && state == null;
     return div(classes: 'hermuse-screen hermuse-screen-top', [
       div(classes: 'hermuse-list-card', [
-        div(classes: 'hermuse-list-head', [
-          h1(classes: 'hermuse-list-title', [.text('Connections')]),
-          div(classes: 'hermuse-list-head-spacer', []),
-          YsButton.icon(
+        HermuseDialogHead(
+          art: failed ? YsArt.unreachable : YsArt.accounts,
+          busy: connections.isLoading,
+          title: 'Connections',
+          helper: 'Model accounts ${component.instance.label} can use.',
+          trailing: YsButton.icon(
             icon: YsIcon.close,
             label: 'Back',
             onPressed: component.onBack,
             size: 36,
           ),
-        ]),
-        p(classes: 'hermuse-conn-sub', [
-          .text('Model accounts ${component.instance.label} can use.'),
-        ]),
+        ),
         YsInputBox(
           value: _query,
           onChanged: (v) => setState(() => _query = v),
           placeholder: 'Search connections',
           name: 'connections-search',
           label: 'Search connections',
+          icon: YsIcon.search,
           autocomplete: 'off',
         ),
         if (connections.isLoading && state == null)
-          p(classes: 'hermuse-conn-sub', [.text('Loading connections…')])
-        else if (connections.hasError && state == null)
-          p(classes: 'hermuse-card-error', [
-            .text('Could not load connections: ${connections.error}.'),
-          ])
-        else ...[
+          HermuseRouteSkeleton(label: 'Loading connections…')
+        else if (failed) ...[
+          HermuseErrorNotice(
+            'Could not load connections: ${connections.error}.',
+          ),
+          div(classes: 'hermuse-conn-retry-row', [
+            YsButton.neutral(
+              label: 'Try again',
+              onPressed: () => context.container.invalidate(
+                connectionCardsProvider(component.instance.id),
+              ),
+            ),
+          ]),
+        ] else ...[
           if (connected.isNotEmpty) ...[
             p(classes: 'hermuse-conn-group', [.text('Connected')]),
             list(connected),
@@ -311,6 +336,14 @@ class _ConnectionCardState extends State<_ConnectionCard> {
       (_, ConnectionFlow.external) => ('Terminal', 'hermuse-conn-action-muted'),
       _ => ('Connect', ''),
     };
+    // The row's state dot: connected pings once as the row shows; waiting
+    // and failed logins keep a still dot.
+    final dot = switch (card.state) {
+      ConnectionCardState.connected => (YsTheme.success, 'connected'),
+      ConnectionCardState.pending => (YsTheme.primary, 'pending'),
+      ConnectionCardState.error => (YsTheme.error, 'error'),
+      ConnectionCardState.disconnected => null,
+    };
     return div(classes: 'hermuse-conn-item', [
       YsPressable(
         onPressed: () => setState(() => _open = !open),
@@ -323,6 +356,15 @@ class _ConnectionCardState extends State<_ConnectionCard> {
             if (card.detail.isNotEmpty && card.detail != card.name)
               span(classes: 'hermuse-conn-detail', [.text(card.detail)]),
           ]),
+          if (dot case (final color, final name))
+            YsPing(
+              live: connected,
+              color: color,
+              child: span(
+                classes: 'hermuse-conn-dot hermuse-conn-dot-$name',
+                [],
+              ),
+            ),
           span(classes: 'hermuse-conn-action $actionClass'.trim(), [
             .text(action),
           ]),

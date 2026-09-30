@@ -455,6 +455,13 @@ class HermuseThread extends StatelessComponent {
         gap: .all(8.px),
         flex: .grow(1),
       ),
+      css('.hermuse-signin-head').styles(
+        display: .flex,
+        flexDirection: .row,
+        alignItems: .center,
+        gap: .all(8.px),
+        color: .variable('--error'),
+      ),
       css('.hermuse-signin-grow').styles(flex: .grow(1)),
       css('.hermuse-signin-row').styles(
         display: .flex,
@@ -470,12 +477,6 @@ class HermuseThread extends StatelessComponent {
       ),
       css('.hermuse-signin-fields .ys-inputbox')
           .styles(height: 36.px, fontSize: 14.px, lineHeight: 20.px),
-      css('.hermuse-signin-error').styles(
-        margin: .zero,
-        fontSize: 13.px,
-        lineHeight: 18.px,
-        color: .variable('--primary-2'),
-      ),
     ]),
     // A new composer action turns in and grows from half size.
     css.keyframes('hermuse-morph', {
@@ -649,10 +650,12 @@ class _SignInBannerState extends State<_SignInBanner> {
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-conn-banner', [
-    YsIconView(YsIcon.close, size: 16),
     div(classes: 'hermuse-signin', [
-      span(classes: 'hermuse-conn-text', [
-        .text(component.error ?? 'Signed out — sign in again to reconnect.'),
+      div(classes: 'hermuse-signin-head', [
+        YsIconView(YsIcon.lock, size: YsLayout.inlineIcon),
+        span(classes: 'hermuse-conn-text', [
+          .text(component.error ?? 'Signed out — sign in again to reconnect.'),
+        ]),
       ]),
       div(classes: 'hermuse-signin-row', [
         div(classes: 'hermuse-signin-fields', [
@@ -664,6 +667,7 @@ class _SignInBannerState extends State<_SignInBanner> {
               placeholder: 'Username',
               name: 'signin-username',
               label: 'Username',
+              icon: YsIcon.user,
               autocomplete: 'username',
             ),
           ]),
@@ -676,6 +680,7 @@ class _SignInBannerState extends State<_SignInBanner> {
               name: 'signin-password',
               label: 'Password',
               obscure: true,
+              icon: YsIcon.lock,
               autocomplete: 'current-password',
             ),
           ]),
@@ -686,11 +691,11 @@ class _SignInBannerState extends State<_SignInBanner> {
               : _submit,
           label: 'Sign in',
           classes: 'hermuse-conn-retry',
-          builder: (context, press) => span([.text(_busy ? '…' : 'Sign in')]),
+          builder: (context, press) =>
+              span([.text(_busy ? 'Signing in…' : 'Sign in')]),
         ),
       ]),
-      if (_error case final error?)
-        p(classes: 'hermuse-signin-error', [.text(error)]),
+      if (_error case final error?) HermuseErrorNotice(error),
     ]),
   ]);
 
@@ -708,6 +713,7 @@ class _SignInBannerState extends State<_SignInBanner> {
             username: _username,
             password: _password,
           );
+      // The chat reconnects and the banner goes away.
       if (mounted) {
         setState(() {
           _username = '';
