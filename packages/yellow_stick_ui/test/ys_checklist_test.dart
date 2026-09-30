@@ -40,7 +40,7 @@ YsChecklistItem _step(YsStepState state, {double? progress}) => YsChecklistItem(
 void main() {
   group('YsChecklist', () {
     testWidgets('should unfold a row\'s notes and actions only while it '
-        'needs the user or failed', (tester) async {
+        'needs the user, failed or waits on another step', (tester) async {
       // The same row through every state, as a setup moves it along.
       for (final state in YsStepState.values) {
         await _pump(
@@ -50,7 +50,9 @@ void main() {
         );
 
         final unfolded =
-            state == YsStepState.needsAction || state == YsStepState.failed;
+            state == YsStepState.needsAction ||
+            state == YsStepState.failed ||
+            state == YsStepState.pending;
         expect(
           find.byKey(const ValueKey('action')),
           unfolded ? findsOneWidget : findsNothing,

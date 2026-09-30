@@ -522,6 +522,46 @@ abstract final class YsStepMotion {
   );
 }
 
+/// Where a setup step stands; each kit draws a state with the same marks
+/// and motion.
+enum YsStepState {
+  /// Not reached yet, or waiting on another step: muted.
+  pending,
+
+  /// Being looked at: a short arc scans the ring, the glyph breathes.
+  checking,
+
+  /// Already in place and working: a calm tick on a soft disc, not drawn.
+  found,
+
+  /// In progress: an arc sweeps the ring, or fills it to a known progress.
+  working,
+
+  /// Completed now: the ring closes and the tick draws stroke by stroke.
+  done,
+
+  /// Waits on the user: accent ring.
+  needsAction,
+
+  /// Failed: the cross draws, then shakes its head.
+  failed,
+
+  /// Not needed here: a dash.
+  skipped;
+
+  /// The mark this state settles on; null while it shows the step's glyph.
+  YsStepMark? get mark => switch (this) {
+    done => YsStepMark.tick,
+    found => YsStepMark.calmTick,
+    failed => YsStepMark.cross,
+    skipped => YsStepMark.dash,
+    pending || checking || working || needsAction => null,
+  };
+
+  /// Whether the step is behind the user: done, found or not needed.
+  bool get settled => this == done || this == found || this == skipped;
+}
+
 /// The mark a setup checklist row settles on — tick, calm tick, cross,
 /// dash — with the one-shot motion that brings it in when the row reaches
 /// that state: Lucide geometry on the 24-unit viewBox, keyframes at 60 fps

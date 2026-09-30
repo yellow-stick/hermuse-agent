@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_burst.dart';
 import 'ys_resize.dart';
 import 'ys_step_badge.dart';
 import 'ys_theme.dart';
@@ -14,8 +15,8 @@ enum YsNoteTone {
   alert,
 }
 
-/// A line under a checklist row that needs the user or failed: what a
-/// change does, a warning, an error.
+/// A line under a checklist row that needs the user, failed or waits on
+/// another step: what a change does, what it waits for, a warning, an error.
 @immutable
 final class YsChecklistNote {
   const YsChecklistNote(
@@ -61,23 +62,27 @@ final class YsChecklistItem {
   /// A short caption at the end of the title line (`4/10`).
   final String? trailing;
 
-  /// Lines under the status of a row that needs the user or failed.
+  /// Lines under the status of a row that needs the user, failed or waits
+  /// on another step.
   final List<YsChecklistNote> notes;
 
-  /// Buttons of a row that needs the user or failed, one per line under its
-  /// notes.
+  /// Buttons of a row that needs the user, failed or waits on another step
+  /// (disabled then: what it will do), one per line under its notes.
   final List<Widget> actions;
 
   /// Whether the row shows its [notes] and [actions].
   bool get expanded =>
-      state == YsStepState.needsAction || state == YsStepState.failed;
+      state == YsStepState.needsAction ||
+      state == YsStepState.failed ||
+      state == YsStepState.pending;
 }
 
 /// A vertical checklist of setup steps: each row an animated
 /// [YsStepBadge], a title and a one-line status. A row that needs the user
 /// takes an accent wash, a failed one an error wash; both unfold their
-/// notes and actions. Rows enter one after the other; state changes
-/// crossfade and heights ease.
+/// notes and actions, as does a row waiting on another step. A row that
+/// reaches done sends sparks out of its badge. Rows enter one after the
+/// other; state changes crossfade and heights ease.
 ///
 /// With animations disabled (`MediaQuery.disableAnimations`) rows appear
 /// and change at once.
@@ -219,10 +224,14 @@ final class _RowState extends State<_Row> with SingleTickerProviderStateMixin {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          YsStepBadge(
-            state: item.state,
-            icon: item.icon,
-            progress: item.progress,
+          // Sparks when the step completes here, not when it shows done.
+          YsBurstView(
+            play: item.state == YsStepState.done,
+            child: YsStepBadge(
+              state: item.state,
+              icon: item.icon,
+              progress: item.progress,
+            ),
           ),
           const SizedBox(width: YsSpace.md),
           Expanded(
@@ -314,7 +323,7 @@ final class _RowState extends State<_Row> with SingleTickerProviderStateMixin {
   }
 }
 
-/// The notes and actions of a row that needs the user or failed.
+/// The notes and actions of a row that needs the user, failed or waits.
 final class _Unfolded extends StatelessWidget {
   const _Unfolded({required this.item});
 

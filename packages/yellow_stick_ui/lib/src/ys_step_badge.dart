@@ -6,45 +6,6 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'ys_svg_shape.dart';
 import 'ys_theme.dart';
 
-/// Where a setup step stands.
-enum YsStepState {
-  /// Not reached yet: muted.
-  pending,
-
-  /// Being looked at: a short arc scans the ring, the glyph breathes.
-  checking,
-
-  /// Already in place and working: a calm tick on a soft disc, not drawn.
-  found,
-
-  /// In progress: an arc sweeps the ring, or fills it to a known progress.
-  working,
-
-  /// Completed now: the ring closes and the tick draws stroke by stroke.
-  done,
-
-  /// Waits on the user: accent ring.
-  needsAction,
-
-  /// Failed: the cross draws, then shakes its head.
-  failed,
-
-  /// Not needed here: a dash.
-  skipped;
-
-  /// The mark this state settles on; null while it shows the step's glyph.
-  YsStepMark? get mark => switch (this) {
-    done => YsStepMark.tick,
-    found => YsStepMark.calmTick,
-    failed => YsStepMark.cross,
-    skipped => YsStepMark.dash,
-    pending || checking || working || needsAction => null,
-  };
-
-  /// Whether the step is behind the user: done, found or not needed.
-  bool get settled => this == done || this == found || this == skipped;
-}
-
 /// The animated status badge of a setup step: [icon] in a ring that scans
 /// while checking, sweeps while working (filling to [progress] when known)
 /// and turns accent when the step needs the user. A settled or failed step

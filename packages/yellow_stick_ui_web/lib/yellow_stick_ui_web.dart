@@ -16,6 +16,8 @@ export 'src/art.dart';
 export 'src/hover.dart';
 export 'src/choice_card.dart';
 export 'src/stepper.dart';
+export 'src/checklist.dart';
+export 'src/progress_ring.dart';
 export 'src/skeleton.dart';
 export 'src/ping.dart';
 export 'src/burst.dart';
