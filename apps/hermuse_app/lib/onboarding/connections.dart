@@ -9,6 +9,8 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../platform/open_url.dart';
+import '../product/route.dart' show HermuseRouteSkeleton;
+import '../shell/screens.dart' show YsDialogError, YsDialogHead;
 
 /// Connections page: card list for one instance (web `HermuseConnections`
 /// parity), plus desktop subscription-bridge cards (marked Advanced).
@@ -108,6 +110,9 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       for (final c in cards)
         if (c.state != ConnectionCardState.connected) c,
     ];
+    // The drawing loops while the list loads and shows a pulled plug when
+    // it cannot load (web `HermuseConnections` parity).
+    final failed = connections.hasError && state == null;
     return ColoredBox(
       color: palette.canvasColor,
       child: Center(
@@ -116,41 +121,40 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Connections',
-                      style: YsType.title.flutter.copyWith(
-                        color: palette.contentColor,
-                      ),
-                    ),
-                  ),
-                  YsButton.icon(
-                    icon: YsIcon.close,
-                    onPressed: widget.onBack,
-                    semanticLabel: 'Back',
-                    size: 36,
-                  ),
-                ],
+              YsDialogHead(
+                art: failed ? YsArt.unreachable : YsArt.accounts,
+                busy: connections.isLoading,
+                title: 'Connections',
+                helper: 'Model accounts ${instance.label} can use.',
+                trailing: YsButton.icon(
+                  icon: YsIcon.close,
+                  onPressed: widget.onBack,
+                  semanticLabel: 'Back',
+                  size: 36,
+                ),
               ),
-              const SizedBox(height: 8),
-              Text('Model accounts ${instance.label} can use.', style: muted),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               YsInputBox(
                 controller: _query,
                 placeholder: 'Search connections',
                 semanticLabel: 'Search connections',
+                icon: YsIcon.search,
               ),
               if (connections.isLoading && state == null) ...[
                 const SizedBox(height: 12),
-                Text('Loading connections…', style: muted),
-              ] else if (connections.hasError && state == null) ...[
+                const HermuseRouteSkeleton(label: 'Loading connections…'),
+              ] else if (failed) ...[
                 const SizedBox(height: 12),
-                Text(
+                YsDialogError(
                   'Could not load connections: ${connections.error}.',
-                  style: YsType.label.flutter.copyWith(
-                    color: palette.primary2Color,
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: YsButton.neutral(
+                    label: 'Try again',
+                    onPressed: () =>
+                        ref.invalidate(connectionCardsProvider(instance.id)),
                   ),
                 ),
               ] else ...[
@@ -232,6 +236,14 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
       (ConnectionCardState.error, _) => ('Retry', palette.primary2Color),
       (_, ConnectionFlow.external) => ('Terminal', palette.contentMutedColor),
       _ => ('Connect', palette.primary2Color),
+    };
+    // The row's state dot: connected pings once as the row shows; waiting
+    // and failed logins keep a still dot.
+    final dot = switch (card.state) {
+      ConnectionCardState.connected => palette.successColor,
+      ConnectionCardState.pending => palette.primaryColor,
+      ConnectionCardState.error => palette.errorColor,
+      ConnectionCardState.disconnected => null,
     };
     final body = <Widget>[
       if (card.flow == ConnectionFlow.deviceCode && !connected)
@@ -342,6 +354,22 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
                     ),
                   ),
                   const SizedBox(width: 10),
+                  if (dot != null) ...[
+                    YsPing(
+                      live: connected,
+                      color: dot,
+                      child: SizedBox.square(
+                        dimension: YsLayout.statusDot,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: dot,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                   Text(
                     action,
                     style: YsType.label.flutter.copyWith(color: actionColor),

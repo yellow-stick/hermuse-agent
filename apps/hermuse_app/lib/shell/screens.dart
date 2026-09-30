@@ -64,6 +64,129 @@ final class YsDialogArt extends StatelessWidget {
   );
 }
 
+/// Head of a dialog or list page: its drawing beside the [title] and a
+/// muted [helper] line, then [trailing] (its close button). The drawing
+/// plays again under the pointer and loops while [busy]. Web parity:
+/// `HermuseDialogHead`.
+final class YsDialogHead extends StatelessWidget {
+  const YsDialogHead({
+    required this.art,
+    required this.title,
+    required this.helper,
+    required this.trailing,
+    this.busy = false,
+    super.key,
+  });
+
+  final YsArt art;
+  final String title;
+  final String helper;
+  final Widget trailing;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        YsHover(
+          builder: (context, hovered) => YsArtView(
+            art,
+            size: YsLayout.artHeader,
+            active: hovered,
+            busy: busy,
+          ),
+        ),
+        const SizedBox(width: YsSpace.lg),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  style: YsType.title.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: YsSpace.xs),
+              Text(
+                helper,
+                style: YsType.small.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+        trailing,
+      ],
+    );
+  }
+}
+
+/// What a check says: an empty box while it runs, ticked with sparks the
+/// moment it succeeds ([done]). Web parity: `HermuseCheckLine`.
+final class YsDialogCheck extends StatelessWidget {
+  const YsDialogCheck({required this.text, required this.done, super.key});
+
+  final String text;
+  final bool done;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        children: [
+          YsDoneBox(done: done),
+          const SizedBox(width: YsSpace.sm + YsSpace.xxs),
+          Expanded(
+            child: Text(
+              text,
+              style: YsType.small.flutter.copyWith(
+                color: done ? palette.successColor : palette.contentMutedColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A failure, on a faint error wash. Web parity: `HermuseErrorNotice`.
+final class YsDialogError extends StatelessWidget {
+  const YsDialogError(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.errorWashColor,
+          borderRadius: BorderRadius.circular(YsRadius.row),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(YsSpace.md),
+          child: Text(
+            text,
+            style: YsType.small.flutter.copyWith(color: palette.errorColor),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Full-screen wait: [art] loops in the middle of the canvas until what
 /// the screen waits for arrives; [label] is announced.
 final class LoadingScreen extends StatelessWidget {

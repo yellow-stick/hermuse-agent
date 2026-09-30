@@ -6,6 +6,8 @@ import 'package:uuid/uuid.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'screens.dart';
+
 /// One-line state dot + label of an instance's connection.
 final class InstanceStatusDot extends ConsumerWidget {
   const InstanceStatusDot(this.instanceId, {super.key});
@@ -92,23 +94,18 @@ final class InstancesScreen extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Hermes instances',
-                        style: YsType.title.flutter.copyWith(
-                          color: palette.contentColor,
-                        ),
-                      ),
-                    ),
-                    YsButton.icon(
-                      icon: YsIcon.close,
-                      onPressed: onClose,
-                      semanticLabel: 'Close instances',
-                      tooltip: 'Close',
-                    ),
-                  ],
+                YsDialogHead(
+                  art: YsArt.remote,
+                  title: 'Hermes instances',
+                  helper:
+                      'The Hermes you chat with and the state of each '
+                      'connection.',
+                  trailing: YsButton.icon(
+                    icon: YsIcon.close,
+                    onPressed: onClose,
+                    semanticLabel: 'Close instances',
+                    tooltip: 'Close',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 _instancesBody(context, ref, instances),
@@ -205,6 +202,11 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
   var _signBusy = false;
   String? _error;
 
+  /// The sign-in under way or just done, as its check line says it; null
+  /// once another action starts.
+  String? _signCheck;
+  var _signedIn = false;
+
   @override
   void initState() {
     super.initState();
@@ -229,6 +231,8 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
     setState(() {
       _signBusy = true;
       _error = null;
+      _signCheck = 'Signing in as $username…';
+      _signedIn = false;
     });
     try {
       await ref
@@ -237,18 +241,32 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
       if (mounted) {
         setState(() {
           _signingIn = false;
+          _signCheck = 'Signed in as $username';
+          _signedIn = true;
           _signUser.clear();
           _signPassword.clear();
         });
       }
     } on HermesException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) _failSignIn(e.message);
     } on Object catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) _failSignIn('$e');
     } finally {
       if (mounted) setState(() => _signBusy = false);
     }
   }
+
+  void _failSignIn(String message) => setState(() {
+    _error = message;
+    _signCheck = null;
+  });
+
+  /// Opens one of the row's forms; the last sign-in's line goes away.
+  void _start(VoidCallback open) => setState(() {
+    _error = null;
+    _signCheck = null;
+    open();
+  });
 
   Future<void> _rename() async {
     final label = _label.text.trim();
@@ -342,14 +360,19 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 InstanceStatusDot(instance.id),
               ],
             ),
-            if (_error != null) ...[
-              const SizedBox(height: 6),
-              Text(
-                _error!,
-                style: YsType.caption.flutter.copyWith(
-                  color: palette.errorColor,
-                ),
+            // The sign-in's line: an empty box while it runs, ticked with
+            // sparks once signed in; it stays until another action starts.
+            if (_signCheck case final check?) ...[
+              const SizedBox(height: 8),
+              YsDialogCheck(
+                key: const ValueKey('sign-in'),
+                text: check,
+                done: _signedIn,
               ),
+            ],
+            if (_error case final error?) ...[
+              const SizedBox(height: 8),
+              YsDialogError(error),
             ],
             const SizedBox(height: 8),
             if (_signingIn) ...[
@@ -357,6 +380,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 controller: _signUser,
                 placeholder: 'Username',
                 semanticLabel: 'Username',
+                icon: YsIcon.user,
                 onSubmitted: (_) => _signIn(),
               ),
               const SizedBox(height: 8),
@@ -364,6 +388,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 controller: _signPassword,
                 placeholder: 'Password',
                 semanticLabel: 'Password',
+                icon: YsIcon.lock,
                 obscure: true,
                 onSubmitted: (_) => _signIn(),
               ),
@@ -382,6 +407,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                         : () => setState(() {
                             _signingIn = false;
                             _error = null;
+                            _signCheck = null;
                           }),
                   ),
                 ],
@@ -442,7 +468,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                   ),
                   YsButton.neutral(
                     label: 'Rename',
-                    onPressed: () => setState(() => _renaming = true),
+                    onPressed: () => _start(() => _renaming = true),
                     textStyle: YsType.small,
                     height: 28,
                   ),
@@ -469,16 +495,13 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                   if (instance.auth == AuthMethod.password)
                     YsButton.neutral(
                       label: 'Sign in',
-                      onPressed: () => setState(() {
-                        _signingIn = true;
-                        _error = null;
-                      }),
+                      onPressed: () => _start(() => _signingIn = true),
                       textStyle: YsType.small,
                       height: 28,
                     ),
                   YsButton.icon(
                     icon: YsIcon.close,
-                    onPressed: () => setState(() => _confirmingDelete = true),
+                    onPressed: () => _start(() => _confirmingDelete = true),
                     semanticLabel: 'Delete ${instance.label}',
                     tooltip: 'Delete',
                     size: 28,
@@ -752,51 +775,19 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Reaching out while a check or a connection runs,
-                      // unplugged when the check found no usable Hermes.
-                      YsHover(
-                        builder: (context, hovered) => YsArtView(
-                          _probeFailed ? YsArt.unreachable : YsArt.remote,
-                          size: YsLayout.artHeader,
-                          active: hovered,
-                          busy: _busy,
-                        ),
-                      ),
-                      const SizedBox(width: YsSpace.lg),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Semantics(
-                              header: true,
-                              child: Text(
-                                'Add a Hermes',
-                                style: YsType.title.flutter.copyWith(
-                                  color: palette.contentColor,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: YsSpace.xs),
-                            Text(
-                              'Paste the web address of your Hermes '
-                              'dashboard.',
-                              style: YsType.small.flutter.copyWith(
-                                color: palette.contentMutedColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      YsButton.icon(
-                        icon: YsIcon.close,
-                        onPressed: widget.onCancel,
-                        semanticLabel: 'Cancel',
-                        tooltip: 'Cancel',
-                      ),
-                    ],
+                  // Reaching out while a check or a connection runs,
+                  // unplugged when the check found no usable Hermes.
+                  YsDialogHead(
+                    art: _probeFailed ? YsArt.unreachable : YsArt.remote,
+                    busy: _busy,
+                    title: 'Add a Hermes',
+                    helper: 'Paste the web address of your Hermes dashboard.',
+                    trailing: YsButton.icon(
+                      icon: YsIcon.close,
+                      onPressed: widget.onCancel,
+                      semanticLabel: 'Cancel',
+                      tooltip: 'Cancel',
+                    ),
                   ),
                   const SizedBox(height: YsSpace.lg),
                   _Field(
@@ -820,8 +811,8 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                   ),
                   if (checking || status != null) ...[
                     const SizedBox(height: YsSpace.md),
-                    _CheckLine(
-                      found: status != null,
+                    YsDialogCheck(
+                      done: status != null,
                       // Web add-instance wording: no "no login" claim, since
                       // a gateless `hermes serve` still wants its token.
                       text: switch (status) {
@@ -849,7 +840,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                           YsEntrance(child: _credentials(status)),
                         if (_error case final error?) ...[
                           const SizedBox(height: YsSpace.md),
-                          _ErrorNotice(error),
+                          YsDialogError(error),
                         ],
                       ],
                     ),
@@ -915,65 +906,6 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       ),
     ],
   );
-}
-
-/// What the check says: an empty box while it runs, ticked with sparks the
-/// moment a Hermes answers.
-final class _CheckLine extends StatelessWidget {
-  const _CheckLine({required this.text, required this.found});
-
-  final String text;
-  final bool found;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Semantics(
-      liveRegion: true,
-      child: Row(
-        children: [
-          YsDoneBox(done: found),
-          const SizedBox(width: YsSpace.sm + YsSpace.xxs),
-          Expanded(
-            child: Text(
-              text,
-              style: YsType.small.flutter.copyWith(
-                color: found ? palette.successColor : palette.contentMutedColor,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A failure of the dialog, on a faint error wash.
-final class _ErrorNotice extends StatelessWidget {
-  const _ErrorNotice(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Semantics(
-      liveRegion: true,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.errorWashColor,
-          borderRadius: BorderRadius.circular(YsRadius.row),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(YsSpace.md),
-          child: Text(
-            text,
-            style: YsType.small.flutter.copyWith(color: palette.errorColor),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 final class _Field extends StatelessWidget {

@@ -10,6 +10,7 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../shell/brand.dart';
+import '../shell/screens.dart' show YsDialogError;
 import '../sidebar/side_chats.dart' show sideChatLabel;
 
 import 'message_row.dart';
@@ -753,15 +754,30 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Sign in again — the saved password was rejected.',
-              style: YsType.small.flutter.copyWith(color: palette.errorColor),
+            Row(
+              children: [
+                YsIconWidget(
+                  YsIcon.lock,
+                  size: YsLayout.inlineIcon,
+                  color: palette.errorColor,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Sign in again — the saved password was rejected.',
+                    style: YsType.small.flutter.copyWith(
+                      color: palette.errorColor,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             YsInputBox(
               controller: _username,
               placeholder: 'Username',
               semanticLabel: 'Username',
+              icon: YsIcon.user,
               onSubmitted: (_) => unawaited(_signIn()),
             ),
             const SizedBox(height: 8),
@@ -769,15 +785,13 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
               controller: _password,
               placeholder: 'Password',
               semanticLabel: 'Password',
+              icon: YsIcon.lock,
               obscure: true,
               onSubmitted: (_) => unawaited(_signIn()),
             ),
-            if (_error != null) ...[
+            if (_error case final error?) ...[
               const SizedBox(height: 8),
-              Text(
-                _error!,
-                style: YsType.small.flutter.copyWith(color: palette.errorColor),
-              ),
+              YsDialogError(error),
             ],
             const SizedBox(height: 8),
             Align(
