@@ -635,22 +635,29 @@ final class YsArt {
   );
 
   /// A browser and a Hermes, their links broken at an empty relay spot that
-  /// sends out searching signals: no relay answers.
+  /// sends out searching signals: no relay answers. Drawn for the hero size
+  /// (no soft disc): it spans the whole width.
   static final relay = YsArt._(
     'relay',
     parts: const [
       _disc,
-      YsArtPart('<rect x="8" y="31" width="14" height="12" rx="2.5"/>'),
-      YsArtPart('<path d="M8 35h14"/>'),
-      YsArtPart('<rect x="42" y="30" width="14" height="6" rx="2"/>'),
-      YsArtPart('<rect x="42" y="38" width="14" height="6" rx="2"/>'),
-      YsArtPart('<path d="M22 37h3.5"/>'),
-      YsArtPart('<path d="M38.5 37H42"/>'),
-      YsArtPart('<circle cx="32" cy="37" r="3.2"/>', YsArtInk.accent),
-      YsArtPart('<path d="M28.46 29.96a5 5 0 0 1 7.08 0"/>', YsArtInk.accent),
-      YsArtPart('<path d="M25.64 27.14a9 9 0 0 1 12.72 0"/>', YsArtInk.accent),
+      YsArtPart('<rect x="2" y="30.75" width="17.5" height="15" rx="3.13"/>'),
+      YsArtPart('<path d="M2 35.75h17.5"/>'),
+      YsArtPart('<rect x="44.5" y="29.5" width="17.5" height="7.5" rx="2.5"/>'),
+      YsArtPart('<rect x="44.5" y="39.5" width="17.5" height="7.5" rx="2.5"/>'),
+      YsArtPart('<path d="M19.5 38.25h4.38"/>'),
+      YsArtPart('<path d="M40.13 38.25H44.5"/>'),
+      YsArtPart('<circle cx="32" cy="38.25" r="4"/>', YsArtInk.accent),
       YsArtPart(
-        '<path d="M22.81 24.31a13 13 0 0 1 18.38 0"/>',
+        '<path d="M27.58 29.46a6.25 6.25 0 0 1 8.84 0"/>',
+        YsArtInk.accent,
+      ),
+      YsArtPart(
+        '<path d="M24.05 25.92a11.25 11.25 0 0 1 15.9 0"/>',
+        YsArtInk.accent,
+      ),
+      YsArtPart(
+        '<path d="M20.51 22.39a16.25 16.25 0 0 1 22.98 0"/>',
         YsArtInk.accent,
       ),
     ],
@@ -660,7 +667,7 @@ final class YsArt {
       _dip(8, 0),
       _dip(9, 8),
       _dip(10, 16),
-      _pop(7, 32, 37, 44, reach: 1.3),
+      _pop(7, 32, 38.25, 44, reach: 1.3),
       _dip(5, 50, depth: 0.2, length: 16),
       _dip(6, 56, depth: 0.2, length: 16),
     ],
@@ -669,7 +676,7 @@ final class YsArt {
       _redraw(8, 0, length: 14),
       _redraw(9, 5, length: 14),
       _redraw(10, 10, length: 14),
-      _pop(7, 32, 37, 18, reach: 1.3),
+      _pop(7, 32, 38.25, 18, reach: 1.3),
     ],
   );
 
