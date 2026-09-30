@@ -1,0 +1,25 @@
+name: Idea
+description: Suggest a feature or an improvement.
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome. To talk one through first, or to ask a question, use [Discussions](https://github.com/yellow-stick/hermuse-agent/discussions).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The situation or the problem, in your own words, and what Hermuse Agent does not let you do today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How it could work
+      description: What you would see and do in Hermuse Agent.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Workarounds, other tools, alternatives you considered.
