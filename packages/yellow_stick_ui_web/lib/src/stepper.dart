@@ -147,8 +147,10 @@ class YsStepper extends StatelessComponent {
           overflow: .hidden,
           raw: {'clip-path': 'inset(50%)', 'white-space': 'nowrap'},
         ),
+        // A row even inside hosts that stack their lists.
         css('.ys-stepper-steps').styles(
           display: .flex,
+          flexDirection: .row,
           padding: .zero,
           margin: .zero,
           listStyle: .none,
