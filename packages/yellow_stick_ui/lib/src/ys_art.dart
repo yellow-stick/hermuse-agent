@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_supersample.dart';
 import 'ys_svg_shape.dart';
 import 'ys_theme.dart';
 
@@ -198,6 +199,7 @@ final class _YsArtViewState extends State<YsArtView>
                   ? null
                   : widget.soft ?? palette.neutralAmbientColor,
               stroke: widget.hero ? YsArt.heroStroke : YsArt.stroke,
+              pixelRatio: MediaQuery.devicePixelRatioOf(context),
             ),
           ),
         ),
@@ -214,6 +216,7 @@ final class _ArtPainter extends CustomPainter {
     required this.accent,
     required this.soft,
     required this.stroke,
+    required this.pixelRatio,
   }) : super(
          repaint: Listenable.merge([
            state._entrance,
@@ -230,9 +233,13 @@ final class _ArtPainter extends CustomPainter {
   /// Null leaves the soft disc out (a hero).
   final Color? soft;
   final double stroke;
+  final double pixelRatio;
 
   @override
-  void paint(Canvas canvas, Size size) {
+  void paint(Canvas canvas, Size size) =>
+      ysSupersample(canvas, size, pixelRatio, (c) => _draw(c, size));
+
+  void _draw(Canvas canvas, Size size) {
     final shapes = YsSvgShape.of(art.elements.join());
     final entrance = state._entrance;
     final drawing = entrance.value < 1;
@@ -305,5 +312,6 @@ final class _ArtPainter extends CustomPainter {
       old.line != line ||
       old.accent != accent ||
       old.soft != soft ||
-      old.stroke != stroke;
+      old.stroke != stroke ||
+      old.pixelRatio != pixelRatio;
 }

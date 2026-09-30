@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_supersample.dart';
 import 'ys_svg_shape.dart';
 import 'ys_theme.dart';
 
@@ -69,6 +70,7 @@ final class _YsMotionIconState extends State<YsMotionIcon>
         controller: _controller,
         color: widget.color ?? YsTheme.of(context).contentColor,
         strokeWidth: widget.strokeWidth,
+        pixelRatio: MediaQuery.devicePixelRatioOf(context),
       ),
     ),
   );
@@ -80,15 +82,20 @@ final class _MotionPainter extends CustomPainter {
     required this.controller,
     required this.color,
     required this.strokeWidth,
+    required this.pixelRatio,
   }) : super(repaint: controller);
 
   final YsIcon icon;
   final AnimationController controller;
   final Color color;
   final double strokeWidth;
+  final double pixelRatio;
 
   @override
-  void paint(Canvas canvas, Size size) {
+  void paint(Canvas canvas, Size size) =>
+      ysSupersample(canvas, size, pixelRatio, (c) => _draw(c, size));
+
+  void _draw(Canvas canvas, Size size) {
     final motion = YsIconMotion.of(icon);
     final shapes = YsSvgShape.of(icon.body + (motion?.extras ?? ''));
     // Idle (null frame): body only, no transforms, extras hidden.
@@ -123,5 +130,6 @@ final class _MotionPainter extends CustomPainter {
       old.icon != icon ||
       old.color != color ||
       old.strokeWidth != strokeWidth ||
+      old.pixelRatio != pixelRatio ||
       old.controller != controller;
 }
