@@ -247,10 +247,11 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
 
   @override
   Component build(BuildContext context) {
-    // SSR (and the first client frames before hydration completes the
-    // scope boot) render the static shell with a loading thread.
+    // SSR, the first client frames and the database boot render the static
+    // shell with its wait: the pre-rendered page stays as it is.
     if (!kIsWeb) return _loadingShell();
     return HermuseScope(
+      loading: _loadingShell(),
       child: Builder(
         builder: (context) => HermuseWatch(
           provider: relayProvider,
