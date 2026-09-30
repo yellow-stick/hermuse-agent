@@ -14,6 +14,7 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../host/linux_setup.dart';
+import '../shell/screens.dart';
 import 'browser_parts.dart';
 
 /// The agent's computer in place of the chat (Muse's browser session
@@ -252,6 +253,24 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
     };
   }
 
+  /// The drawing over what the stage says: the computer getting ready,
+  /// looping while its image builds; a pulled plug when it cannot run; the
+  /// plugin piece when the plugin is missing.
+  (YsArt, {bool busy}) _statusArt() {
+    if (_failure != null) return (YsArt.unreachable, busy: false);
+    return switch (_status?.state) {
+      ComputerState.dockerMissing ||
+      ComputerState.daemonDown ||
+      ComputerState.error => (YsArt.unreachable, busy: false),
+      ComputerState.missing => (YsArt.plugin, busy: false),
+      ComputerState.imageMissing ||
+      ComputerState.building => (YsArt.check, busy: true),
+      null ||
+      ComputerState.stopped ||
+      ComputerState.running => (YsArt.check, busy: false),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     // Keeps the instance's computer client while the viewer shows.
@@ -373,6 +392,7 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
                         focusNode: _canvas,
                       )
                     : _Status(
+                        art: _statusArt(),
                         text: _statusText(busy: chat.busy),
                         command: switch ((_failure, _status, setUp)) {
                           (
@@ -709,17 +729,20 @@ final class _Tab extends StatelessWidget {
   }
 }
 
-/// Before the first frame: why the computer does not show yet, with the
-/// shell [command] to paste on the Hermes host when there is one, or the
-/// Linux setup assistant to open ([onSetUp]).
+/// Before the first frame: its drawing ([art], looping while `busy`), why
+/// the computer does not show yet, with the shell [command] to paste on the
+/// Hermes host when there is one, or the Linux setup assistant to open
+/// ([onSetUp]).
 final class _Status extends StatelessWidget {
   const _Status({
+    required this.art,
     required this.text,
     required this.onRetry,
     this.command,
     this.onSetUp,
   });
 
+  final (YsArt, {bool busy}) art;
   final String text;
   final String? command;
   final VoidCallback? onRetry;
@@ -731,32 +754,37 @@ final class _Status extends StatelessWidget {
     final onRetry = this.onRetry;
     final onSetUp = this.onSetUp;
     final command = this.command;
+    final (drawing, :busy) = art;
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              text,
-              style: YsType.label.flutter.copyWith(
-                color: palette.contentMutedColor,
+      child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              YsDialogArt(drawing, busy: busy),
+              const SizedBox(height: YsSpace.lg),
+              Text(
+                text,
+                style: YsType.label.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            if (command != null) ...[
-              const SizedBox(height: 12),
-              _Command(command),
+              if (command != null) ...[
+                const SizedBox(height: 12),
+                _Command(command),
+              ],
+              if (onSetUp != null) ...[
+                const SizedBox(height: 12),
+                YsButton.neutral(label: 'Set up Docker', onPressed: onSetUp),
+              ],
+              if (onRetry != null) ...[
+                const SizedBox(height: 12),
+                YsButton.neutral(label: 'Retry', onPressed: onRetry),
+              ],
             ],
-            if (onSetUp != null) ...[
-              const SizedBox(height: 12),
-              YsButton.neutral(label: 'Set up Docker', onPressed: onSetUp),
-            ],
-            if (onRetry != null) ...[
-              const SizedBox(height: 12),
-              YsButton.neutral(label: 'Retry', onPressed: onRetry),
-            ],
-          ],
+          ),
         ),
       ),
     );
