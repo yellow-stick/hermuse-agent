@@ -16,10 +16,10 @@ import 'screens.dart';
 
 /// Shown when the Hermuse plugin backend is missing on an instance.
 ///
-/// The page keeps the destination title and offers, in a card, to install
-/// the plugin through the instance's dashboard ([installHermusePlugin]),
-/// with the commands to install it by hand from a Hermuse checkout as a
-/// fallback.
+/// The page keeps the destination title and offers, in a card headed by
+/// the plugin drawing, to install the plugin through the instance's
+/// dashboard ([installHermusePlugin]), with the commands to install it by
+/// hand from a Hermuse checkout as a fallback.
 class HermusePluginMissing extends StatefulComponent {
   const HermusePluginMissing({
     required this.instance,
@@ -55,16 +55,9 @@ class HermusePluginMissing extends StatefulComponent {
       gap: .all(12.px),
       backgroundColor: .variable('--paper'),
     ),
-    css('.hermuse-plugin-icon').styles(
-      width: YsLayout.activityTileSize.px,
-      height: YsLayout.activityTileSize.px,
-      radius: .circular(YsRadius.option.px),
-      display: .flex,
-      alignItems: .center,
-      justifyContent: .center,
-      color: .variable('--content'),
-      backgroundColor: .variable('--neutral-ambient'),
-    ),
+    // The card's drawing sits at its start, like the text under it.
+    css('.hermuse-plugin-card .hermuse-card-art')
+        .styles(margin: .only(bottom: YsSpace.xs.px)),
     css('.hermuse-plugin-heading').styles(
       margin: .zero,
       fontSize: 16.px,
@@ -160,9 +153,8 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
           h1(classes: 'hermuse-route-title', [.text(component.title)]),
         ]),
         div(classes: 'hermuse-plugin-card', [
-          div(classes: 'hermuse-plugin-icon', [
-            YsIconView(YsIcon.library, size: 20),
-          ]),
+          // The plugin piece, looping while it installs.
+          HermuseCardArt(YsArt.plugin, busy: _busy),
           h2(classes: 'hermuse-plugin-heading', [
             .text('Turn on Feed, Ideas, Goals and Library'),
           ]),
@@ -229,7 +221,9 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
   }
 }
 
-/// Gates [child] on the plugin backend: missing → [HermusePluginMissing].
+/// Gates [child] on the plugin backend: missing → [HermusePluginMissing];
+/// out of reach → why, with Check again; loading → the page's cards
+/// shimmering (desktop `PluginGate` parity).
 class HermusePluginGate extends StatelessComponent {
   const HermusePluginGate({
     required this.instance,
@@ -249,20 +243,36 @@ class HermusePluginGate extends StatelessComponent {
     provider: pluginStatusProvider(instance.id),
     builder: (context, status) {
       final presence = status.value;
-      if (presence == null) {
-        return div(classes: 'hermuse-route', [
-          div(classes: 'hermuse-route-column', [
-            div(classes: 'hermuse-route-head', [
-              h1(classes: 'hermuse-route-title', [.text(title)]),
-            ]),
-            p(classes: 'hermuse-route-sub', [.text('Loading…')]),
-          ]),
-        ]);
-      }
-      if (presence == PluginPresence.missing) {
+      // The page stays through a refresh; a failed check is not "missing".
+      if (presence == PluginPresence.installed) return child;
+      final error = status.error;
+      if (error == null && presence == PluginPresence.missing) {
         return HermusePluginMissing(instance: instance, title: title);
       }
-      return child;
+      return div(classes: 'hermuse-route', [
+        div(classes: 'hermuse-route-column', [
+          div(classes: 'hermuse-route-head', [
+            h1(classes: 'hermuse-route-title', [.text(title)]),
+          ]),
+          // Out of reach, from the first failure: why, and the pulled plug
+          // looping while a retry runs.
+          if (error != null) ...[
+            HermuseCardArt(YsArt.unreachable, busy: status.isLoading),
+            p(classes: 'hermuse-route-error', [
+              .text('Could not reach the Hermuse plugin: $error'),
+            ]),
+            div(classes: 'hermuse-plugin-actions', [
+              YsButton.neutral(
+                label: 'Check again',
+                onPressed: () => context.container.invalidate(
+                  pluginStatusProvider(instance.id),
+                ),
+              ),
+            ]),
+          ] else
+            HermuseRouteSkeleton(label: 'Loading…'),
+        ]),
+      ]);
     },
   );
 }
