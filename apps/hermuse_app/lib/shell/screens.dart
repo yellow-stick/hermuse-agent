@@ -46,9 +46,9 @@ final class YsDialogCard extends StatelessWidget {
   }
 }
 
-/// Card illustration: [art] draws in when the card shows, plays again under
-/// the pointer and loops while [busy] (work under way). Web parity:
-/// `HermuseCardArt`.
+/// Card illustration of a full-page status: [art], hero-sized, draws in
+/// when the card shows, plays again under the pointer and loops while
+/// [busy] (work under way). Web parity: `HermuseCardArt`.
 final class YsDialogArt extends StatelessWidget {
   const YsDialogArt(this.art, {this.busy = false, super.key});
 
@@ -59,7 +59,7 @@ final class YsDialogArt extends StatelessWidget {
   Widget build(BuildContext context) => Center(
     child: YsHover(
       builder: (context, hovered) =>
-          YsArtView(art, size: YsLayout.artStep, active: hovered, busy: busy),
+          YsArtView.hero(art, active: hovered, busy: busy),
     ),
   );
 }
