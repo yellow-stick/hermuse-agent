@@ -58,9 +58,14 @@ registered on this relay**.
 ## 4. Open the web app
 
 Open `https://chat.example.com`, choose **Add a Hermes**, enter the Hermes URL,
-a name and the dashboard user name and password. Then follow
-[Set up Hermuse with Hermes on a server](server.md) from step 4 to install
-Hermuse on that Hermes in one click.
+a name and the dashboard user name and password. Once it is saved, the web app
+shows **What's on** that Hermes: Hermes itself, the Hermuse plugin, its
+background jobs, Docker, the agent's computer and a model provider, each found
+or missing. Click **Install** on what is missing (or **Install everything
+missing**), then **Continue**; where only the server can act, the row gives the
+command to copy and **Check again**. The list opens again from **Components**
+in **Instances**. [Set up Hermuse with Hermes on a server](server.md) explains
+each part from step 4.
 
 To install the web app, use the install icon in the address bar
 (Chrome, Edge) or **Share → Add to Home Screen** (Safari).
