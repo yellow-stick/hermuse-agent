@@ -221,7 +221,9 @@ final class YsField extends StatelessWidget {
 }
 
 /// Boxed single-line input: 44 high, canvas fill, hairline border
-/// (web `YsInputBox` parity), with an `obscure` password mode.
+/// (web `YsInputBox` parity), with an `obscure` password mode and an
+/// optional leading [icon]. Focus eases the border to `primary`, lights the
+/// icon and rings the box with a soft [YsLayout.inputHalo] halo.
 final class YsInputBox extends StatefulWidget {
   const YsInputBox({
     required this.controller,
@@ -233,6 +235,8 @@ final class YsInputBox extends StatefulWidget {
     this.autofocus = false,
     this.semanticLabel,
     this.obscure = false,
+    this.url = false,
+    this.icon,
     this.textStyle = YsType.input,
   });
 
@@ -244,6 +248,12 @@ final class YsInputBox extends StatefulWidget {
   final bool autofocus;
   final String? semanticLabel;
   final bool obscure;
+
+  /// A web address: the platform offers its URL keyboard.
+  final bool url;
+
+  /// Glyph before the text, muted until the box has focus.
+  final YsIcon? icon;
   final YsTextStyle textStyle;
 
   @override
@@ -294,63 +304,98 @@ final class _YsInputBoxState extends State<YsInputBox> {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final empty = widget.controller.text.isEmpty;
-    return SizedBox(
+    final focused = _focus.hasFocus;
+    final ease = MediaQuery.maybeDisableAnimationsOf(context) ?? false
+        ? Duration.zero
+        : const Duration(milliseconds: YsMotion.fast);
+    final curve = YsEase.standard.curve;
+    final icon = widget.icon;
+    return AnimatedContainer(
+      duration: ease,
+      curve: curve,
       height: 44,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.canvasColor,
-          borderRadius: BorderRadius.circular(YsRadius.row),
-          border: Border.all(
-            color: _focus.hasFocus ? palette.primaryColor : palette.lineColor,
-            width: ysHairline,
-          ),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: palette.canvasColor,
+        borderRadius: BorderRadius.circular(YsRadius.row),
+        border: Border.all(
+          color: focused ? palette.primaryColor : palette.lineColor,
+          width: ysHairline,
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+        // Behind the opaque fill, so only the ring outside the box shows.
+        boxShadow: [
+          BoxShadow(
+            color: focused
+                ? palette.primaryMutedColor
+                : palette.primaryMutedColor.withValues(alpha: 0),
+            spreadRadius: YsLayout.inputHalo,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          if (icon != null) ...[
+            TweenAnimationBuilder<Color?>(
+              tween: ColorTween(
+                end: focused
+                    ? palette.primaryColor
+                    : palette.contentSubtleColor,
+              ),
+              duration: ease,
+              curve: curve,
+              builder: (context, color, _) =>
+                  YsIconWidget(icon, size: YsLayout.inlineIcon, color: color),
+            ),
+            const SizedBox(width: YsSpace.sm + YsSpace.xxs),
+          ],
           // The box is taller than one text line: centre the line so the
           // text, cursor and placeholder share the box's centre.
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Stack(
-              children: [
-                EditableText(
-                  controller: widget.controller,
-                  focusNode: _focus,
-                  autofocus: widget.autofocus,
-                  style: widget.textStyle.flutter.copyWith(
-                    color: palette.contentColor,
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Stack(
+                children: [
+                  EditableText(
+                    controller: widget.controller,
+                    focusNode: _focus,
+                    autofocus: widget.autofocus,
+                    style: widget.textStyle.flutter.copyWith(
+                      color: palette.contentColor,
+                    ),
+                    cursorColor: palette.primaryColor,
+                    backgroundCursorColor: palette.contentMutedColor,
+                    selectionColor: palette.primaryMutedColor,
+                    keyboardType: widget.obscure
+                        ? TextInputType.visiblePassword
+                        : widget.url
+                        ? TextInputType.url
+                        : TextInputType.text,
+                    obscureText: widget.obscure,
+                    maxLines: 1,
+                    onChanged: widget.onChanged,
+                    onSubmitted: widget.onSubmitted,
                   ),
-                  cursorColor: palette.primaryColor,
-                  backgroundCursorColor: palette.contentMutedColor,
-                  selectionColor: palette.primaryMutedColor,
-                  keyboardType: widget.obscure
-                      ? TextInputType.visiblePassword
-                      : TextInputType.text,
-                  obscureText: widget.obscure,
-                  maxLines: 1,
-                  onChanged: widget.onChanged,
-                  onSubmitted: widget.onSubmitted,
-                ),
-                if (empty && widget.placeholder.isNotEmpty)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          widget.placeholder,
-                          style: widget.textStyle.flutter.copyWith(
-                            color: palette.contentSubtleColor,
+                  if (empty && widget.placeholder.isNotEmpty)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            widget.placeholder,
+                            style: widget.textStyle.flutter.copyWith(
+                              color: palette.contentSubtleColor,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

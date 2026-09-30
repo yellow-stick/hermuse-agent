@@ -135,6 +135,15 @@ enum YsIcon {
     '<circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
   ),
 
+  /// A user name.
+  user('<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>'),
+
+  /// A password.
+  lock(
+    '<rect width="18" height="11" x="3" y="11" rx="2"/>'
+    '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  ),
+
   /// Docker.
   container(
     '<path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 '

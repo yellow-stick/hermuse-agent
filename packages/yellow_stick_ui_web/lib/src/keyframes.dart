@@ -110,9 +110,9 @@ bool ysTransforms(YsPartMotion motion) => motion.tracks.any(
 );
 
 /// The `animation` list playing [motion] over the [frames] frames from
-/// [start], after [delay] frames, [count] times with [fill]: one animation
-/// per transform or opacity track, one for its trim range. Keyframes come
-/// from [keyframes].
+/// [start], after [delay] frames, [count] times (endlessly when [loop]) with
+/// [fill]: one animation per transform or opacity track, one for its trim
+/// range. Keyframes come from [keyframes].
 String ysAnimations(
   YsPartMotion motion,
   YsKeyframeSet keyframes, {
@@ -120,11 +120,12 @@ String ysAnimations(
   double start = 0,
   double delay = 0,
   int count = 1,
+  bool loop = false,
   String fill = 'none',
 }) {
   String play(YsSteps steps) =>
       '${keyframes.name(steps)} ${ysFramesMs(frames)}ms linear '
-      '${ysFramesMs(delay)}ms $count $fill';
+      '${ysFramesMs(delay)}ms ${loop ? 'infinite' : count} $fill';
   return [
     for (final track in motion.tracks)
       if (!track.property.isTrim)

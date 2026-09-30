@@ -10,7 +10,7 @@ import 'motion.dart';
 /// shows, plays its idle motion [YsArtMotion.idleCycles] times and rests;
 /// each time [active] turns on (the pointer over its host) once the idle
 /// has rested, it plays its hover motion, or one more idle cycle, through
-/// to the end.
+/// to the end. While [busy] that motion plays over and over.
 ///
 /// Every motion is CSS keyframes generated from the core timings: each part
 /// sits in an idle group and a hover group, and the element itself draws in
@@ -21,6 +21,7 @@ class YsArtView extends StatefulComponent {
     this.art, {
     this.size = YsLayout.artEmpty,
     this.active = false,
+    this.busy = false,
     super.key,
   });
 
@@ -29,6 +30,11 @@ class YsArtView extends StatefulComponent {
 
   /// Pointer over the host; a rising edge plays the hover motion.
   final bool active;
+
+  /// Work under way (a check running): the hover motion, or one idle cycle,
+  /// plays over and over. When it turns off, the cycle under way plays to
+  /// its end and the drawing rests.
+  final bool busy;
 
   @override
   State<YsArtView> createState() => _YsArtViewState();
@@ -70,6 +76,10 @@ class _YsArtViewState extends State<YsArtView> {
   var _shown = DateTime.now();
   var _hovering = false;
 
+  /// Whether the busy loop plays: from [YsArtView.busy] turning on to the
+  /// end of the cycle under way when it turns off.
+  var _looping = false;
+
   /// Frames of the motion pointing at the art plays: its hover motion, or
   /// one idle cycle.
   double get _hoverFrames {
@@ -91,17 +101,29 @@ class _YsArtViewState extends State<YsArtView> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _looping = component.busy && _hoverFrames > 0 && !ysReducedMotion();
+  }
+
+  @override
   void didUpdateComponent(YsArtView oldComponent) {
     super.didUpdateComponent(oldComponent);
     if (oldComponent.art != component.art) {
       // A new drawing (a new element, see build) draws in again.
       _shown = DateTime.now();
       _hovering = false;
+      _looping = component.busy && _hoverFrames > 0 && !ysReducedMotion();
       return;
+    }
+    if (component.busy && !_looping && _hoverFrames > 0 && !ysReducedMotion()) {
+      _looping = true;
+      _hovering = false;
     }
     if (!oldComponent.active &&
         component.active &&
         !_hovering &&
+        !_looping &&
         _hoverFrames > 0 &&
         _rested &&
         !ysReducedMotion()) {
@@ -109,12 +131,22 @@ class _YsArtViewState extends State<YsArtView> {
     }
   }
 
-  /// The hover motion ended: its groups are the only `ys-a-h*` elements.
-  void _onEnd(web.Event event) {
-    if (!_hovering) return;
+  /// Whether [event] comes from a hover group, the only `ys-a-h*` elements.
+  static bool _fromHover(web.Event event) {
     final target = event.target as web.Element?;
-    if (target?.getAttribute('class')?.startsWith('ys-a-h') ?? false) {
-      setState(() => _hovering = false);
+    return target?.getAttribute('class')?.startsWith('ys-a-h') ?? false;
+  }
+
+  /// The hover motion ended.
+  void _onEnd(web.Event event) {
+    if (_hovering && _fromHover(event)) setState(() => _hovering = false);
+  }
+
+  /// A busy cycle ended: the loop stops there once the work is over, where
+  /// every part is at rest.
+  void _onIteration(web.Event event) {
+    if (_looping && !component.busy && _fromHover(event)) {
+      setState(() => _looping = false);
     }
   }
 
@@ -125,8 +157,15 @@ class _YsArtViewState extends State<YsArtView> {
       key: ValueKey(art.name),
       classes: 'ys-art ys-art-${art.name}',
       styles: Styles(width: component.size.px, height: component.size.px),
-      attributes: {'aria-hidden': 'true', if (_hovering) 'data-hover': ''},
-      events: {'animationend': _onEnd, 'animationcancel': _onEnd},
+      attributes: {
+        'aria-hidden': 'true',
+        if (_looping) 'data-busy': '' else if (_hovering) 'data-hover': '',
+      },
+      events: {
+        'animationend': _onEnd,
+        'animationcancel': _onEnd,
+        'animationiteration': _onIteration,
+      },
       [
         Component.element(
           tag: 'svg',
@@ -167,7 +206,8 @@ class _YsArtViewState extends State<YsArtView> {
 /// Keyframes and per-part rules of every [YsArt]: the draw-in on each
 /// element, over its own frames from its start; the idle cycles on its idle
 /// group, after the draw-in and [YsArtMotion.idleDelay]; the hover motion
-/// (or one idle cycle) on its hover group while the art has `data-hover`.
+/// (or one idle cycle) on its hover group while the art has `data-hover`,
+/// endlessly while it has `data-busy`.
 List<StyleRule> _motionRules() {
   final keyframes = YsKeyframeSet('ys-art-k');
   final rules = YsRuleSet();
@@ -217,6 +257,11 @@ List<StyleRule> _motionRules() {
           '$scope[data-hover] .ys-a-h$i',
           hover,
           ysAnimations(hover, keyframes, frames: hoverFrames),
+        );
+        add(
+          '$scope[data-busy] .ys-a-h$i',
+          hover,
+          ysAnimations(hover, keyframes, frames: hoverFrames, loop: true),
         );
       }
     }

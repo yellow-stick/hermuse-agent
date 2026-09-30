@@ -92,8 +92,12 @@ abstract final class YsLayout {
   /// Tallest a technical log box grows before it scrolls.
   static const logMaxHeight = 160.0;
 
-  /// Icon beside a line of label text (a disclosure's chevron).
+  /// Icon beside a line of label text (a disclosure's chevron), or leading
+  /// the text of an input box.
   static const inlineIcon = 16.0;
+
+  /// Soft ring of `primaryMuted` around a focused input box, outside it.
+  static const inputHalo = 3.0;
 
   /// Illustration of a page's empty state (Feed, Ideas, Library…).
   static const artEmpty = 88.0;
@@ -108,8 +112,12 @@ abstract final class YsLayout {
   /// line.
   static const choiceMin = 292.0;
 
-  /// Illustration heading an onboarding step.
+  /// Illustration heading an onboarding step or a dialog card (an error
+  /// card).
   static const artStep = 80.0;
+
+  /// Illustration beside a dialog's title (Add a Hermes).
+  static const artHeader = 64.0;
 
   /// The mascot on the welcome screen: its height, and the width of the
   /// rounded stage behind it.

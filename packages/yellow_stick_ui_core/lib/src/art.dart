@@ -597,6 +597,114 @@ final class YsArt {
     idle: [for (var i = 3; i <= 10; i++) _glow(i, 32, 32, 0)],
   );
 
+  /// A plug pulled out of its socket, a spark in the gap: something could
+  /// not be reached (a Hermes, the keyring, the chat).
+  static final unreachable = YsArt._(
+    'unreachable',
+    parts: const [
+      _disc,
+      YsArtPart(
+        '<path d="m32 22 12 12 4.6-4.6a4.8 4.8 0 0 0 0-6.8l-5.2-5.2a4.8 4.8 0 '
+        '0 0-6.8 0z"/>',
+      ),
+      YsArtPart('<path d="m46 20 6-6"/>'),
+      YsArtPart(
+        '<path d="M20.6 50.6a4.8 4.8 0 0 0 6.8 0L32 46 20 34l-4.6 4.6a4.8 4.8 '
+        '0 0 0 0 6.8z"/>',
+      ),
+      YsArtPart('<path d="m12 54 6-6"/>'),
+      YsArtPart('<path d="m23 37 5-5"/>', YsArtInk.accent),
+      YsArtPart('<path d="m29 43 5-5"/>', YsArtInk.accent),
+      YsArtPart('<path d="M35.5 28 33.4 32h3.2l-2.1 4"/>', YsArtInk.accent),
+    ],
+    idleFrames: 100,
+    idle: [
+      // The plug jiggles as if trying its socket; the spark flickers.
+      for (final i in [3, 4, 5, 6]) _wobble(i, 18, 48, 0, const [-6, 3, -1.5]),
+      _flicker(7, 40),
+    ],
+    hoverFrames: 44,
+    hover: [
+      for (final i in [3, 4, 5, 6]) _wobble(i, 18, 48, 0, const [-9, 4, -2]),
+      _redraw(7, 20, length: 16),
+    ],
+  );
+
+  /// A browser and a Hermes, their links broken at an empty relay spot that
+  /// sends out searching signals: no relay answers.
+  static final relay = YsArt._(
+    'relay',
+    parts: const [
+      _disc,
+      YsArtPart('<rect x="8" y="31" width="14" height="12" rx="2.5"/>'),
+      YsArtPart('<path d="M8 35h14"/>'),
+      YsArtPart('<rect x="42" y="30" width="14" height="6" rx="2"/>'),
+      YsArtPart('<rect x="42" y="38" width="14" height="6" rx="2"/>'),
+      YsArtPart('<path d="M22 37h3.5"/>'),
+      YsArtPart('<path d="M38.5 37H42"/>'),
+      YsArtPart('<circle cx="32" cy="37" r="3.2"/>', YsArtInk.accent),
+      YsArtPart('<path d="M28.46 29.96a5 5 0 0 1 7.08 0"/>', YsArtInk.accent),
+      YsArtPart('<path d="M25.64 27.14a9 9 0 0 1 12.72 0"/>', YsArtInk.accent),
+      YsArtPart(
+        '<path d="M22.81 24.31a13 13 0 0 1 18.38 0"/>',
+        YsArtInk.accent,
+      ),
+    ],
+    idleFrames: 104,
+    idle: [
+      // The signals go out; the spot pops; the broken links flicker.
+      _dip(8, 0),
+      _dip(9, 8),
+      _dip(10, 16),
+      _pop(7, 32, 37, 44, reach: 1.3),
+      _dip(5, 50, depth: 0.2, length: 16),
+      _dip(6, 56, depth: 0.2, length: 16),
+    ],
+    hoverFrames: 40,
+    hover: [
+      _redraw(8, 0, length: 14),
+      _redraw(9, 5, length: 14),
+      _redraw(10, 10, length: 14),
+      _pop(7, 32, 37, 18, reach: 1.3),
+    ],
+  );
+
+  /// A puzzle piece with a sparkle: the Hermuse plugin to turn on.
+  static final plugin = YsArt._(
+    'plugin',
+    parts: const [
+      _disc,
+      YsArtPart(
+        '<path d="M38.102 20.302a1.8 1.8 0 0 0 3.024-.853 4.5 4.5 0 1 1 5.425 '
+        '5.427 1.8 1.8 0 0 0-.853 3.024l3.029 3.028a4.345 4.345 0 0 1 0 6.145'
+        'L45.698 40.102a1.8 1.8 0 0 1-3.024-.853 4.5 4.5 0 1 0-5.425 5.427 1.8 '
+        '1.8 0 0 1 .853 3.024l-3.029 3.028a4.345 4.345 0 0 1-6.145 0L25.898 '
+        '47.698a1.8 1.8 0 0 0-3.024.853 4.5 4.5 0 1 1-5.425-5.427 1.8 1.8 0 0 '
+        '0 .853-3.024l-3.029-3.028a4.345 4.345 0 0 1 0-6.145L18.302 27.898a1.8 '
+        '1.8 0 0 1 3.024.853 4.5 4.5 0 1 0 5.425-5.427 1.8 1.8 0 0 1-.853-3.024'
+        'l3.029-3.028a4.345 4.345 0 0 1 6.145 0z"/>',
+      ),
+      YsArtPart('<path d="M52 9v8"/>', YsArtInk.accent),
+      YsArtPart('<path d="M48 13h8"/>', YsArtInk.accent),
+      YsArtPart(
+        '<circle cx="12" cy="17" r="1.5" fill="currentColor" stroke="none"/>',
+        YsArtInk.accent,
+      ),
+    ],
+    idleFrames: 100,
+    idle: [
+      // The piece wiggles into place; the sparkle and the dot answer.
+      _wobble(1, 32, 34, 0, const [-4, 2.5, -1]),
+      ..._twinkle([2, 3], 52, 13, 30),
+      _dip(4, 60, depth: 0.2),
+    ],
+    hoverFrames: 40,
+    hover: [
+      _pop(1, 32, 34, 0, reach: 1.06),
+      ..._twinkle([2, 3], 52, 13, 4),
+    ],
+  );
+
   static final values = [
     remote,
     local,
@@ -614,6 +722,9 @@ final class YsArt {
     accounts,
     model,
     ready,
+    unreachable,
+    relay,
+    plugin,
   ];
 }
 

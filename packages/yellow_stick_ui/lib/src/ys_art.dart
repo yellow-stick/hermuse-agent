@@ -7,7 +7,8 @@ import 'ys_theme.dart';
 /// Renders a core [YsArt] line illustration: it draws in when it first
 /// shows, plays its idle motion [YsArtMotion.idleCycles] times and rests;
 /// each time [active] turns on (the pointer over its host) it plays its
-/// hover motion, or one more idle cycle.
+/// hover motion, or one more idle cycle. While [busy] that motion plays over
+/// and over.
 ///
 /// With animations disabled (`MediaQuery.disableAnimations`, or a muted
 /// [TickerMode]) it shows the finished drawing and never schedules a frame.
@@ -18,6 +19,7 @@ final class YsArtView extends StatefulWidget {
     super.key,
     this.size = YsLayout.artEmpty,
     this.active = false,
+    this.busy = false,
     this.soft,
   });
 
@@ -26,6 +28,11 @@ final class YsArtView extends StatefulWidget {
 
   /// Pointer over the host; a rising edge plays the hover motion.
   final bool active;
+
+  /// Work under way (a check running): the hover motion, or one idle cycle,
+  /// plays over and over. When it turns off, the cycle under way plays to
+  /// its end and the drawing rests.
+  final bool busy;
 
   /// Colour of the soft disc; `neutralAmbient` by default.
   final Color? soft;
@@ -47,11 +54,21 @@ final class _YsArtViewState extends State<YsArtView>
   bool _started = false;
   bool _still = false;
 
+  /// Whether [_hover] repeats for [YsArtView.busy].
+  bool _looping = false;
+
   static Duration _frames(double frames) =>
       Duration(microseconds: (frames * 1e6 / 60).round());
 
   double get _idleTotal =>
       YsArtMotion.idleDelay + YsArtMotion.idleCycles * widget.art.idleFrames;
+
+  /// Frames of the motion pointing at the art plays: its hover motion, or
+  /// one idle cycle.
+  double get _hoverFrames {
+    final art = widget.art;
+    return art.hover.isEmpty ? art.idleFrames : art.hoverFrames;
+  }
 
   @override
   void didChangeDependencies() {
@@ -67,6 +84,7 @@ final class _YsArtViewState extends State<YsArtView>
         ..duration = _frames(widget.art.entranceFrames)
         ..forward(from: 0).whenComplete(_startIdle);
     }
+    _syncBusy();
   }
 
   void _startIdle() {
@@ -80,6 +98,7 @@ final class _YsArtViewState extends State<YsArtView>
 
   /// Everything at rest, finished drawing.
   void _settle() {
+    _looping = false;
     _entrance.value = 1;
     _idle
       ..stop()
@@ -89,31 +108,52 @@ final class _YsArtViewState extends State<YsArtView>
       ..value = 0;
   }
 
+  /// Starts the busy loop, or lets its last cycle play to the end.
+  void _syncBusy() {
+    if (_still) return;
+    if (widget.busy) {
+      final frames = _hoverFrames;
+      if (_looping || frames <= 0) return;
+      _looping = true;
+      _hover
+        ..duration = _frames(frames)
+        ..repeat();
+    } else if (_looping) {
+      _looping = false;
+      _hover.forward().whenCompleteOrCancel(_restHover);
+    }
+  }
+
+  /// The hover motion ended; a busy loop that took over keeps going.
+  void _restHover() {
+    if (mounted && !_looping) _hover.value = 0;
+  }
+
   @override
   void didUpdateWidget(YsArtView old) {
     super.didUpdateWidget(old);
     if (old.art != widget.art && !_still) {
+      _looping = false;
       _idle.value = 0;
       _hover.value = 0;
       _entrance
         ..duration = _frames(widget.art.entranceFrames)
         ..forward(from: 0).whenComplete(_startIdle);
+      _syncBusy();
       return;
     }
+    if (old.busy != widget.busy) _syncBusy();
     if (!old.active &&
         widget.active &&
         !_still &&
         _entrance.isCompleted &&
         !_idle.isAnimating &&
         !_hover.isAnimating) {
-      final art = widget.art;
-      final frames = art.hover.isEmpty ? art.idleFrames : art.hoverFrames;
+      final frames = _hoverFrames;
       if (frames <= 0) return;
       _hover
         ..duration = _frames(frames)
-        ..forward(from: 0).whenCompleteOrCancel(() {
-          if (mounted) _hover.value = 0;
-        });
+        ..forward(from: 0).whenCompleteOrCancel(_restHover);
     }
   }
 
