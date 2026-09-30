@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show formatTimestamp;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -210,7 +211,8 @@ final class _PostCardState extends ConsumerState<_PostCard> {
     final post = widget.post;
     final meta = [
       if (post.topic.isNotEmpty) post.topic,
-      if (post.createdAt.isNotEmpty) post.createdAt,
+      if (post.createdAt.isNotEmpty)
+        formatTimestamp(post.createdAt, DateTime.now()),
     ].join(' · ');
     return ProductCard(
       children: [

@@ -291,10 +291,12 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final instance = widget.instance;
+    // Outlined, not filled: the neutral buttons and the monogram disc share
+    // the neutral fill and would vanish on it (web `.hermuse-instance-row`).
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: palette.neutralAmbientColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        border: Border.all(color: palette.lineColor, width: ysHairline),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -308,27 +310,11 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: _renaming
-                      ? SizedBox(
-                          height: 32,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: palette.paperClearColor,
-                              borderRadius: BorderRadius.circular(
-                                YsRadius.pill,
-                              ),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              child: YsTextField(
-                                controller: _label,
-                                semanticLabel: 'Instance name',
-                                autofocus: true,
-                                onSubmitted: (_) => _rename(),
-                              ),
-                            ),
-                          ),
+                      ? YsInputBox(
+                          controller: _label,
+                          semanticLabel: 'Instance name',
+                          autofocus: true,
+                          onSubmitted: (_) => _rename(),
                         )
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,6 +334,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                           ],
                         ),
                 ),
+                const SizedBox(width: 12),
                 InstanceStatusDot(instance.id),
               ],
             ),
@@ -555,6 +542,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   final _label = TextEditingController();
   final _username = TextEditingController();
   final _password = TextEditingController();
+  final _token = TextEditingController();
   final _labelEdited = ValueNotifier(false);
 
   HermesStatus? _status;
@@ -567,6 +555,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
     _label.dispose();
     _username.dispose();
     _password.dispose();
+    _token.dispose();
     _labelEdited.dispose();
     super.dispose();
   }
@@ -597,6 +586,14 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       ).getStatus();
       checkSupportedVersion(status.version);
       if (!mounted) return;
+      if (status.loginMethod == null) {
+        setState(
+          () => _error =
+              'This Hermes needs a login Hermuse does not support '
+              '(${status.authProviders.join(', ')}).',
+        );
+        return;
+      }
       setState(() {
         _status = status;
         if (!_labelEdited.value) _label.text = url.host;
@@ -621,69 +618,66 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
 
   Future<void> _save() async {
     final url = _parsedUrl;
-    final status = _status;
-    if (url == null || status == null) return;
+    final login = _status?.loginMethod;
+    if (url == null || login == null) return;
     final label = _label.text.trim();
     if (label.isEmpty || label.length > HermesInstance.maxLabelLength) {
       setState(() => _error = 'Name must be 1–64 characters');
       return;
     }
-    final password = _password.text;
-    if (status.authRequired && password.isEmpty) {
-      setState(() => _error = 'Enter the dashboard password');
+    final token = login == AuthMethod.loopbackToken;
+    final secret = token ? _token.text.trim() : _password.text;
+    if (secret.isEmpty) {
+      setState(
+        () => _error = token
+            ? 'Enter the session token'
+            : 'Enter the dashboard password',
+      );
       return;
     }
     setState(() {
       _busy = true;
       _error = null;
     });
+    final candidate = HermesInstance(
+      id: const Uuid().v4(),
+      label: label,
+      kind: InstanceKind.remote,
+      baseUrl: url,
+      auth: login,
+    );
     try {
-      // Validate by really connecting before persisting anything. The
-      // trial transport reads the just-typed credentials from an
-      // ephemeral store — never the keystore, which only gets them
-      // once validation succeeds.
-      final candidate = HermesInstance(
-        id: const Uuid().v4(),
-        label: label,
-        kind: InstanceKind.remote,
-        baseUrl: url,
-        auth: AuthMethod.password,
-      );
-      final trialSecrets = MemorySecretStore();
-      await trialSecrets.write(
-        candidate.id,
-        SecretKeys.username,
-        _username.text,
-      );
-      await trialSecrets.write(candidate.id, SecretKeys.password, password);
-      final trial = await DashboardTransport.connect(
-        instance: candidate,
-        secrets: trialSecrets,
-        httpClient: ref.read(httpClientProvider),
-      );
-      await trial.close();
-      final registry = await ref.read(registryProvider.future);
-      try {
-        await registry.add(candidate);
-      } on DuplicateInstance catch (e) {
-        if (mounted) {
-          setState(
-            () => _error = e.field == 'label'
-                ? 'That name is already used'
-                : 'That Hermes is already registered',
+      // Proved on a real connection before anything is stored; the secret
+      // then goes to the keystore only.
+      await ref
+          .read(instanceAuthProvider)
+          .add(
+            candidate,
+            secrets: token
+                ? {SecretKeys.sessionToken: secret}
+                : {
+                    SecretKeys.username: _username.text,
+                    SecretKeys.password: secret,
+                  },
           );
-        }
-        return;
-      }
-      final secrets = ref.read(secretStoreProvider);
-      await secrets.write(candidate.id, SecretKeys.username, _username.text);
-      await secrets.write(candidate.id, SecretKeys.password, password);
+      _token.clear();
+      _password.clear();
       await ref.read(activeThreadProvider.notifier).openInstance(candidate.id);
       widget.onDone(candidate.id);
+    } on DuplicateInstance catch (e) {
+      if (mounted) {
+        setState(
+          () => _error = e.field == 'label'
+              ? 'That name is already used'
+              : 'That Hermes is already registered',
+        );
+      }
     } on HermesAuthFailed {
       if (mounted) {
         setState(
-          () => _error = 'Login rejected (401): check username and password',
+          () => _error = token
+              ? 'Wrong session token.'
+              : 'Login rejected (401): check username and password',
         );
       }
     } on UnsupportedServerVersion catch (e) {
@@ -759,8 +753,13 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                 if (status != null) ...[
                   const SizedBox(height: 12),
                   Text(
-                    'Hermes ${status.version} · '
-                    '${status.authRequired ? 'login required (${status.authProviders.join(', ')})' : 'no login'}',
+                    // Web add-instance wording: no "no login" claim, since
+                    // a gateless `hermes serve` still wants its token.
+                    status.loginMethod == AuthMethod.loopbackToken
+                        ? 'Hermes ${status.version} · paste its session token '
+                              '(HERMES_DASHBOARD_SESSION_TOKEN).'
+                        : 'Hermes ${status.version} · sign in with your '
+                              'dashboard account.',
                     style: YsType.small.flutter.copyWith(
                       color: palette.successColor,
                     ),
@@ -773,7 +772,17 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                     semanticLabel: 'Instance name',
                     onChanged: (_) => _labelEdited.value = true,
                   ),
-                  if (status.authRequired) ...[
+                  if (status.loginMethod == AuthMethod.loopbackToken) ...[
+                    const SizedBox(height: 12),
+                    _Field(
+                      label: 'Session token',
+                      controller: _token,
+                      placeholder: '••••••••',
+                      semanticLabel: 'Session token',
+                      obscure: true,
+                      onSubmitted: (_) => _save(),
+                    ),
+                  ] else ...[
                     const SizedBox(height: 12),
                     _Field(
                       label: 'Username',
@@ -835,115 +844,15 @@ final class _Field extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: YsType.label.flutter.copyWith(color: palette.contentColor),
-        ),
-        const SizedBox(height: 6),
-        SizedBox(
-          height: 44,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.canvasColor,
-              borderRadius: BorderRadius.circular(YsRadius.row),
-              border: Border.all(color: palette.lineColor, width: ysHairline),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: obscure
-                  ? _ObscuredInput(
-                      controller: controller,
-                      placeholder: placeholder,
-                      semanticLabel: semanticLabel,
-                      onChanged: onChanged,
-                      onSubmitted: onSubmitted,
-                    )
-                  : YsTextField(
-                      controller: controller,
-                      placeholder: placeholder,
-                      semanticLabel: semanticLabel,
-                      onChanged: onChanged,
-                      onSubmitted: onSubmitted,
-                    ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Password field in the kit's input style (`YsTextField` has no obscure).
-final class _ObscuredInput extends StatefulWidget {
-  const _ObscuredInput({
-    required this.controller,
-    required this.placeholder,
-    required this.semanticLabel,
-    this.onChanged,
-    this.onSubmitted,
-  });
-
-  final TextEditingController controller;
-  final String placeholder;
-  final String semanticLabel;
-  final ValueChanged<String>? onChanged;
-  final ValueChanged<String>? onSubmitted;
-
-  @override
-  State<_ObscuredInput> createState() => _ObscuredInputState();
-}
-
-final class _ObscuredInputState extends State<_ObscuredInput> {
-  late final FocusNode _focus = FocusNode();
-
-  @override
-  void dispose() {
-    _focus.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    final empty = widget.controller.text.isEmpty;
-    return Stack(
-      children: [
-        EditableText(
-          controller: widget.controller,
-          focusNode: _focus,
-          style: YsType.input.flutter.copyWith(color: palette.contentColor),
-          cursorColor: palette.primaryColor,
-          backgroundCursorColor: palette.contentMutedColor,
-          selectionColor: palette.primaryMutedColor,
-          keyboardType: TextInputType.visiblePassword,
-          obscureText: true,
-          maxLines: 1,
-          onChanged: (v) {
-            widget.onChanged?.call(v);
-            setState(() {});
-          },
-          onSubmitted: widget.onSubmitted,
-        ),
-        if (empty)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Text(
-                widget.placeholder,
-                style: YsType.input.flutter.copyWith(
-                  color: palette.contentSubtleColor,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => YsField(
+    label: label,
+    child: YsInputBox(
+      controller: controller,
+      placeholder: placeholder,
+      semanticLabel: semanticLabel,
+      obscure: obscure,
+      onChanged: onChanged,
+      onSubmitted: onSubmitted,
+    ),
+  );
 }

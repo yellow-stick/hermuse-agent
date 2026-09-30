@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'ys_focus_ring.dart';
 import 'ys_icon_widget.dart';
 import 'ys_pressable.dart';
 import 'ys_theme.dart';
@@ -91,24 +92,28 @@ final class _SegmentButton extends StatelessWidget {
       child: YsPressable(
         onPressed: onPressed,
         semanticLabel: segment.label,
-        builder: (context, state) => AnimatedContainer(
-          duration: const Duration(milliseconds: YsMotion.fast),
-          height: 28,
-          decoration: BoxDecoration(
-            color: selected
-                ? palette.neutralFilmColor
-                : state.hovered
-                ? palette.neutralFilmColor.withValues(alpha: 0.4)
-                : const Color(0x00000000),
-            borderRadius: BorderRadius.circular(YsRadius.segment),
-          ),
-          child: Center(
-            child: YsIconWidget(
-              segment.icon,
-              size: 18,
+        builder: (context, state) => YsFocusRing(
+          visible: state.focused,
+          radius: YsRadius.segment,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: YsMotion.fast),
+            height: 28,
+            decoration: BoxDecoration(
               color: selected
-                  ? palette.contentColor
-                  : palette.contentMutedColor,
+                  ? palette.neutralFilmColor
+                  : state.hovered
+                  ? palette.neutralFilmColor.withValues(alpha: 0.4)
+                  : const Color(0x00000000),
+              borderRadius: BorderRadius.circular(YsRadius.segment),
+            ),
+            child: Center(
+              child: YsIconWidget(
+                segment.icon,
+                size: 18,
+                color: selected
+                    ? palette.contentColor
+                    : palette.contentMutedColor,
+              ),
             ),
           ),
         ),

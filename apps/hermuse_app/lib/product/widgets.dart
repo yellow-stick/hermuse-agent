@@ -4,16 +4,23 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 /// Paper card of the product pages: r22, 20 padding, 12 gaps (web parity).
 final class ProductCard extends StatelessWidget {
-  const ProductCard({required this.children, super.key});
+  const ProductCard({
+    required this.children,
+    this.highlighted = false,
+    super.key,
+  });
 
   final List<Widget> children;
+
+  /// Hovered or pressed (a card that opens something): the row hover wash.
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: palette.paperColor,
+        color: highlighted ? palette.neutralFilmColor : palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.bubble),
       ),
       child: Padding(
@@ -33,7 +40,8 @@ final class ProductCard extends StatelessWidget {
   }
 }
 
-/// h36 pill toggle (Love / Discuss / nav pills): primary when [on].
+/// Pill toggle (Love / Discuss / nav pills): the kit's primary button when
+/// [on], its neutral button otherwise.
 final class ProductPill extends StatelessWidget {
   const ProductPill({
     required this.label,
@@ -49,28 +57,17 @@ final class ProductPill extends StatelessWidget {
   final String? semanticLabel;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return YsPressable(
-      onPressed: onPressed,
-      semanticLabel: semanticLabel ?? label,
-      builder: (context, state) => Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: on ? palette.primaryColor : palette.neutralAmbientColor,
-          borderRadius: BorderRadius.circular(YsRadius.pill),
-        ),
-        child: Text(
-          label,
-          style: YsType.label.flutter.copyWith(
-            color: on ? palette.primaryContentColor : palette.contentColor,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => on
+      ? YsButton.primary(
+          label: label,
+          onPressed: onPressed,
+          semanticLabel: semanticLabel,
+        )
+      : YsButton.neutral(
+          label: label,
+          onPressed: onPressed,
+          semanticLabel: semanticLabel,
+        );
 }
 
 /// Text field + action button on one row (feedback, goal notes).
