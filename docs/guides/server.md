@@ -114,24 +114,32 @@ Using the web app? It reaches your Hermes through the Hermuse relay; see
 
 ## 4. Install Hermuse on your Hermes (one click)
 
-The first time you open Feed, Ideas, Goals or the agent's computer, Hermuse
-offers **Install Hermuse on this Hermes**. Click it. Hermuse asks Hermes to
-install the `hermuse` plugin from this repository, with no shell on the server.
+Once your Hermes is saved, Hermuse shows **What's on <name>**: a checklist of
+what it needs there, each part found in place, missing or waiting on another:
+Hermes Agent itself, the **Hermuse plugin**, its **background jobs** (daily
+feed, weekly ideas, weekly goals check-in, nightly reflection), **Docker**, the
+**agent's computer** and a **model provider**. You find it again under
+**Instances → Components**.
+
+Click **Install** on a row, or **Install everything missing** when several
+parts are. Hermuse installs through the Hermes dashboard and the plugin, with
+no shell on the server; a part that needs another (the jobs, Docker and the
+computer need the plugin) keeps its button off until it is there.
 
 Hermes reviews every plugin before installing it. Because the plugin can
 install Docker with `sudo`, Hermes flags it for confirmation, and Hermuse shows
 **Hermuse needs permission to install Docker with sudo on this server** with
-the review report. Click **Allow and install**.
+the review report. Click **Allow and install**. The plugin runs right away, no
+dashboard restart needed.
 
-Hermuse then, on its own:
+When only the server can do a step, the row shows the command with a **Copy**
+button, then **Check again** once you ran it: installing Docker when the Hermes
+user has no `sudo` without a password (step 5), or restarting the dashboard
+(`systemctl --user restart hermes-dashboard`) when the plugin does not answer
+yet. A failed install says why and offers **Try again**.
 
-1. enables the plugin (no dashboard restart needed);
-2. schedules the background jobs: daily feed, weekly ideas, weekly goals
-   check-in and nightly reflection;
-3. prepares the agent's computer (next step).
-
-If Hermuse says **Restart the Hermes dashboard to finish installing Hermuse**,
-run `systemctl --user restart hermes-dashboard` and click **Check again**.
+**Continue** opens the chat once a model provider answers, the model setup
+before that.
 
 ## 5. The agent's computer gets ready
 
