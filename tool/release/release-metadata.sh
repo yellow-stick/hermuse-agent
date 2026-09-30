@@ -4,6 +4,8 @@
 # The only version source is the app pubspec: X.Y.Z+B or X.Y.Z-rc.N+B.
 #   Debian     X.Y.Z-B                    X.Y.Z~rc.N-B
 #   AppImage   Hermuse-Agent-X.Y.Z-linux-x86_64.AppImage (X.Y.Z-rc.N for an rc)
+#   macOS      Hermuse-Agent-X.Y.Z-macos-arm64.dmg
+#   Windows    Hermuse-Agent-X.Y.Z-windows-x64-Setup.exe
 #   Tag        hermuse/vX.Y.Z             hermuse/vX.Y.Z-rc.N
 # The upgrade fixture of the lifecycle smoke is a packaging fixture, never a
 # release: X.Y.Z~rc.1-B for a final version, X.Y.Z~rc.N~fixture-B for an rc,
@@ -69,4 +71,6 @@ appimage_file=Hermuse-Agent-$app_version-linux-x86_64.AppImage
 sources_file=hermuse-agent-$app_version-corresponding-sources.tar.gz
 fixture_deb_version=$fixture_upstream-$build
 fixture_deb_file=hermuse-agent_$fixture_upstream-${build}_amd64.deb
+dmg_file=Hermuse-Agent-$app_version-macos-arm64.dmg
+windows_setup_file=Hermuse-Agent-$app_version-windows-x64-Setup.exe
 EOF

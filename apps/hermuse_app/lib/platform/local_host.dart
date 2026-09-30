@@ -50,6 +50,7 @@ final class LocalHermesHost {
   LocalHermesHost._({
     required this.detector,
     required this.secrets,
+    this.installJournalPath,
     this.setupAssistant = false,
     HermesSupervisor? injected,
   }) : _supervisor = injected,
@@ -59,8 +60,9 @@ final class LocalHermesHost {
        );
 
   /// Production host against the real platform (detect on PATH/filesystem).
-  /// On Linux, [installJournalPath] is the setup assistant's install journal
-  /// (an unfinished install is never adopted) and [setupAssistant] is true.
+  /// [installJournalPath] is where the install Hermuse makes is journaled
+  /// (Linux, macOS; an unfinished install is never adopted); [setupAssistant]
+  /// is true on Linux.
   factory LocalHermesHost.system(
     SecretStore secrets, {
     String? installJournalPath,
@@ -68,6 +70,7 @@ final class LocalHermesHost {
   }) => LocalHermesHost._(
     detector: HermesDetector.system(installJournalPath: installJournalPath),
     secrets: secrets,
+    installJournalPath: installJournalPath,
     setupAssistant: setupAssistant,
   );
 
@@ -85,10 +88,14 @@ final class LocalHermesHost {
   final HermesDetector detector;
   final SecretStore secrets;
 
+  /// The [InstallJournal] of the install Hermuse makes on this computer, or
+  /// null when installs are not journaled here.
+  final String? installJournalPath;
+
   /// Whether the Linux setup assistant (`host/linux_setup.dart`) prepares
-  /// this computer: an incompatible Hermes is never supervised, the backend
-  /// uses [dockerEndpoint], and the agent's computer is set up through the
-  /// backend rather than by the plugin installer.
+  /// this computer: the backend uses [dockerEndpoint], and the agent's
+  /// computer is set up through the backend rather than by the plugin
+  /// installer.
   final bool setupAssistant;
 
   /// The Docker engine the supervised backend uses, as the setup assistant
@@ -130,15 +137,14 @@ final class LocalHermesHost {
   /// Supervises [hermes] (as [detector] found it) and registers the
   /// `hermuse-local` instance on its backend.
   ///
-  /// With [setupAssistant] an incompatible install is refused
-  /// ([HermesUnreachable]) and left as it is. A backend already running for
-  /// [hermes] is kept, unless [dockerEndpoint] now names another engine: it
-  /// then restarts with it.
+  /// An incompatible install is refused ([HermesUnreachable]) and left as it
+  /// is. A backend already running for [hermes] is kept, unless
+  /// [dockerEndpoint] now names another engine: it then restarts with it.
   Future<HermesInstance> adopt(
     HermesRegistry registry,
     DetectedHermes hermes,
   ) async {
-    if (setupAssistant && !hermes.compatible) {
+    if (!hermes.compatible) {
       throw HermesUnreachable(incompatibleHermesMessage(hermes));
     }
     final endpoint = dockerEndpoint;
@@ -241,9 +247,8 @@ final class LocalHermesHost {
 const pluginAssetPrefix = 'assets/hermes-plugin/hermuse/';
 
 /// Builds the staged installer for [hermesHome] (desktop install flow), using
-/// the official release script like Hermes Desktop. On Linux the setup
-/// assistant passes its [journalPath]: the install is then the app's own,
-/// resumable one.
+/// the official release script like Hermes Desktop. With a [journalPath]
+/// the install is the app's own, resumable one.
 HermesInstaller makeInstaller(String hermesHome, {String? journalPath}) =>
     HermesInstaller(
       hermesHome: hermesHome,

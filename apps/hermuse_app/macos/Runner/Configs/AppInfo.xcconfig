@@ -4,11 +4,13 @@
 // future. If not, the values below would default to using the project name when this becomes a
 // 'flutter create' template.
 
-// The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = hermuse_app
+// The application's name: the bundle, executable and menu-bar name.
+PRODUCT_NAME = Hermuse Agent
 
-// The application's bundle identifier
+// The application's bundle identifier. It names the Application Support
+// directory; lib/platform/secure_secret_store.dart uses it as the keychain
+// service.
 PRODUCT_BUNDLE_IDENTIFIER = com.yellowstick.hermuseApp
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.yellowstick. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 Yellow Stick

@@ -110,12 +110,18 @@ def test_no_docker_binary(hermes_home, monkeypatch):
         runtime.DockerComputerRuntime().ensure_running(hermes_home)
 
 
+@pytest.mark.parametrize("desktop", [False, True])
 @pytest.mark.parametrize("platform", ["darwin", "win32"])
-def test_no_docker_binary_on_desktop_os_points_at_docker_desktop(hermes_home, monkeypatch, platform):
+def test_no_docker_binary_on_desktop_os_points_at_docker_desktop(
+        hermes_home, monkeypatch, platform, desktop):
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(runtime.sys, "platform", platform)
-    assert runtime.DockerComputerRuntime().status(hermes_home)["detail"] == (
+    if desktop:  # the desktop app has no Docker setup there
+        monkeypatch.setenv("HERMES_DESKTOP", "1")
+    status = runtime.DockerComputerRuntime().status(hermes_home)
+    assert status["detail"] == (
         "Install Docker Desktop: https://docs.docker.com/get-started/get-docker/")
+    assert "hint" not in status
 
 
 @pytest.mark.parametrize(("step", "detail"), [

@@ -1,2 +1,5 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Release and Profile builds run on Apple Silicon only.
+EXCLUDED_ARCHS = x86_64

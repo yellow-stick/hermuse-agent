@@ -131,13 +131,18 @@ def current_user() -> str:
 
 
 def desktop_managed() -> bool:
-    """True under the Hermuse desktop app, whose setup assistant owns installing Docker."""
+    """True under the Hermuse desktop app: the plugin never installs Docker itself there."""
     return os.environ.get(DESKTOP_ENV) == "1"
+
+
+def desktop_setup() -> bool:
+    """True where the desktop app's setup assistant installs Docker (its Linux build)."""
+    return desktop_managed() and sys.platform.startswith("linux")
 
 
 def docker_install_hint() -> str:
     """``docker_missing`` detail: how Docker gets installed when Hermuse cannot do it here."""
-    if desktop_managed():
+    if desktop_setup():
         return "Open the Hermuse Agent setup to install Docker."
     if sys.platform.startswith("linux"):
         user = current_user() or "$USER"
@@ -147,9 +152,9 @@ def docker_install_hint() -> str:
 
 
 def docker_missing_status() -> dict:
-    """The ``docker_missing`` status; under the desktop app it points at its setup assistant."""
+    """The ``docker_missing`` status; with the desktop setup it points at the assistant."""
     status = _status("docker_missing", docker_install_hint())
-    if desktop_managed():
+    if desktop_setup():
         status["hint"] = DESKTOP_SETUP_HINT
     return status
 
