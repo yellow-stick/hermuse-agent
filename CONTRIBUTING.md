@@ -30,19 +30,24 @@ of the project and of this flow.
    owner). An approved one goes through the merge queue: the merged result is
    packaged again and the installed packages are tested on fresh Ubuntu 22.04
    and Debian 12 machines (`.deb` and AppImage), on newer distributions, on
-   macOS and on Windows before `main` moves. It lands as a merge commit.
+   macOS and on Windows before `main` moves.
+5. **One squashed commit.** Pull requests are squash-merged only: the pull
+   request title becomes the single commit on `main` (GitHub appends `(#N)`)
+   and its description becomes the commit message.
 
 Maintainers push branches named `yellow-stick/<topic>` (kebab-case, cut from
 `origin/main`) to this repository. A ruleset only lets `main`,
 `yellow-stick/**`, `release/**`, `dependabot/**` and the merge queue's
 `gh-readonly-queue/**` branches be created here; administrators can bypass it.
 
-### Commits and validation
+### Titles, commits and validation
 
-Commit subjects follow `<Area>: <what changed>`, one logical change per commit:
-see [Commits, branches and PRs](AGENTS.md#commits-branches-and-prs). The pull
-request description says what changes for the user or the developer, then the
-validation that actually ran ([Validation per area](AGENTS.md#validation-per-area)):
+The pull request title follows the commit style `<Area>: <what changed>`
+([Commits, branches and PRs](AGENTS.md#commits-branches-and-prs)), since it
+becomes the commit on `main`. The commits on your branch are free-form. A pull
+request too big for one commit is split into several. The description says
+what changes for the user or the developer, then the validation that actually
+ran ([Validation per area](AGENTS.md#validation-per-area)):
 
 - Dart/Flutter: `melos run analyze` and the package's tests
   (`melos run test:dart`, `melos run test:flutter`);

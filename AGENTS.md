@@ -83,7 +83,7 @@ Commit subject: `<Area>: <what changed>` — one line, English, present tense, l
 
 Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yellow-stick/orca-worktrees`), cut from `origin/main`. Never commit to `main` directly.
 
-Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review runs the checks and the builds of every platform, and the merge queue runs the installed-package smoke tests before merging (`CONTRIBUTING.md`). Merge through the merge queue with a merge commit (`Merge pull request #N from yellow-stick/<topic>`), not squash or rebase, then delete the branch.
+Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review runs the checks and the builds of every platform, and the merge queue runs the installed-package smoke tests before merging (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
 
 ## Validation per area
 
