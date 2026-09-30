@@ -3,6 +3,7 @@ import 'package:jaspr/jaspr.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import 'keyframes.dart';
+import 'motion.dart';
 
 /// An icon that plays its [YsIconMotion] once each time [hovered] turns on
 /// (rail destinations). Icons without a motion render still.
@@ -40,8 +41,10 @@ class YsMotionIconView extends StatefulComponent {
     ),
     css('.ys-motion .ys-m-extra').styles(opacity: 0),
     for (final icon in YsIcon.values) ...?_motionRules(icon),
-    css.media(MediaQuery.raw('(prefers-reduced-motion: reduce)'), [
-      css('.ys-motion[data-playing] *').styles(raw: {'animation': 'none'}),
+    // Per-part rules are more specific: this one must still win.
+    css.media(MediaQuery.raw(ysReducedMotionQuery), [
+      css('.ys-motion[data-playing] *')
+          .styles(raw: {'animation': 'none !important'}),
     ]),
   ];
 }
@@ -55,7 +58,8 @@ class _YsMotionIconViewState extends State<YsMotionIconView> {
     if (!oldComponent.hovered &&
         component.hovered &&
         !_playing &&
-        YsIconMotion.of(component.icon) != null) {
+        YsIconMotion.of(component.icon) != null &&
+        !ysReducedMotion()) {
       setState(() => _playing = true);
     }
   }
