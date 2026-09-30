@@ -13,6 +13,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'browser_card.dart';
+import 'screens.dart';
 
 /// Status polling while the computer is being prepared.
 const _fastPoll = Duration(milliseconds: 1500);
@@ -722,40 +723,61 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
     _session?.release();
   }
 
-  /// What the stage says instead of the frame, with Retry when it helps and
-  /// the shell command to paste on the Hermes host when there is one.
-  ({String text, bool retry, String? command})? _notice({required bool busy}) {
+  /// What the stage says instead of the frame, under its drawing (looping
+  /// while the computer's image builds), with Retry when it helps and the
+  /// shell command to paste on the Hermes host when there is one.
+  ({YsArt art, bool busy, String text, bool retry, String? command})? _notice({
+    required bool busy,
+  }) {
     if (_failure case final failure?) {
-      return (text: failure, retry: true, command: null);
+      return (
+        art: YsArt.unreachable,
+        busy: false,
+        text: failure,
+        retry: true,
+        command: null,
+      );
     }
     final detail = _status?.detail ?? '';
     return switch (_status?.state) {
       ComputerState.dockerMissing => (
+        art: YsArt.unreachable,
+        busy: false,
         text: 'Docker is not installed on the Hermes computer.',
         retry: false,
         command: detail.isEmpty ? null : detail,
       ),
       ComputerState.daemonDown => (
+        art: YsArt.unreachable,
+        busy: false,
         text: 'Docker is installed but not running. Start Docker to continue.',
         retry: false,
         command: null,
       ),
       ComputerState.imageMissing => (
+        art: YsArt.check,
+        busy: true,
         text: "Preparing the agent's computer…",
         retry: false,
         command: null,
       ),
       ComputerState.building => (
+        art: YsArt.check,
+        busy: true,
         text: detail.isEmpty ? "Preparing the agent's computer…" : detail,
         retry: false,
         command: null,
       ),
       ComputerState.error => (
+        art: YsArt.unreachable,
+        busy: false,
         text: detail.isEmpty ? "The agent's computer failed to start." : detail,
         retry: true,
         command: null,
       ),
       ComputerState.missing => (
+        art: YsArt.plugin,
+        busy: false,
         text: 'Install the Hermuse plugin on this Hermes to see its browser.',
         retry: false,
         command: null,
@@ -764,6 +786,8 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
         _hasFrame
             ? null
             : (
+                art: YsArt.check,
+                busy: false,
                 text: busy
                     ? 'Loading browser task'
                     : 'Preparing browser preview',
@@ -906,6 +930,7 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
               classes: 'hermuse-computer-notice',
               attributes: {'role': 'status'},
               [
+                HermuseCardArt(notice.art, busy: notice.busy),
                 p(classes: 'hermuse-computer-notice-text', [
                   .text(notice.text),
                 ]),
