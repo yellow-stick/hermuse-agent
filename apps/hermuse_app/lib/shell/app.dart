@@ -18,6 +18,7 @@ import '../host/install_flow.dart';
 import '../host/linux_setup.dart';
 import '../host/linux_setup_gate.dart';
 import '../platform/local_host.dart';
+import '../onboarding/components.dart';
 import '../onboarding/connections.dart';
 import '../onboarding/onboarding.dart';
 import '../panel/profile_panel.dart';
@@ -110,6 +111,10 @@ enum _Route {
   instances,
   onboarding,
   connections,
+
+  /// What Hermuse needs on a remote instance: after it is added, and from
+  /// its row in the instances.
+  components,
 }
 
 /// Picks the route (welcome / chat / instance screens) and the chat scope.
@@ -185,6 +190,15 @@ final class _RootState extends ConsumerState<_Root> {
     setState(() => _route = _Route.addInstance);
   }
 
+  /// A Hermes was just saved: what it has shows first, its chat opens behind.
+  void _added(String instanceId) {
+    setState(() {
+      _route = _Route.components;
+      _overlayInstanceId = instanceId;
+    });
+    unawaited(ref.read(activeThreadProvider.notifier).openInstance(instanceId));
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
@@ -227,16 +241,18 @@ final class _RootState extends ConsumerState<_Root> {
     final instances = ref.watch(instancesProvider);
     final active = ref.watch(activeThreadProvider);
     final instanceList = instances.value;
-    if (instanceList != null && instanceList.isEmpty) {
+    final thread = active.value;
+    // Add a Hermes stays on screen while it saves the first instance, until
+    // it hands over.
+    if (instanceList != null &&
+        (instanceList.isEmpty ||
+            (thread == null && _route == _Route.addInstance))) {
       final host = ref.read(localHostProvider);
       return ColoredBox(
         color: palette.canvasColor,
         child: switch (_route) {
           _Route.addInstance => AddInstanceScreen(
-            onDone: (id) => setState(() {
-              _route = _Route.onboarding;
-              _overlayInstanceId = id;
-            }),
+            onDone: _added,
             onCancel: () => setState(() => _route = _Route.chat),
           ),
           _Route.install when host != null => _InstallRoute(
@@ -259,7 +275,30 @@ final class _RootState extends ConsumerState<_Root> {
         },
       );
     }
-    final thread = active.value;
+    // What a remote instance has needs no open chat.
+    if (_route == _Route.components) {
+      final instance = instanceList
+          ?.where((i) => i.id == _overlayInstanceId)
+          .firstOrNull;
+      if (instance != null) {
+        return ColoredBox(
+          color: palette.canvasColor,
+          child: ComponentsScreen(
+            instance: instance,
+            onChat: () async {
+              setState(() => _route = _Route.chat);
+              await ref
+                  .read(activeThreadProvider.notifier)
+                  .openInstance(instance.id);
+            },
+            onSetUpModel: () => setState(() {
+              _route = _Route.onboarding;
+              _overlayInstanceId = instance.id;
+            }),
+          ),
+        );
+      }
+    }
     if (active.hasValue && thread != null) {
       return _ChatRoute(
         thread: thread,
@@ -270,6 +309,7 @@ final class _RootState extends ConsumerState<_Root> {
           _route = route;
           _overlayInstanceId = overlayId;
         }),
+        onAdded: _added,
         onAdopt: widget.onAdopt,
         chat: widget.chat,
         current: widget.current,
@@ -367,6 +407,7 @@ final class _ChatRoute extends ConsumerWidget {
     required this.route,
     required this.overlayInstanceId,
     required this.onRoute,
+    required this.onAdded,
     required this.onAdopt,
     required this.chat,
     required this.current,
@@ -377,6 +418,9 @@ final class _ChatRoute extends ConsumerWidget {
   final _Route route;
   final String? overlayInstanceId;
   final void Function(_Route route, [String? overlayId]) onRoute;
+
+  /// Add a Hermes saved one.
+  final ValueChanged<String> onAdded;
   final void Function(ChatController) onAdopt;
   final ChatListenable Function() chat;
   final ChatController? Function() current;
@@ -389,7 +433,7 @@ final class _ChatRoute extends ConsumerWidget {
         return ColoredBox(
           color: palette.canvasColor,
           child: AddInstanceScreen(
-            onDone: (id) => onRoute(_Route.onboarding, id),
+            onDone: onAdded,
             onCancel: () => onRoute(_Route.chat),
           ),
         );
@@ -411,6 +455,7 @@ final class _ChatRoute extends ConsumerWidget {
                 : null,
             onClose: () => onRoute(_Route.chat),
             onSetup: (id) => onRoute(_Route.onboarding, id),
+            onComponents: (id) => onRoute(_Route.components, id),
             onConnections: (id) => onRoute(_Route.connections, id),
           ),
         );
@@ -453,6 +498,8 @@ final class _ChatRoute extends ConsumerWidget {
             ),
           );
         }
+      // Shown by the root; an instance deleted meanwhile leaves the chat.
+      case _Route.components:
       case _Route.welcome:
       case _Route.chat:
         break;

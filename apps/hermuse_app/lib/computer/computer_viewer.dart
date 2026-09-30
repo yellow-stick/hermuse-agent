@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/semantics.dart' show SemanticsRole;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -773,7 +772,7 @@ final class _Status extends StatelessWidget {
               ),
               if (command != null) ...[
                 const SizedBox(height: 12),
-                _Command(command),
+                CommandBox(command),
               ],
               if (onSetUp != null) ...[
                 const SizedBox(height: 12),
@@ -785,63 +784,6 @@ final class _Status extends StatelessWidget {
               ],
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A shell command in a selectable monospace box, with a Copy button.
-final class _Command extends StatefulWidget {
-  const _Command(this.command);
-
-  final String command;
-
-  @override
-  State<_Command> createState() => _CommandState();
-}
-
-final class _CommandState extends State<_Command> {
-  var _copied = false;
-
-  Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: widget.command));
-    if (!mounted) return;
-    setState(() => _copied = true);
-    await Future<void>.delayed(const Duration(seconds: 2));
-    if (mounted) setState(() => _copied = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.paperColor,
-        borderRadius: BorderRadius.circular(YsRadius.row),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: SelectableText(
-                widget.command,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  height: 20 / 13,
-                ).copyWith(color: palette.contentColor),
-              ),
-            ),
-            const SizedBox(width: 8),
-            YsButton.neutral(
-              label: _copied ? 'Copied' : 'Copy',
-              onPressed: _copy,
-              textStyle: YsType.small,
-              height: 28,
-            ),
-          ],
         ),
       ),
     );

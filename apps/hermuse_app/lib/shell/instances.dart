@@ -64,6 +64,7 @@ final class InstancesScreen extends ConsumerWidget {
     required this.onAdd,
     required this.onClose,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
     this.onInstall,
     super.key,
@@ -75,6 +76,9 @@ final class InstancesScreen extends ConsumerWidget {
   final VoidCallback? onInstall;
   final VoidCallback onClose;
   final ValueChanged<String> onSetup;
+
+  /// What Hermuse needs on a remote instance, and its installs.
+  final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -156,6 +160,7 @@ final class InstancesScreen extends ConsumerWidget {
               _InstanceRow(
                 instance: instance,
                 onSetup: onSetup,
+                onComponents: onComponents,
                 onConnections: onConnections,
               ),
               const SizedBox(height: 8),
@@ -181,11 +186,13 @@ final class _InstanceRow extends ConsumerStatefulWidget {
   const _InstanceRow({
     required this.instance,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
   });
 
   final HermesInstance instance;
   final ValueChanged<String> onSetup;
+  final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
 
   @override
@@ -486,6 +493,13 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                     textStyle: YsType.small,
                     height: 28,
                   ),
+                  if (instance.kind == InstanceKind.remote)
+                    YsButton.neutral(
+                      label: 'Components',
+                      onPressed: () => widget.onComponents(instance.id),
+                      textStyle: YsType.small,
+                      height: 28,
+                    ),
                   YsButton.neutral(
                     label: 'Connections',
                     onPressed: () => widget.onConnections(instance.id),
@@ -557,6 +571,7 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
     super.key,
   });
 
+  /// The instance is saved (its id): the caller opens it.
   final ValueChanged<String> onDone;
   final VoidCallback onCancel;
 
@@ -713,7 +728,6 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
           );
       _token.clear();
       _password.clear();
-      await ref.read(activeThreadProvider.notifier).openInstance(candidate.id);
       widget.onDone(candidate.id);
     } on DuplicateInstance catch (e) {
       if (mounted) {

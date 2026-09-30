@@ -19,15 +19,18 @@ final class SetupNotice {
   final bool alert;
 }
 
-/// The card of the desktop setup flows, the Linux assistant and the macOS
-/// and Windows install alike: the overall progress ring with the title and
-/// what happens now, notices, the checklist of components, the technical log
-/// behind "Show details", and the actions that concern no single row.
+/// The card of the desktop setup flows, the Linux assistant, the macOS and
+/// Windows install and the component checklist of a remote Hermes alike:
+/// the drawing when there is one, the overall progress ring with the title
+/// and what happens now, notices, the checklist of components, the technical
+/// log behind "Show details", and the actions that concern no single row.
 final class SetupCard extends StatelessWidget {
   const SetupCard({
     required this.title,
     required this.status,
     required this.items,
+    this.art,
+    this.busy = false,
     this.notices = const [],
     this.log = const [],
     this.actions = const [],
@@ -39,6 +42,14 @@ final class SetupCard extends StatelessWidget {
 
   /// What happens now, under the title.
   final String status;
+
+  /// The drawing heading the card, hero-sized: it draws in, and a new one
+  /// fades in and draws itself.
+  final YsArt? art;
+
+  /// Work under way: [art] loops.
+  final bool busy;
+
   final List<YsChecklistItem> items;
   final List<SetupNotice> notices;
 
@@ -85,6 +96,17 @@ final class SetupCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (art case final art?) ...[
+              AnimatedSwitcher(
+                duration: Duration(
+                  milliseconds: MediaQuery.disableAnimationsOf(context)
+                      ? 0
+                      : YsStepMotion.swap,
+                ),
+                child: YsDialogArt(art, busy: busy, key: ValueKey(art)),
+              ),
+              const SizedBox(height: YsSpace.lg),
+            ],
             Padding(
               padding: inset,
               child: _Header(
@@ -241,11 +263,13 @@ final class _Notice extends StatelessWidget {
   }
 }
 
-/// Last output lines, scrolled to the newest.
+/// Lines of technical output in a box that scrolls: the last ones of a log,
+/// kept on the newest ([follow]), or a report read from the top.
 final class InstallLogBox extends StatefulWidget {
-  const InstallLogBox({required this.log, super.key});
+  const InstallLogBox({required this.log, this.follow = true, super.key});
 
   final List<String> log;
+  final bool follow;
 
   @override
   State<InstallLogBox> createState() => _InstallLogBoxState();
@@ -263,11 +287,13 @@ final class _InstallLogBoxState extends State<InstallLogBox> {
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      }
-    });
+    if (widget.follow) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scroll.hasClients) {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        }
+      });
+    }
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.canvasColor,

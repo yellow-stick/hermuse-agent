@@ -15,13 +15,33 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 
 const _goodToken = 'good-token';
 
+/// The system keyring: writing a secret takes a while (a D-Bus round trip,
+/// here longer than a `pumpAndSettle` step), during which the app draws
+/// frames.
+final class _Keyring implements SecretStore {
+  final _values = MemorySecretStore();
+
+  @override
+  Future<String?> read(String instanceId, String key) =>
+      _values.read(instanceId, key);
+
+  @override
+  Future<void> write(String instanceId, String key, String value) async {
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    await _values.write(instanceId, key, value);
+  }
+
+  @override
+  Future<void> delete(String instanceId) => _values.delete(instanceId);
+}
+
 /// A `hermes serve` without a dashboard gate: `/api/ws` wants the session
 /// token, and only [_goodToken] opens it.
 final class _TokenHermes {
   _TokenHermes() : db = openMemoryDatabase();
 
   final HermuseDatabase db;
-  final secrets = MemorySecretStore();
+  final secrets = _Keyring();
   final fake = FakeHermesTransport()
     ..on('session.list', (_) => const {'sessions': []})
     ..on(
@@ -137,6 +157,8 @@ void main() {
       await hermes.save(tester, _goodToken);
 
       expect(hermes.tried, [_goodToken]);
+      // The first Hermes saved goes on to what it has.
+      expect(find.text("What's on 127.0.0.1"), findsOneWidget);
       final saved = await hermes.db.loadInstances();
       expect(saved.single.auth, AuthMethod.loopbackToken);
       expect(
