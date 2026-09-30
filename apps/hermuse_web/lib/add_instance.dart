@@ -14,14 +14,18 @@ import 'relay.dart';
 import 'scope.dart';
 import 'screens.dart';
 
-/// "Add a Hermes" wizard: URL → relay resolve → status probe → credentials →
-/// real connect test → save.
+/// "Add a Hermes": URL → relay resolve → status probe → credentials → real
+/// connect test → save (desktop `AddInstanceScreen` parity).
 ///
 /// Every step runs against the same-origin relay (`<relay>/relay/resolve`
 /// then `<relay>/hermes/<id>/…`); nothing ever talks to the typed URL
-/// directly. On success the secrets land in the tab-lifetime [SecretStore],
-/// the metadata in drift via [registryProvider], and [onDone] receives the
-/// new instance id (the shell opens its main chat).
+/// directly. The check is the main action until a Hermes answers: its
+/// drawing loops while it runs, a box ticks with sparks when a Hermes
+/// answers and the sign-in fields come in; when none answers the drawing
+/// shows a pulled plug and the check offers to try again. On success the
+/// secrets land in the tab-lifetime [SecretStore], the metadata in drift
+/// via [registryProvider], and [onDone] receives the new instance id (the
+/// shell opens its main chat).
 class HermuseAddInstance extends StatefulComponent {
   const HermuseAddInstance({
     required this.onDone,
@@ -39,42 +43,71 @@ class HermuseAddInstance extends StatefulComponent {
   // ignore: unused_element
   static List<StyleRule> get styles => [
     ...hermuseScreenStyles,
-    css('.hermuse-field').styles(
-      width: 100.percent,
-      display: .flex,
-      flexDirection: .column,
-      gap: .all(6.px),
-    ),
-    css('.hermuse-field-label').styles(
-      fontSize: 14.px,
-      lineHeight: 20.px,
-      fontWeight: .w500,
-      color: .variable('--content-muted'),
-    ),
-    css('.hermuse-field-input').styles(
-      height: 44.px,
-      padding: .symmetric(horizontal: 14.px),
-      radius: .circular(YsRadius.row.px),
-      color: .variable('--content'),
-      backgroundColor: .variable('--canvas'),
-      border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
-      fontSize: 15.px,
-      raw: {'outline': 'none', 'font-family': 'inherit'},
-    ),
-    css('.hermuse-field-input:focus').styles(
-      border: .all(style: .solid, color: .variable('--primary'), width: 1.2.px),
-    ),
-    css('.hermuse-field-input::placeholder')
-        .styles(color: .variable('--content-subtle')),
+    // A form: left-aligned, unlike the centred status cards.
+    css('.hermuse-screen .hermuse-card.hermuse-add')
+        .styles(alignItems: .stretch, gap: .all(YsSpace.md.px)),
+    css('.hermuse-add', [
+      css('.hermuse-add-head').styles(
+        display: .flex,
+        flexDirection: .row,
+        alignItems: .start,
+        gap: .all(YsSpace.lg.px),
+        margin: .only(bottom: YsSpace.xs.px),
+      ),
+      css('.hermuse-add-art').styles(display: .flex, raw: {'flex-shrink': '0'}),
+      css('.hermuse-add-titles').styles(
+        flex: .grow(1),
+        display: .flex,
+        flexDirection: .column,
+        gap: .all(YsSpace.xs.px),
+        raw: {'min-width': '0'},
+      ),
+      css('.hermuse-add-title').styles(
+        margin: .zero,
+        fontSize: YsType.title.size.px,
+        fontWeight: .w500,
+        lineHeight: YsType.title.lineHeight.px,
+      ),
+      css('.hermuse-add-helper').styles(
+        margin: .zero,
+        color: .variable('--content-muted'),
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
+      ),
+      css('.hermuse-add-check').styles(display: .flex),
+      css('.hermuse-add-found').styles(
+        display: .flex,
+        flexDirection: .row,
+        alignItems: .center,
+        gap: .all((YsSpace.sm + YsSpace.xxs).px),
+        color: .variable('--content-muted'),
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
+      ),
+      css('.hermuse-add-found-yes').styles(color: .variable('--success')),
+      css('.hermuse-add-credentials').styles(
+        display: .flex,
+        flexDirection: .column,
+        gap: .all(YsSpace.md.px),
+      ),
+      css('.hermuse-add-error').styles(
+        margin: .zero,
+        padding: .all(YsSpace.md.px),
+        radius: .circular(YsRadius.row.px),
+        color: .variable('--error'),
+        backgroundColor: .variable('--error-wash'),
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
+      ),
+    ]),
   ];
 }
 
-enum _Step { url, credentials, saving }
-
 class _HermuseAddInstanceState extends State<HermuseAddInstance> {
-  var _step = _Step.url;
+  final _urlField = GlobalNodeKey<web.HTMLElement>();
   var _url = '';
   var _label = '';
+  var _labelEdited = false;
   var _username = '';
   var _password = '';
   var _token = '';
@@ -83,105 +116,147 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
   HermesStatus? _status;
   String? _upstreamId;
 
+  /// The address the running check reaches.
+  Uri? _checking;
+
+  /// The last check reached no usable Hermes: the drawing shows it
+  /// unplugged and the check offers to try again.
+  var _probeFailed = false;
+
   http.Client get _http => context.readProvider(httpClientProvider);
   Uri get _relay => context.readProvider(relayProvider).value!;
 
-  Future<void> _resolve() async {
-    final url = _url.trim();
-    if (url.isEmpty || _busy) return;
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb) return;
+    // The address field has focus when the dialog opens.
+    context.binding.addPostFrameCallback(() {
+      final field = _urlField.currentNode?.querySelector('input');
+      if (mounted) (field as web.HTMLElement?)?.focus();
+    });
+  }
+
+  /// The typed address, when it is a usable http(s) one.
+  Uri? get _parsedUrl {
+    try {
+      final url = normalizeBaseUrl(_url);
+      return url.host.isNotEmpty &&
+              (url.isScheme('http') || url.isScheme('https'))
+          ? url
+          : null;
+    } on Object {
+      return null;
+    }
+  }
+
+  /// A new address drops what the check said about the previous one.
+  void _urlChanged(String value) => setState(() {
+    _url = value;
+    if (_status != null) return;
+    _error = null;
+    _probeFailed = false;
+  });
+
+  void _failProbe(String message) => setState(() {
+    _busy = false;
+    _error = message;
+    _probeFailed = true;
+  });
+
+  Future<void> _probe() async {
+    if (_busy) return;
+    final url = _parsedUrl;
+    if (url == null) {
+      setState(() => _error = 'Enter a valid http(s) URL');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
+      _probeFailed = false;
+      _status = null;
+      _checking = url;
     });
     try {
       final resolved = await Relay.resolve(
         _http,
         _relay,
-        url,
+        _url.trim(),
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
       if (resolved == null) {
-        setState(() {
-          _busy = false;
-          _error =
-              'This Hermes is not registered on this relay. Ask the relay '
-              'administrator to add it (POST /admin/upstreams).';
-        });
+        _failProbe(
+          'This Hermes is not registered on this relay. Ask the relay '
+          'administrator to add it (POST /admin/upstreams).',
+        );
         return;
       }
-      final base = Relay.instanceBase(_relay, resolved.id);
       final status = await HermesRestClient(
         _http,
-        baseUrl: base,
+        baseUrl: Relay.instanceBase(_relay, resolved.id),
       ).getStatus().timeout(const Duration(seconds: 15));
       checkSupportedVersion(status.version);
       if (!mounted) return;
       if (status.loginMethod == null) {
-        setState(() {
-          _busy = false;
-          _error =
-              'This Hermes needs a login the web app does not support '
-              '(${status.authProviders.join(', ')}).';
-        });
+        _failProbe(
+          'This Hermes needs a login the web app does not support '
+          '(${status.authProviders.join(', ')}).',
+        );
         return;
       }
       setState(() {
         _busy = false;
         _status = status;
         _upstreamId = resolved.id;
-        if (_label.trim().isEmpty) _label = resolved.label;
-        // Gateless (loopback-token) instances ask for the session token;
-        // gated ones ask for username + password.
-        _step = _Step.credentials;
+        if (!_labelEdited) {
+          _label = resolved.label.isEmpty ? url.host : resolved.label;
+        }
       });
     } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = 'The relay did not answer in time. Try again.';
-        });
-      }
+      if (mounted) _failProbe('The relay did not answer in time. Try again.');
     } on UnsupportedServerVersion catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = '${e.message}. This app targets Hermes 0.21.x.';
-        });
-      }
+      if (mounted) _failProbe('${e.message}. This app targets Hermes 0.21.x.');
     } on HermesException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = e.message;
-        });
-      }
+      if (mounted) _failProbe(e.message);
     } on Object catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _error = 'Could not reach the relay ($e).';
-        });
-      }
+      if (mounted) _failProbe('Could not reach the relay ($e).');
     }
   }
 
   /// Connect-tests the candidate, then persists metadata + secrets.
-  Future<void> _save({String? password, String? token}) async {
-    if (_busy && _step == _Step.saving) return;
+  Future<void> _save() async {
+    final status = _status;
+    final upstreamId = _upstreamId;
+    final login = status?.loginMethod;
+    if (_busy || upstreamId == null || login == null) return;
+    final label = _label.trim();
+    if (label.isEmpty || label.length > HermesInstance.maxLabelLength) {
+      setState(() => _error = 'Name must be 1–64 characters');
+      return;
+    }
+    final loopback = login == AuthMethod.loopbackToken;
+    final secret = loopback ? _token.trim() : _password;
+    if (secret.isEmpty) {
+      setState(
+        () => _error = loopback
+            ? 'Enter the session token'
+            : 'Enter the dashboard password',
+      );
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
-      _step = _Step.saving;
     });
-    final loopback = token != null;
-    final base = Relay.instanceBase(_relay, _upstreamId!);
     final candidate = HermesInstance(
       id: const Uuid().v4(),
-      label: _label.trim().isEmpty ? base.host : _label.trim(),
+      label: label,
       kind: InstanceKind.remote,
-      baseUrl: base,
-      auth: loopback ? AuthMethod.loopbackToken : AuthMethod.password,
+      baseUrl: Relay.instanceBase(_relay, upstreamId),
+      auth: login,
     );
+    String? error;
     try {
       // Proved on a real connection before anything is stored.
       await context.container
@@ -189,53 +264,34 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
           .add(
             candidate,
             secrets: loopback
-                ? {SecretKeys.sessionToken: token}
+                ? {SecretKeys.sessionToken: secret}
                 : {
                     SecretKeys.username: _username.trim(),
-                    SecretKeys.password: ?password,
+                    SecretKeys.password: secret,
                   },
           )
           .timeout(const Duration(seconds: 30));
     } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _step = _Step.credentials;
-          _error = 'The connection test timed out. Try again.';
-        });
-      }
-      return;
+      error = 'The connection test timed out. Try again.';
     } on HermesAuthFailed {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _step = _Step.credentials;
-          _error = loopback
-              ? 'Wrong session token.'
-              : 'Wrong username or password.';
-        });
-      }
-      return;
+      error = loopback ? 'Wrong session token.' : 'Wrong username or password.';
     } on HermesException catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _step = _Step.credentials;
-          _error = e.message;
-        });
-      }
-      return;
+      error = e.message;
     } on DuplicateInstance catch (e) {
-      if (mounted) {
-        setState(() {
-          _busy = false;
-          _step = _Step.url;
-          _error = 'Already registered: ${e.value}.';
-        });
-      }
-      return;
+      error = e.field == 'label'
+          ? 'That name is already used'
+          : 'That Hermes is already registered';
+    } on Object catch (e) {
+      error = '$e';
     }
     if (!mounted) return;
+    if (error != null) {
+      setState(() {
+        _busy = false;
+        _error = error;
+      });
+      return;
+    }
     // Drop secrets from the widget state the moment they are stored.
     setState(() {
       _password = '';
@@ -244,141 +300,174 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
     component.onDone(candidate.id);
   }
 
-  bool get _loopback => _status?.loginMethod == AuthMethod.loopbackToken;
-
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-screen', [
-    div(classes: 'hermuse-card hermuse-card-narrow', [
-      h1(classes: 'hermuse-card-title', [.text('Add a Hermes')]),
-      if (_step == _Step.url) ...[
-        p(classes: 'hermuse-card-body', [
-          .text('Enter the address of your Hermes instance.'),
-        ]),
-        _field(
-          label: 'Hermes URL',
-          value: _url,
-          placeholder: 'https://hermes.example.com',
-          type: InputType.url,
-          onChanged: (v) => setState(() => _url = v),
-          onSubmitted: _resolve,
-        ),
-        _field(
-          label: 'Name (optional)',
-          value: _label,
-          placeholder: 'Home server',
-          onChanged: (v) => setState(() => _label = v),
-          onSubmitted: _resolve,
-        ),
-      ] else if (_loopback) ...[
-        p(classes: 'hermuse-card-body', [
-          .text(
-            'Hermes ${_status?.version ?? ''} · paste its session token '
-            '(HERMES_DASHBOARD_SESSION_TOKEN).',
+  Component build(BuildContext context) {
+    final status = _status;
+    final checking = _busy && status == null;
+    final check = checking
+        ? 'Checking…'
+        : _probeFailed
+        ? 'Try again'
+        : 'Check';
+    final onCheck = _busy || _parsedUrl == null
+        ? null
+        : () => unawaited(_probe());
+    return div(classes: 'hermuse-screen', [
+      div(classes: 'hermuse-card hermuse-card-narrow hermuse-add', [
+        div(classes: 'hermuse-add-head', [
+          // Reaching out while a check or a connection runs, unplugged when
+          // the check found no usable Hermes.
+          YsHover(
+            builder: (context, hovered) => span(classes: 'hermuse-add-art', [
+              YsArtView(
+                _probeFailed ? YsArt.unreachable : YsArt.remote,
+                size: YsLayout.artHeader,
+                active: hovered,
+                busy: _busy,
+              ),
+            ]),
+          ),
+          div(classes: 'hermuse-add-titles', [
+            h1(classes: 'hermuse-add-title', [.text('Add a Hermes')]),
+            p(classes: 'hermuse-add-helper', [
+              .text('Paste the web address of your Hermes dashboard.'),
+            ]),
+          ]),
+          YsButton.icon(
+            icon: YsIcon.close,
+            label: 'Cancel',
+            onPressed: component.onCancel,
           ),
         ]),
-        _field(
-          label: 'Session token',
-          value: _token,
-          placeholder: '••••••••',
-          type: InputType.password,
-          onChanged: (v) => setState(() => _token = v),
-          onSubmitted: _submitToken,
-        ),
-      ] else ...[
-        p(classes: 'hermuse-card-body', [
-          .text(
-            'Hermes ${_status?.version ?? ''} · sign in with your dashboard account.',
+        div(key: _urlField, [
+          YsField(
+            label: 'Instance URL',
+            child: YsInputBox(
+              value: _url,
+              onChanged: _urlChanged,
+              onSubmitted: () => unawaited(_probe()),
+              placeholder: 'https://hermes.example.com',
+              name: 'hermes-url',
+              label: 'Instance URL',
+              url: true,
+              icon: YsIcon.link,
+              autocomplete: 'url',
+            ),
           ),
         ]),
-        _field(
-          label: 'Username',
-          value: _username,
-          placeholder: 'admin',
-          onChanged: (v) => setState(() => _username = v),
-          onSubmitted: _submitCredentials,
-        ),
-        _field(
-          label: 'Password',
-          value: _password,
-          placeholder: '••••••••',
-          type: InputType.password,
-          onChanged: (v) => setState(() => _password = v),
-          onSubmitted: _submitCredentials,
-        ),
-      ],
-      if (_error case final error?)
-        p(classes: 'hermuse-card-error', [.text(error)]),
-      if (_busy)
-        p(classes: 'hermuse-card-body', [
-          .text(
-            _step == _Step.saving ? 'Testing the connection…' : 'Checking…',
-          ),
+        div(classes: 'hermuse-add-check', [
+          // The step's main action until a Hermes answers.
+          if (status == null)
+            YsButton.primary(label: check, onPressed: onCheck)
+          else
+            YsButton.neutral(label: check, onPressed: onCheck),
         ]),
-      div(classes: 'hermuse-card-actions', [
-        YsButton.neutral(
-          label: 'Cancel',
-          onPressed: _busy ? null : component.onCancel,
-        ),
-        if (_step == _Step.url)
-          YsButton.primary(
-            label: 'Continue',
-            onPressed: _busy || _url.trim().isEmpty ? null : _resolve,
-          )
-        else if (_loopback)
-          YsButton.primary(
-            label: 'Add',
-            onPressed: _busy || _token.isEmpty ? null : _submitToken,
-          )
-        else
-          YsButton.primary(
-            label: 'Add',
-            onPressed: _busy || _username.trim().isEmpty || _password.isEmpty
-                ? null
-                : _submitCredentials,
+        if (checking || status != null)
+          div(
+            classes: status == null
+                ? 'hermuse-add-found'
+                : 'hermuse-add-found hermuse-add-found-yes',
+            attributes: {'role': 'status'},
+            [
+              YsDoneBox(done: status != null),
+              span([
+                .text(switch (status) {
+                  null =>
+                    'Looking for Hermes at ${_checking?.authority ?? ''}…',
+                  HermesStatus(
+                    loginMethod: AuthMethod.loopbackToken,
+                    :final version,
+                  ) =>
+                    'Hermes $version · paste its session token '
+                        '(HERMES_DASHBOARD_SESSION_TOKEN).',
+                  HermesStatus(:final version) =>
+                    'Hermes $version · sign in with your dashboard account.',
+                }),
+              ]),
+            ],
+          ),
+        if (status != null) _credentials(status),
+        if (_error case final error?)
+          p(
+            classes: 'hermuse-add-error',
+            attributes: {'role': 'alert'},
+            [.text(error)],
           ),
       ]),
-    ]),
-  ]);
-
-  void _submitCredentials() {
-    final password = _password;
-    if (password.isEmpty || _username.trim().isEmpty) return;
-    unawaited(_save(password: password));
+    ]);
   }
 
-  void _submitToken() {
-    final token = _token;
-    if (token.isEmpty) return;
-    unawaited(_save(token: token));
+  /// The sign-in fields and the save, once the check found a Hermes; they
+  /// come in with the page motion.
+  Component _credentials(HermesStatus status) {
+    void submit() => unawaited(_save());
+    return div(classes: 'hermuse-add-credentials ys-enter', [
+      YsField(
+        label: 'Name',
+        child: YsInputBox(
+          value: _label,
+          onChanged: (v) => setState(() {
+            _label = v;
+            _labelEdited = true;
+          }),
+          onSubmitted: submit,
+          placeholder: status.version,
+          name: 'hermes-name',
+          label: 'Instance name',
+          icon: YsIcon.pencil,
+          autocomplete: 'off',
+        ),
+      ),
+      if (status.loginMethod == AuthMethod.loopbackToken)
+        YsField(
+          label: 'Session token',
+          child: YsInputBox(
+            value: _token,
+            onChanged: (v) => setState(() => _token = v),
+            onSubmitted: submit,
+            placeholder: '••••••••',
+            name: 'hermes-token',
+            label: 'Session token',
+            obscure: true,
+            icon: YsIcon.keyRound,
+            autocomplete: 'off',
+          ),
+        )
+      else ...[
+        YsField(
+          label: 'Username',
+          child: YsInputBox(
+            value: _username,
+            onChanged: (v) => setState(() => _username = v),
+            onSubmitted: submit,
+            placeholder: 'admin',
+            name: 'hermes-username',
+            label: 'Username',
+            icon: YsIcon.user,
+            autocomplete: 'username',
+          ),
+        ),
+        YsField(
+          label: 'Password',
+          child: YsInputBox(
+            value: _password,
+            onChanged: (v) => setState(() => _password = v),
+            onSubmitted: submit,
+            placeholder: '••••••••',
+            name: 'hermes-password',
+            label: 'Password',
+            obscure: true,
+            icon: YsIcon.lock,
+            autocomplete: 'current-password',
+          ),
+        ),
+      ],
+      div(classes: 'hermuse-card-cta', [
+        YsButton.primary(
+          label: _busy ? 'Connecting…' : 'Save and connect',
+          onPressed: _busy ? null : submit,
+        ),
+      ]),
+    ]);
   }
-
-  Component _field({
-    required String label,
-    required String value,
-    required ValueChanged<String> onChanged,
-    required VoidCallback onSubmitted,
-    String? placeholder,
-    InputType type = .text,
-  }) => div(classes: 'hermuse-field', [
-    span(classes: 'hermuse-field-label', [.text(label)]),
-    input<String>(
-      type: type,
-      value: value,
-      classes: 'hermuse-field-input',
-      attributes: {
-        'placeholder': ?placeholder,
-        'aria-label': label,
-        if (type == .password) 'autocomplete': 'current-password',
-      },
-      onInput: onChanged,
-      events: {
-        'keydown': (event) {
-          if ((event as web.KeyboardEvent).key == 'Enter') {
-            event.preventDefault();
-            onSubmitted();
-          }
-        },
-      },
-    ),
-  ]);
 }
