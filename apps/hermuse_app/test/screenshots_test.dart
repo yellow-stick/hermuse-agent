@@ -189,6 +189,7 @@ Future<void> main() async {
       // One field now (URL); Name/Username/Password join after the probe.
       final fields = find.byType(EditableText);
       await tester.enterText(fields.first, 'https://hermes.example.com');
+      await tester.pump();
       await tester.tap(find.widgetWithText(YsButton, 'Check'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Hermes 0.21.5'), findsOneWidget);

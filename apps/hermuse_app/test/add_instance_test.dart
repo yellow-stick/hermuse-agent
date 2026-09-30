@@ -38,15 +38,34 @@ final class _TokenHermes {
   /// Tokens the trial connections were opened with.
   final tried = <String?>[];
 
+  /// How many `/api/status` requests arrived.
+  var probes = 0;
+
+  /// How many of the next probes find no host.
+  var unreachable = 0;
+
   Future<void> pump(WidgetTester tester) async {
+    await open(tester);
+    await check(tester, 'http://127.0.0.1:9119');
+  }
+
+  /// Starts the app and opens "Add a Hermes".
+  Future<void> open(WidgetTester tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           hermuseDatabaseProvider.overrideWithValue(db),
           secretStoreProvider.overrideWithValue(secrets),
           httpClientProvider.overrideWithValue(
-            MockClient(
-              (request) async => switch (request.url.path) {
+            MockClient((request) async {
+              if (request.url.path == '/api/status') {
+                probes++;
+                if (unreachable > 0) {
+                  unreachable--;
+                  throw http.ClientException('Connection refused');
+                }
+              }
+              return switch (request.url.path) {
                 '/api/status' => http.Response(
                   jsonEncode({
                     'version': '0.21.5',
@@ -63,8 +82,8 @@ final class _TokenHermes {
                         _goodToken =>
                   http.Response('{"detail":"Unauthorized"}', 401),
                 _ => http.Response('{}', 200),
-              },
-            ),
+              };
+            }),
           ),
           // No socket opens in widget tests: the trial records the token the
           // `/api/ws` upgrade would carry.
@@ -79,10 +98,12 @@ final class _TokenHermes {
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(YsChoiceCard, 'Connect to a Hermes'));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byType(EditableText).first,
-      'http://127.0.0.1:9119',
-    );
+  }
+
+  /// Types [url] and presses Check.
+  Future<void> check(WidgetTester tester, String url) async {
+    await tester.enterText(find.byType(EditableText).first, url);
+    await tester.pump();
     await tester.tap(find.widgetWithText(YsButton, 'Check'));
     await tester.pumpAndSettle();
   }
@@ -139,6 +160,40 @@ void main() {
 
       expect(find.text('Wrong session token.'), findsOneWidget);
       expect(await hermes.db.loadInstances(), isEmpty);
+    });
+
+    testWidgets('should check nothing until an address is typed', (
+      tester,
+    ) async {
+      final hermes = _TokenHermes();
+      addTearDown(hermes.dispose);
+      await hermes.open(tester);
+
+      await tester.tap(find.widgetWithText(YsButton, 'Check'));
+      await tester.pumpAndSettle();
+      expect(hermes.probes, 0);
+
+      await hermes.check(tester, 'http://127.0.0.1:9119');
+      expect(hermes.probes, 1);
+      expect(find.textContaining('Hermes 0.21.5'), findsOneWidget);
+    });
+
+    testWidgets('should say when nothing answers and check again on retry', (
+      tester,
+    ) async {
+      final hermes = _TokenHermes()..unreachable = 1;
+      addTearDown(hermes.dispose);
+      await hermes.open(tester);
+
+      await hermes.check(tester, 'http://127.0.0.1:9119');
+      expect(find.textContaining('Host unreachable'), findsOneWidget);
+      expect(find.text('Session token'), findsNothing);
+
+      await tester.tap(find.widgetWithText(YsButton, 'Try again'));
+      await tester.pumpAndSettle();
+      expect(hermes.probes, 2);
+      expect(find.textContaining('Host unreachable'), findsNothing);
+      expect(find.text('Session token'), findsOneWidget);
     });
   });
 }

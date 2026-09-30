@@ -306,10 +306,7 @@ final class _RootState extends ConsumerState<_Root> {
         ),
       );
     }
-    return ColoredBox(
-      color: palette.canvasColor,
-      child: const Center(child: YsSpinner(size: 24)),
-    );
+    return LoadingScreen(art: YsArt.chats, label: 'Loading');
   }
 }
 
@@ -347,7 +344,10 @@ final class _InstallRouteState extends State<_InstallRoute> {
         );
       }
       if (snapshot.connectionState != .done) {
-        return const Center(child: YsSpinner(size: 24));
+        return LoadingScreen(
+          art: YsArt.check,
+          label: 'Looking for Hermes Agent',
+        );
       }
       return InstallFlowScreen(
         host: widget.host,
@@ -487,10 +487,7 @@ final class _ChatRoute extends ConsumerWidget {
         ),
       );
     }
-    return ColoredBox(
-      color: palette.canvasColor,
-      child: const Center(child: YsSpinner(size: 24)),
-    );
+    return LoadingScreen(art: YsArt.chats, label: 'Opening the chat');
   }
 
   Widget _adopted(

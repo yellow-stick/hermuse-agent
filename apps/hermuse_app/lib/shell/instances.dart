@@ -553,6 +553,13 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   String? _error;
   var _busy = false;
 
+  /// The address the running check reaches.
+  Uri? _checking;
+
+  /// The last check reached no usable Hermes: the drawing shows it
+  /// unplugged and the check offers to try again.
+  var _probeFailed = false;
+
   @override
   void dispose() {
     _url.dispose();
@@ -564,13 +571,30 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
     super.dispose();
   }
 
+  /// The typed address, when it is a usable http(s) one.
   Uri? get _parsedUrl {
     try {
-      return normalizeBaseUrl(_url.text);
+      final url = normalizeBaseUrl(_url.text);
+      return url.host.isNotEmpty &&
+              (url.isScheme('http') || url.isScheme('https'))
+          ? url
+          : null;
     } on Object {
       return null;
     }
   }
+
+  /// A new address drops what the check said about the previous one.
+  void _urlChanged(String _) => setState(() {
+    if (_status != null) return;
+    _error = null;
+    _probeFailed = false;
+  });
+
+  void _failProbe(String message) => setState(() {
+    _error = message;
+    _probeFailed = true;
+  });
 
   Future<void> _probe() async {
     final url = _parsedUrl;
@@ -581,7 +605,9 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
     setState(() {
       _busy = true;
       _error = null;
+      _probeFailed = false;
       _status = null;
+      _checking = url;
     });
     try {
       final status = await HermesRestClient(
@@ -591,10 +617,9 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       checkSupportedVersion(status.version);
       if (!mounted) return;
       if (status.loginMethod == null) {
-        setState(
-          () => _error =
-              'This Hermes needs a login Hermuse does not support '
-              '(${status.authProviders.join(', ')}).',
+        _failProbe(
+          'This Hermes needs a login Hermuse does not support '
+          '(${status.authProviders.join(', ')}).',
         );
         return;
       }
@@ -604,17 +629,16 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       });
     } on UnsupportedServerVersion catch (e) {
       if (mounted) {
-        setState(
-          () => _error =
-              'Hermes ${e.version} is not supported (needs ${e.supported}.x)',
+        _failProbe(
+          'Hermes ${e.version} is not supported (needs ${e.supported}.x)',
         );
       }
     } on HermesUnreachable {
-      if (mounted) setState(() => _error = 'Host unreachable: $url');
+      if (mounted) _failProbe('Host unreachable: $url');
     } on HermesException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (mounted) _failProbe(e.message);
     } on Object catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) _failProbe('$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -706,121 +730,245 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final status = _status;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: YsLayout.dialogNarrow),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: palette.paperColor,
-            borderRadius: BorderRadius.circular(YsRadius.bubble),
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Add a Hermes',
-                        style: YsType.title.flutter.copyWith(
-                          color: palette.contentColor,
+    final checking = _busy && status == null;
+    final check = checking
+        ? 'Checking…'
+        : _probeFailed
+        ? 'Try again'
+        : 'Check';
+    final onCheck = _busy || _parsedUrl == null ? null : _probe;
+    return YsEntrance(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: YsLayout.dialogNarrow),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.paperColor,
+              borderRadius: BorderRadius.circular(YsRadius.bubble),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Reaching out while a check or a connection runs,
+                      // unplugged when the check found no usable Hermes.
+                      YsHover(
+                        builder: (context, hovered) => YsArtView(
+                          _probeFailed ? YsArt.unreachable : YsArt.remote,
+                          size: YsLayout.artHeader,
+                          active: hovered,
+                          busy: _busy,
                         ),
                       ),
-                    ),
-                    YsButton.icon(
-                      icon: YsIcon.close,
-                      onPressed: widget.onCancel,
-                      semanticLabel: 'Cancel',
-                      tooltip: 'Cancel',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _Field(
-                  label: 'Instance URL',
-                  controller: _url,
-                  placeholder: 'https://hermes.example.com',
-                  semanticLabel: 'Instance URL',
-                  onSubmitted: (_) => _probe(),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: YsButton.neutral(
-                    label: _busy && status == null ? 'Checking…' : 'Check',
-                    onPressed: _busy ? null : _probe,
+                      const SizedBox(width: YsSpace.lg),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Semantics(
+                              header: true,
+                              child: Text(
+                                'Add a Hermes',
+                                style: YsType.title.flutter.copyWith(
+                                  color: palette.contentColor,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: YsSpace.xs),
+                            Text(
+                              'Paste the web address of your Hermes '
+                              'dashboard.',
+                              style: YsType.small.flutter.copyWith(
+                                color: palette.contentMutedColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      YsButton.icon(
+                        icon: YsIcon.close,
+                        onPressed: widget.onCancel,
+                        semanticLabel: 'Cancel',
+                        tooltip: 'Cancel',
+                      ),
+                    ],
                   ),
-                ),
-                if (status != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    // Web add-instance wording: no "no login" claim, since
-                    // a gateless `hermes serve` still wants its token.
-                    status.loginMethod == AuthMethod.loopbackToken
-                        ? 'Hermes ${status.version} · paste its session token '
-                              '(HERMES_DASHBOARD_SESSION_TOKEN).'
-                        : 'Hermes ${status.version} · sign in with your '
-                              'dashboard account.',
-                    style: YsType.small.flutter.copyWith(
-                      color: palette.successColor,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: YsSpace.lg),
                   _Field(
-                    label: 'Name',
-                    controller: _label,
-                    placeholder: status.version,
-                    semanticLabel: 'Instance name',
-                    onChanged: (_) => _labelEdited.value = true,
+                    label: 'Instance URL',
+                    controller: _url,
+                    placeholder: 'https://hermes.example.com',
+                    semanticLabel: 'Instance URL',
+                    icon: YsIcon.link,
+                    url: true,
+                    autofocus: true,
+                    onChanged: _urlChanged,
+                    onSubmitted: (_) => _probe(),
                   ),
-                  if (status.loginMethod == AuthMethod.loopbackToken) ...[
-                    const SizedBox(height: 12),
-                    _Field(
-                      label: 'Session token',
-                      controller: _token,
-                      placeholder: '••••••••',
-                      semanticLabel: 'Session token',
-                      obscure: true,
-                      onSubmitted: (_) => _save(),
-                    ),
-                  ] else ...[
-                    const SizedBox(height: 12),
-                    _Field(
-                      label: 'Username',
-                      controller: _username,
-                      placeholder: 'admin',
-                      semanticLabel: 'Username',
-                    ),
-                    const SizedBox(height: 12),
-                    _Field(
-                      label: 'Password',
-                      controller: _password,
-                      placeholder: '••••••••',
-                      semanticLabel: 'Password',
-                      obscure: true,
-                      onSubmitted: (_) => _save(),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    // The step's main action until a Hermes answers.
+                    child: status == null
+                        ? YsButton.primary(label: check, onPressed: onCheck)
+                        : YsButton.neutral(label: check, onPressed: onCheck),
+                  ),
+                  if (checking || status != null) ...[
+                    const SizedBox(height: YsSpace.md),
+                    _CheckLine(
+                      found: status != null,
+                      // Web add-instance wording: no "no login" claim, since
+                      // a gateless `hermes serve` still wants its token.
+                      text: switch (status) {
+                        null =>
+                          'Looking for Hermes at '
+                              '${_checking?.authority ?? ''}…',
+                        HermesStatus(
+                          loginMethod: AuthMethod.loopbackToken,
+                          :final version,
+                        ) =>
+                          'Hermes $version · paste its session token '
+                              '(HERMES_DASHBOARD_SESSION_TOKEN).',
+                        HermesStatus(:final version) =>
+                          'Hermes $version · sign in with your dashboard '
+                              'account.',
+                      },
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  YsButton.primary(
-                    label: _busy ? 'Connecting…' : 'Save and connect',
-                    onPressed: _busy ? null : _save,
-                  ),
-                ],
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    _error!,
-                    style: YsType.body.flutter.copyWith(
-                      color: palette.errorColor,
+                  YsResize(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (status != null)
+                          YsEntrance(child: _credentials(status)),
+                        if (_error case final error?) ...[
+                          const SizedBox(height: YsSpace.md),
+                          _ErrorNotice(error),
+                        ],
+                      ],
                     ),
                   ),
                 ],
-              ],
+              ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The sign-in fields and the save, once the check found a Hermes.
+  Widget _credentials(HermesStatus status) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const SizedBox(height: 12),
+      _Field(
+        label: 'Name',
+        controller: _label,
+        placeholder: status.version,
+        semanticLabel: 'Instance name',
+        icon: YsIcon.pencil,
+        onChanged: (_) => _labelEdited.value = true,
+      ),
+      if (status.loginMethod == AuthMethod.loopbackToken) ...[
+        const SizedBox(height: 12),
+        _Field(
+          label: 'Session token',
+          controller: _token,
+          placeholder: '••••••••',
+          semanticLabel: 'Session token',
+          icon: YsIcon.keyRound,
+          obscure: true,
+          onSubmitted: (_) => _save(),
+        ),
+      ] else ...[
+        const SizedBox(height: 12),
+        _Field(
+          label: 'Username',
+          controller: _username,
+          placeholder: 'admin',
+          semanticLabel: 'Username',
+          icon: YsIcon.user,
+        ),
+        const SizedBox(height: 12),
+        _Field(
+          label: 'Password',
+          controller: _password,
+          placeholder: '••••••••',
+          semanticLabel: 'Password',
+          icon: YsIcon.lock,
+          obscure: true,
+          onSubmitted: (_) => _save(),
+        ),
+      ],
+      const SizedBox(height: 16),
+      YsButton.primary(
+        label: _busy ? 'Connecting…' : 'Save and connect',
+        onPressed: _busy ? null : _save,
+      ),
+    ],
+  );
+}
+
+/// What the check says: an empty box while it runs, ticked with sparks the
+/// moment a Hermes answers.
+final class _CheckLine extends StatelessWidget {
+  const _CheckLine({required this.text, required this.found});
+
+  final String text;
+  final bool found;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        children: [
+          YsDoneBox(done: found),
+          const SizedBox(width: YsSpace.sm + YsSpace.xxs),
+          Expanded(
+            child: Text(
+              text,
+              style: YsType.small.flutter.copyWith(
+                color: found ? palette.successColor : palette.contentMutedColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A failure of the dialog, on a faint error wash.
+final class _ErrorNotice extends StatelessWidget {
+  const _ErrorNotice(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.errorWashColor,
+          borderRadius: BorderRadius.circular(YsRadius.row),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(YsSpace.md),
+          child: Text(
+            text,
+            style: YsType.small.flutter.copyWith(color: palette.errorColor),
           ),
         ),
       ),
@@ -834,7 +982,10 @@ final class _Field extends StatelessWidget {
     required this.controller,
     required this.placeholder,
     required this.semanticLabel,
+    required this.icon,
     this.obscure = false,
+    this.url = false,
+    this.autofocus = false,
     this.onChanged,
     this.onSubmitted,
   });
@@ -843,7 +994,10 @@ final class _Field extends StatelessWidget {
   final TextEditingController controller;
   final String placeholder;
   final String semanticLabel;
+  final YsIcon icon;
   final bool obscure;
+  final bool url;
+  final bool autofocus;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
 
@@ -854,7 +1008,10 @@ final class _Field extends StatelessWidget {
       controller: controller,
       placeholder: placeholder,
       semanticLabel: semanticLabel,
+      icon: icon,
       obscure: obscure,
+      url: url,
+      autofocus: autofocus,
       onChanged: onChanged,
       onSubmitted: onSubmitted,
     ),

@@ -46,28 +46,43 @@ final class YsDialogCard extends StatelessWidget {
   }
 }
 
-/// Card icon: 56 primary disc (web `.hermuse-card-icon`).
-final class YsDialogIcon extends StatelessWidget {
-  const YsDialogIcon(this.icon, {super.key});
+/// Card illustration: [art] draws in when the card shows, plays again under
+/// the pointer and loops while [busy] (work under way). Web parity:
+/// `HermuseCardArt`.
+final class YsDialogArt extends StatelessWidget {
+  const YsDialogArt(this.art, {this.busy = false, super.key});
 
-  final YsIcon icon;
+  final YsArt art;
+  final bool busy;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Center(
-      child: Container(
-        width: 56,
-        height: 56,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: palette.primaryColor,
-          shape: BoxShape.circle,
-        ),
-        child: YsIconWidget(icon, size: 28, color: palette.primaryContentColor),
+  Widget build(BuildContext context) => Center(
+    child: YsHover(
+      builder: (context, hovered) =>
+          YsArtView(art, size: YsLayout.artStep, active: hovered, busy: busy),
+    ),
+  );
+}
+
+/// Full-screen wait: [art] loops in the middle of the canvas until what
+/// the screen waits for arrives; [label] is announced.
+final class LoadingScreen extends StatelessWidget {
+  const LoadingScreen({required this.art, required this.label, super.key});
+
+  final YsArt art;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: YsTheme.of(context).canvasColor,
+    child: Center(
+      child: Semantics(
+        label: label,
+        liveRegion: true,
+        child: YsDialogArt(art, busy: true),
       ),
-    );
-  }
+    ),
+  );
 }
 
 /// Full-width primary call to action, 40 high (web `.hermuse-card-cta`).
@@ -281,17 +296,10 @@ final class KeystoreErrorScreen extends StatelessWidget {
   final Object error;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return YsDialogCard(
+  Widget build(BuildContext context) => YsEntrance(
+    child: YsDialogCard(
       children: [
-        Center(
-          child: YsIconWidget(
-            YsIcon.approvals,
-            size: 32,
-            color: palette.errorColor,
-          ),
-        ),
+        YsDialogArt(YsArt.unreachable),
         const YsDialogTitle('Secure storage unavailable'),
         YsDialogBody(
           'Hermuse keeps your Hermes credentials in the system keyring, '
@@ -299,8 +307,8 @@ final class KeystoreErrorScreen extends StatelessWidget {
           'Unlock the system keyring, then restart Hermuse.\n\n$error',
         ),
       ],
-    );
-  }
+    ),
+  );
 }
 
 /// Something went wrong loading the chat: registry, connection or resume.
@@ -318,20 +326,26 @@ final class ChatErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return YsDialogCard(
-      children: [
-        const YsDialogTitle('Could not open the chat'),
-        YsDialogBody(describeError(error)),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            YsButton.primary(label: 'Retry', onPressed: onRetry),
-            const SizedBox(width: 12),
-            YsButton.neutral(label: 'Instances', onPressed: onManageInstances),
-          ],
-        ),
-      ],
+    return YsEntrance(
+      child: YsDialogCard(
+        children: [
+          YsDialogArt(YsArt.unreachable),
+          const YsDialogTitle('Could not open the chat'),
+          YsDialogBody(describeError(error)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              YsButton.primary(label: 'Retry', onPressed: onRetry),
+              const SizedBox(width: 12),
+              YsButton.neutral(
+                label: 'Instances',
+                onPressed: onManageInstances,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

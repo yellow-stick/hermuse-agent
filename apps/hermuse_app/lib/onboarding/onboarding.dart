@@ -41,15 +41,19 @@ final class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     final onboarding = ref.watch(onboardingProvider(widget.instance.id));
     final state = onboarding.value;
     if (onboarding.isLoading && state == null) {
-      return const YsDialogCard(
+      return YsDialogCard(
         narrow: true,
-        children: [YsDialogBody('Checking this Hermes…')],
+        children: [
+          YsDialogArt(YsArt.check, busy: true),
+          const YsDialogBody('Checking this Hermes…'),
+        ],
       );
     }
     if (state == null) {
       return YsDialogCard(
         narrow: true,
         children: [
+          YsDialogArt(YsArt.unreachable),
           const YsDialogTitle('Setup unavailable'),
           YsDialogBody('${onboarding.error}'),
           Wrap(
