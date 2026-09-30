@@ -290,6 +290,14 @@ Future<void> _requirePlugin(Ref ref, String instanceId) async {
 const hermusePluginIdentifier =
     'yellow-stick/hermuse-agent/hermes-plugin/hermuse';
 
+/// Version of the Hermuse plugin these apps are built with: the desktop app
+/// bundles it (`plugin.yaml`), and a remote Hermes running an older one is
+/// offered the update.
+const hermusePluginVersion = '0.2.0';
+
+/// Hermes' agent-plugin management API.
+const _pluginsApi = '/api/dashboard/agent-plugins';
+
 /// One finding of the Hermes plugin security scan: `{pattern_id, severity,
 /// category, file, line, description}`.
 final class PluginScanFinding {
@@ -321,17 +329,19 @@ final class PluginScanFinding {
       '$severity: $file${line == null ? '' : ':$line'} — $description';
 }
 
-/// Outcome of [installHermusePlugin].
+/// Outcome of [installHermusePlugin] and [mountHermusePlugin].
 sealed class PluginInstallResult {
   const PluginInstallResult();
 }
 
-/// The plugin answers, its schedule is on and the computer setup ran.
+/// The plugin answers; its schedule is on and the computer setup ran,
+/// unless only the plugin was installed ([mountHermusePlugin]).
 final class PluginInstalled extends PluginInstallResult {
-  const PluginInstalled(this.computer);
+  const PluginInstalled([this.computer]);
 
-  /// Result of `POST /computer/setup` (Docker may still be missing).
-  final ComputerStatus computer;
+  /// Result of `POST /computer/setup` (Docker may still be missing); null
+  /// when only the plugin was installed.
+  final ComputerStatus? computer;
 }
 
 /// Hermes installed and enabled the plugin but its routes stay unmounted
@@ -360,8 +370,26 @@ final class PluginInstallFailed extends PluginInstallResult {
   final List<PluginScanFinding> findings;
 }
 
-/// Installs the Hermuse plugin on a remote Hermes through its dashboard,
-/// then turns its schedule on and sets the computer up:
+/// Installs the Hermuse plugin on a remote Hermes through its dashboard
+/// ([mountHermusePlugin]), then turns its schedule on and sets the computer
+/// up.
+Future<PluginInstallResult> installHermusePlugin(
+  HermesRestClient rest, {
+  bool force = false,
+  Duration mountTimeout = const Duration(seconds: 10),
+  Duration pollInterval = const Duration(milliseconds: 500),
+}) async {
+  final mounted = await mountHermusePlugin(
+    rest,
+    force: force,
+    mountTimeout: mountTimeout,
+    pollInterval: pollInterval,
+  );
+  return mounted is PluginInstalled ? _finish(rest) : mounted;
+}
+
+/// Installs or turns on the Hermuse plugin on a remote Hermes through its
+/// dashboard and waits for its routes, nothing more:
 ///
 /// 1. `GET /files` answers → the plugin already runs;
 /// 2. else `enable` it (installed but disabled), then wait for its routes;
@@ -371,68 +399,88 @@ final class PluginInstallFailed extends PluginInstallResult {
 /// Hermes rates the plugin "caution" (it installs Docker with sudo): the
 /// first install returns [PluginNeedsConsent]; call again with [force] once
 /// the user allowed it (steps 1–2 are skipped then).
-Future<PluginInstallResult> installHermusePlugin(
+Future<PluginInstallResult> mountHermusePlugin(
   HermesRestClient rest, {
   bool force = false,
   Duration mountTimeout = const Duration(seconds: 10),
   Duration pollInterval = const Duration(milliseconds: 500),
 }) async {
-  const base = '/api/dashboard/agent-plugins';
   if (!force) {
     switch (await _probe(rest)) {
       case true:
-        return _finish(rest);
+        return const PluginInstalled();
       case final PluginInstallFailed failed:
         return failed;
     }
     var known = true;
     try {
-      final body = await rest.postJson('$base/hermuse/enable', const {});
+      final body = await rest.postJson('$_pluginsApi/hermuse/enable', const {});
       if (body['ok'] == false) {
         return PluginInstallFailed('${body['error'] ?? 'Enable failed.'}');
       }
     } on HermesHttpError catch (e) {
       // "Plugin 'hermuse' is not installed or bundled."
       if (e.statusCode != 400 || !e.message.contains('not installed')) {
-        return PluginInstallFailed(_reason(e));
+        return PluginInstallFailed(hermesReason(e));
       }
       known = false;
     } on HermesException catch (e) {
-      return PluginInstallFailed(_reason(e));
+      return PluginInstallFailed(hermesReason(e));
     }
-    if (known) return _mountThenFinish(rest, mountTimeout, pollInterval);
+    if (known) return _awaitRoutes(rest, mountTimeout, pollInterval);
   }
 
+  return await _install(rest, force: force) ??
+      await _awaitRoutes(rest, mountTimeout, pollInterval);
+}
+
+/// Replaces the Hermuse plugin of a remote Hermes with the published one:
+/// Hermes installs it again from [hermusePluginIdentifier] (`force` replaces
+/// the installed copy). The dashboard keeps serving the plugin it loaded
+/// until it restarts, so success is [PluginNeedsDashboardRestart].
+Future<PluginInstallResult> updateHermusePlugin(HermesRestClient rest) async =>
+    await _install(rest, force: true) ?? const PluginNeedsDashboardRestart();
+
+/// `POST /install`: null once Hermes installed the plugin, else why not.
+///
+/// Every failure returns its own result: dart2js once compiled a nullable
+/// local assigned only in failure branches as set on success too.
+Future<PluginInstallResult?> _install(
+  HermesRestClient rest, {
+  required bool force,
+}) async {
   // Hermes answers a failed mutation with 400 `{detail}` (the scan findings
   // are dropped); a 200 `{ok: false, …}` carries them.
-  String? error;
-  var findings = const <PluginScanFinding>[];
   try {
-    final body = await rest.postJson('$base/install', {
+    final body = await rest.postJson('$_pluginsApi/install', {
       'identifier': hermusePluginIdentifier,
       'enable': true,
       'force': force,
     });
-    if (body['ok'] == false) {
-      error = '${body['error'] ?? 'Install failed.'}';
-      findings = [
+    if (body['ok'] != false) return null;
+    return _refused(
+      '${body['error'] ?? 'Install failed.'}',
+      force: force,
+      findings: [
         for (final f in body['scan_findings'] as List? ?? const [])
           if (f is Map<String, Object?>) PluginScanFinding.fromJson(f),
-      ];
-    }
+      ],
+    );
   } on HermesException catch (e) {
-    error = _reason(e);
+    return _refused(hermesReason(e), force: force);
   }
-  if (error != null) {
-    // "Requires confirmation (caution verdict, N findings)"; a dangerous
-    // verdict reads "dangerous verdict" and `force` cannot override it.
-    if (!force && error.contains('caution verdict')) {
-      return PluginNeedsConsent(error);
-    }
-    return PluginInstallFailed(error, findings: findings);
-  }
-  return _mountThenFinish(rest, mountTimeout, pollInterval);
 }
+
+/// An install Hermes refused: "Requires confirmation (caution verdict, N
+/// findings)" asks for consent unless it was [force]d; a dangerous verdict
+/// reads "dangerous verdict" and `force` cannot override it.
+PluginInstallResult _refused(
+  String error, {
+  required bool force,
+  List<PluginScanFinding> findings = const [],
+}) => !force && error.contains('caution verdict')
+    ? PluginNeedsConsent(error)
+    : PluginInstallFailed(error, findings: findings);
 
 /// `GET /files`: `true` when the plugin routes answer, `false` on 404.
 Future<Object> _probe(HermesRestClient rest) async {
@@ -441,14 +489,14 @@ Future<Object> _probe(HermesRestClient rest) async {
     return true;
   } on HermesHttpError catch (e) {
     if (e.statusCode == 404) return false;
-    return PluginInstallFailed(_reason(e));
+    return PluginInstallFailed(hermesReason(e));
   } on HermesException catch (e) {
-    return PluginInstallFailed(_reason(e));
+    return PluginInstallFailed(hermesReason(e));
   }
 }
 
-/// Waits for the plugin routes to mount, then [_finish]es.
-Future<PluginInstallResult> _mountThenFinish(
+/// Waits for the plugin routes to mount.
+Future<PluginInstallResult> _awaitRoutes(
   HermesRestClient rest,
   Duration mountTimeout,
   Duration pollInterval,
@@ -457,7 +505,7 @@ Future<PluginInstallResult> _mountThenFinish(
   while (true) {
     switch (await _probe(rest)) {
       case true:
-        return _finish(rest);
+        return const PluginInstalled();
       case final PluginInstallFailed failed:
         return failed;
     }
@@ -475,7 +523,7 @@ Future<PluginInstallResult> _finish(HermesRestClient rest) async {
   } on HermesException catch (e) {
     return PluginInstallFailed(
       'Hermuse is installed but its schedule could not be enabled: '
-      '${_reason(e)}',
+      '${hermesReason(e)}',
     );
   }
   try {
@@ -483,14 +531,14 @@ Future<PluginInstallResult> _finish(HermesRestClient rest) async {
   } on HermesException catch (e) {
     // The plugin works; the computer viewer retries the setup.
     return PluginInstalled(
-      ComputerStatus(state: ComputerState.error, detail: _reason(e)),
+      ComputerStatus(state: ComputerState.error, detail: hermesReason(e)),
     );
   }
 }
 
 /// The server's words: [HermesHttpError] messages are
 /// `METHOD path: detail`.
-String _reason(HermesException e) => switch (e) {
+String hermesReason(HermesException e) => switch (e) {
   HermesHttpError(:final message) => switch (message.indexOf(': ')) {
     -1 => message,
     final i => message.substring(i + 2),

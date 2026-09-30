@@ -77,7 +77,7 @@ void main() {
     final result = await run();
 
     expect(calls, [files, cron, setup]);
-    final computer = (result as PluginInstalled).computer;
+    final computer = (result as PluginInstalled).computer!;
     expect(computer.state, ComputerState.dockerMissing);
     expect(computer.detail, endsWith('usermod -aG docker admin'));
   });
@@ -91,7 +91,7 @@ void main() {
     final result = await run();
 
     expect(calls, [files, enable, files, files, cron, setup]);
-    expect((result as PluginInstalled).computer.state, ComputerState.building);
+    expect((result as PluginInstalled).computer!.state, ComputerState.building);
   });
 
   test('an unknown plugin is installed, then its routes awaited', () async {
@@ -237,7 +237,7 @@ void main() {
     routes[cron] = (_) => json({'ok': true});
     routes[setup] = (_) => json({'detail': 'config: 1'}, 500);
 
-    final computer = ((await run()) as PluginInstalled).computer;
+    final computer = ((await run()) as PluginInstalled).computer!;
 
     expect(
       (computer.state, computer.detail),

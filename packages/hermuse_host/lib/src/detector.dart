@@ -3,22 +3,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:hermes_client/hermes_client.dart'
+    show hermesVersionOf, hermesVersionSupported, supportedHermesVersions;
+
 import 'host_environment.dart';
 import 'install_journal.dart';
 import 'managed_runtime.dart';
-
-/// Hermes Agent releases this build works with, as a version specifier.
-const supportedHermesVersions = '>=0.21.5 <0.22';
-
-/// First `X.Y.Z` release in a `--version` line, plus what follows it
-/// (`rc1`, `.post1`, `+local`, …).
-final _releasePattern = RegExp(r'(\d+)\.(\d+)\.(\d+)([0-9A-Za-z.+-]*)');
-
-/// A pre-release or development suffix: sorts before the release itself.
-final _preReleasePattern = RegExp(
-  r'^[-.]?(?:a|alpha|b|beta|c|rc|pre|preview|dev)\d*',
-  caseSensitive: false,
-);
 
 /// An existing Hermes install found on this machine.
 final class DetectedHermes {
@@ -56,20 +46,11 @@ final class DetectedHermes {
 
   /// The release [version] names (`0.21.5`, `0.22.0rc1`, …), or null when
   /// the line carries none.
-  String? get semver => _releasePattern.firstMatch(version)?.group(0);
+  String? get semver => hermesVersionOf(version);
 
-  /// Whether [semver] is within [supportedHermesVersions]. A pre-release of
-  /// 0.21.5 is below the floor and none of 0.22 is admitted (PEP 440). An
-  /// incompatible install is reported to the user and never modified.
-  bool get compatible {
-    final match = _releasePattern.firstMatch(version);
-    if (match == null) return false;
-    final major = int.tryParse(match[1]!);
-    final minor = int.tryParse(match[2]!);
-    final patch = int.tryParse(match[3]!);
-    if (major != 0 || minor != 21 || patch == null || patch < 5) return false;
-    return patch > 5 || !_preReleasePattern.hasMatch(match[4]!);
-  }
+  /// Whether [semver] is within [supportedHermesVersions]. An incompatible
+  /// install is reported to the user and never modified.
+  bool get compatible => hermesVersionSupported(version);
 
   /// Entries a child process of this install needs over [hostEnvironment]
   /// ([host] defaults to it).

@@ -61,6 +61,39 @@ void checkSupportedVersion(String version) {
   }
 }
 
+/// Hermes Agent releases Hermuse works with (its plugin's `requires_hermes`),
+/// as a version specifier.
+const supportedHermesVersions = '>=0.21.5 <0.22';
+
+/// First `X.Y.Z` release in a text, plus what follows it (`rc1`, `.post1`,
+/// `+local`, …).
+final _releasePattern = RegExp(r'(\d+)\.(\d+)\.(\d+)([0-9A-Za-z.+-]*)');
+
+/// A pre-release or development suffix: sorts before the release itself.
+final _preReleasePattern = RegExp(
+  r'^[-.]?(?:a|alpha|b|beta|c|rc|pre|preview|dev)\d*',
+  caseSensitive: false,
+);
+
+/// The release [text] names (`0.21.5`, `0.22.0rc1`, …), or null when it
+/// names none. [text] is a bare version (`/api/status`) or a `--version`
+/// line (`Hermes Agent v0.21.5 (2026.9.24) · upstream 130b8f2c`).
+String? hermesVersionOf(String text) =>
+    _releasePattern.firstMatch(text)?.group(0);
+
+/// Whether the release [text] names is within [supportedHermesVersions]. A
+/// pre-release of 0.21.5 is below the floor and none of 0.22 is admitted
+/// (PEP 440).
+bool hermesVersionSupported(String text) {
+  final match = _releasePattern.firstMatch(text);
+  if (match == null) return false;
+  final major = int.tryParse(match[1]!);
+  final minor = int.tryParse(match[2]!);
+  final patch = int.tryParse(match[3]!);
+  if (major != 0 || minor != 21 || patch == null || patch < 5) return false;
+  return patch > 5 || !_preReleasePattern.hasMatch(match[4]!);
+}
+
 /// Minimal typed client of the dashboard REST API.
 ///
 /// Authentication is either the loopback [sessionToken] header or the cookie

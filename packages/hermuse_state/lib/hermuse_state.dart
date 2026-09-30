@@ -8,3 +8,4 @@ export 'src/model_tiers.dart';
 export 'src/onboarding.dart';
 export 'src/product.dart';
 export 'src/providers.dart';
+export 'src/remote_setup.dart';
