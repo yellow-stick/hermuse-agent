@@ -31,6 +31,7 @@ import 'package:yellow_stick_ui_web/src/art.dart' as _art;
 import 'package:yellow_stick_ui_web/src/avatar.dart' as _avatar;
 import 'package:yellow_stick_ui_web/src/burst.dart' as _burst;
 import 'package:yellow_stick_ui_web/src/button.dart' as _button;
+import 'package:yellow_stick_ui_web/src/checklist.dart' as _checklist;
 import 'package:yellow_stick_ui_web/src/choice_card.dart' as _choice_card;
 import 'package:yellow_stick_ui_web/src/dialog.dart' as _dialog;
 import 'package:yellow_stick_ui_web/src/done_box.dart' as _done_box;
@@ -41,6 +42,7 @@ import 'package:yellow_stick_ui_web/src/motion.dart' as _motion;
 import 'package:yellow_stick_ui_web/src/motion_icon.dart' as _motion_icon;
 import 'package:yellow_stick_ui_web/src/ping.dart' as _ping;
 import 'package:yellow_stick_ui_web/src/pressable.dart' as _pressable;
+import 'package:yellow_stick_ui_web/src/progress_ring.dart' as _progress_ring;
 import 'package:yellow_stick_ui_web/src/segmented_tabs.dart' as _segmented_tabs;
 import 'package:yellow_stick_ui_web/src/skeleton.dart' as _skeleton;
 import 'package:yellow_stick_ui_web/src/stepper.dart' as _stepper;
@@ -109,6 +111,8 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._button.YsFilledButton.styles,
     ..._button.YsIconButton.styles,
     ..._button.YsPillButton.styles,
+    ..._checklist.YsChecklist.styles,
+    ..._checklist.YsStepBadge.styles,
     ..._choice_card.YsChoiceCard.styles,
     ..._dialog.YsDialog.styles,
     ..._done_box.YsDoneBox.styles,
@@ -121,6 +125,7 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._motion_icon.YsMotionIconView.styles,
     ..._ping.YsPing.styles,
     ..._pressable.YsPressable.resetStyles,
+    ..._progress_ring.YsProgressRing.styles,
     ..._segmented_tabs.YsSegmentedTabs.styles,
     ..._skeleton.YsSkeleton.styles,
     ..._stepper.YsStepper.styles,
