@@ -1,6 +1,10 @@
 <p align="center">
-  <img src="docs/readme/banner.png" alt="Yellow Stick — Hermuse Agent. Your personal agent. It takes things off your plate." width="100%">
+  <img src="docs/readme/banner.webp" alt="Hermuse at work: a plush figure types at her desk while windows open around her, one per task: hotels in Tokyo in a browser, a calendar, a flight search on the agent's Linux desktop, a hotel booking and a backpack search. Before booking, it asks her to approve; she does, and the booking is done." width="100%">
 </p>
+
+<h1 align="center">Hermuse Agent</h1>
+
+<p align="center">Your personal agent. It takes things off your plate.</p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-F5C21B?style=flat-square&labelColor=181819"></a>
