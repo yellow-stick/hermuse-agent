@@ -271,6 +271,13 @@ exempt).
 - `flutter_test` (Flutter 3.47.5) pins `test_api` 0.7.12, so pure Dart packages
   resolve `test` 1.31.x.
 
+## Contributing
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md)
+for the pull request flow, the checks each change goes through and how
+releases are cut. Report vulnerabilities privately, as described in
+[SECURITY.md](SECURITY.md).
+
 ## License
 
 Hermuse Agent is licensed under the
