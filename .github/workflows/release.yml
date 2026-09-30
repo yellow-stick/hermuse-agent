@@ -1,6 +1,6 @@
-# Release of Hermuse Agent, one graph and one draft for every platform:
-# Linux .deb + AppImage (amd64, from one Flutter bundle), macOS .dmg (arm64),
-# Windows Setup.exe (x64).
+# Release of Hermuse Agent, one graph for every platform: Linux .deb +
+# AppImage (amd64, from one Flutter bundle), macOS .dmg (arm64), Windows
+# Setup.exe (x64).
 #
 #   metadata -> checks -> package (Linux) ----> smoke + compat (QEMU guests, containers) -+
 #                      -> package-macos ------> smoke-macos (on the runner) -------------+-> smoke-report
@@ -8,22 +8,47 @@
 #   package + package-macos + package-windows -> assemble -> attest (tag runs of the canonical repository)
 #   smoke-report + assemble + attest -> release-approval -> publish
 #
-# Pull requests: version read from apps/hermuse_app/pubspec.yaml, checks,
-# unsigned builds, packages, the `fresh` smoke legs (both Linux guests and
-# formats, the macOS and Windows runners), the container checks and the
-# assembly, without secrets and without publication. Dispatch without a tag:
-# a test run of the dispatched branch over every leg, or those matching `legs`
-# (the macOS/Windows package jobs only run with their leg); never published.
-# Tag push (hermuse/v*) or dispatch with an existing tag: the tag is resolved to
-# its commit, must name exactly the pubspec version, and that exact commit is
-# built. In the canonical repository the macOS and Windows package jobs take
-# their signing secrets from the `release` environment (so its reviewers
-# approve them first); a platform without them builds unsigned and records
-# why. Publication needs the `release` environment again, then creates a DRAFT
-# with the tested bytes of every platform and flips it public only when every
-# proof exists: no failed or missing smoke result, the evidence of each manual
-# gate, the real conversation with the capped test account, and signed macOS
-# (notarized, stapled) and Windows artifacts.
+# What runs, by event (legs listed in packaging/smoke/proof_summary.py):
+# - draft pull request: nothing, every job is skipped; marking it ready for
+#   review starts the run;
+# - pull request ready for review: checks, the unsigned builds and packages of
+#   the three platforms and their assembly, without smoke legs, secrets or
+#   publication; a new push cancels the run it supersedes;
+# - merge group (merge queue): the same, plus the `queue` legs (the fresh
+#   scenario of both Linux guests and formats, the container checks, the macOS
+#   and Windows runners) and the smoke report;
+# - pull request or merge group that only touches documentation (docs/ and
+#   Markdown, except under hermes-plugin/ and the app's copy of it, whose
+#   README and skill ship in the app): nothing is built;
+# - nightly on main (02:30 UTC): the `full` legs, when main moved since the
+#   last successful nightly;
+# - dispatch without a tag: a test run of the dispatched branch over every
+#   leg, or those matching `legs` (the macOS/Windows package jobs only run with
+#   their leg);
+# - tag push (hermuse/v*), or dispatch on that tag with `tag` set to it: the
+#   release below, the only run that publishes.
+#
+# Required checks of main: Checks and Build and package (Linux|macOS|Windows)
+# on pull requests and merge groups, Smoke report in merge groups (skipped on
+# pull requests). A job skipped by its own condition reports success; Checks
+# runs and fails when Metadata did not succeed, so an upstream failure never
+# passes as a skipped check.
+#
+# Release: the tag is resolved to its commit, must name exactly the pubspec
+# version, and that exact commit runs the `full` legs. In the canonical
+# repository the macOS and Windows package jobs take their signing secrets from
+# the `signing` environment (no reviewer: it deploys from hermuse/v* tags only,
+# which only administrators create); a platform without them builds unsigned
+# and records why. The one approval of a release is the `release` environment
+# (required reviewer; it holds the model test account): Release approval runs
+# the real conversation, then Publish creates a public PRE-RELEASE with the
+# tested bytes of every platform, never marked latest. A failed or missing
+# automated result blocks the publication. What the run could not prove (no
+# model test account, unsigned macOS/Windows artifacts, manual gates, the
+# checks outside CI) is listed under "Not yet proven" in the release notes;
+# once they are checked, promote it by hand:
+# `gh release edit <tag> --prerelease=false --latest`. A published asset is
+# never replaced.
 #
 # Actions are pinned by commit (tag in the trailing comment, resolved
 # 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
@@ -35,21 +60,17 @@ name: Release
 
 on:
   pull_request:
-    paths:
-      - apps/**
-      - packages/**
-      - hermes-plugin/**
-      - packaging/**
-      - tool/release/**
-      - pubspec.yaml
-      - pubspec.lock
-      - .github/workflows/release.yml
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    - cron: '30 2 * * *'
   push:
     tags: ['hermuse/v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag (hermuse/vX.Y.Z or hermuse/vX.Y.Z-rc.N) to build and publish; empty = test run of this branch, never published
+        description: Existing release tag (hermuse/vX.Y.Z or hermuse/vX.Y.Z-rc.N) to build and publish, dispatched on that tag; empty = test run of this branch, never published
         required: false
         type: string
       legs:
@@ -61,7 +82,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.tag || github.ref }}
+  group: release-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.tag == '') }}
 
 env:
@@ -70,9 +91,15 @@ env:
 jobs:
   metadata:
     name: Metadata
+    # Draft pull requests run nothing; `ready_for_review` starts their run.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # the last successful nightly
     outputs:
+      builds: ${{ steps.scope.outputs.builds }}
       release: ${{ steps.source.outputs.release }}
       publishable: ${{ steps.source.outputs.publishable }}
       commit: ${{ steps.source.outputs.commit }}
@@ -88,7 +115,7 @@ jobs:
       dmg_file: ${{ steps.meta.outputs.dmg_file }}
       windows_setup_file: ${{ steps.meta.outputs.windows_setup_file }}
       # The macOS/Windows package jobs of a canonical tag run sign with the
-      # secrets of the `release` environment; every other run builds unsigned.
+      # secrets of the `signing` environment; every other run builds unsigned.
       signing: ${{ steps.source.outputs.release == 'true' && steps.source.outputs.publishable == 'true' }}
       run_label: ${{ steps.source.outputs.run_label }}
       smoke_matrix: ${{ steps.legs.outputs.smoke }}
@@ -98,8 +125,11 @@ jobs:
       windows_matrix: ${{ steps.legs.outputs.windows_matrix }}
       smoke_count: ${{ steps.legs.outputs.smoke_count }}
       compat_count: ${{ steps.legs.outputs.compat_count }}
+      has_legs: ${{ steps.legs.outputs.has_legs }}
       macos: ${{ steps.legs.outputs.macos }}
       windows: ${{ steps.legs.outputs.windows }}
+      package_macos: ${{ steps.legs.outputs.package_macos }}
+      package_windows: ${{ steps.legs.outputs.package_windows }}
     steps:
       - name: Resolve the source commit
         id: source
@@ -108,6 +138,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_LEGS: ${{ inputs.legs }}
+          REF: ${{ github.ref }}
           REF_NAME: ${{ github.ref_name }}
           EVENT_SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
@@ -115,15 +146,19 @@ jobs:
         run: |
           set -euo pipefail
           echo "run_label=$RUN_LABEL" >>"$GITHUB_OUTPUT"
-          if [ "$EVENT" = pull_request ]; then
-            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; echo set=pr; echo filter=; } >>"$GITHUB_OUTPUT"
+          # Leg sets: none (pull requests), queue (merge groups), full (nightly,
+          # test runs, releases). A test run builds the event's commit and is
+          # never published.
+          test_run() { # <set> [legs filter]
+            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; echo "set=$1"; echo "filter=${2:-}"; } >>"$GITHUB_OUTPUT"
             exit 0
-          fi
-          if [ "$EVENT" = workflow_dispatch ] && [ -z "$INPUT_TAG" ]; then
-            { echo release=false; echo publishable=false; echo "commit=$EVENT_SHA"; echo set=full; } >>"$GITHUB_OUTPUT"
-            echo "filter=$INPUT_LEGS" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
+          }
+          case $EVENT in
+            pull_request) test_run none ;;
+            merge_group) test_run queue ;;
+            schedule) test_run full ;;
+            workflow_dispatch) [ -n "$INPUT_TAG" ] || test_run full "$INPUT_LEGS" ;;
+          esac
           if [ -n "$INPUT_LEGS" ]; then
             echo "::error::a release runs every leg: 'legs' is for test runs without a tag"
             exit 1
@@ -135,6 +170,13 @@ jobs:
             echo "::error::'$tag' is not a hermuse/vX.Y.Z[-rc.N] tag"
             exit 1
           fi
+          # A release runs on its tag, pushed or dispatched: the workflow of the
+          # tagged commit, and the signing and release environments, which only
+          # deploy from hermuse/v* tags.
+          if [ "$REF" != "refs/tags/$tag" ]; then
+            echo "::error::a release runs on its tag: gh workflow run release.yml --ref $tag -f tag=$tag"
+            exit 1
+          fi
           # Existing tags only, dereferenced to the commit (annotated or not).
           object=$(gh api "repos/$REPOSITORY/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha')
           while [ "${object%% *}" = tag ]; do
@@ -142,8 +184,8 @@ jobs:
           done
           [ "${object%% *}" = commit ] || { echo "::error::$tag does not point at a commit"; exit 1; }
           commit=${object#* }
-          if [ "$EVENT" = push ] && [ "$commit" != "$EVENT_SHA" ]; then
-            echo "::error::$tag resolves to $commit, the push was $EVENT_SHA"
+          if [ "$commit" != "$EVENT_SHA" ]; then
+            echo "::error::$tag resolves to $commit, the run is on $EVENT_SHA"
             exit 1
           fi
           publishable=false
@@ -154,6 +196,53 @@ jobs:
         with:
           ref: ${{ steps.source.outputs.commit }}
           persist-credentials: false
+          # A pull request's merge commit and its first parent, the base it merges onto.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+
+      - name: Whether this run builds (documentation only, nightly on an unchanged main)
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          builds=true
+          case $EVENT in
+            pull_request | merge_group)
+              if [ "$EVENT" = pull_request ]; then
+                base=$(git rev-parse HEAD^1)
+              else
+                base=$MERGE_GROUP_BASE
+                git fetch -q --no-tags --depth=1 origin "$base"
+              fi
+              echo "Changed against $base:"
+              git diff --name-only "$base" HEAD | tee "$RUNNER_TEMP/changed"
+              # Documentation only: docs/ and Markdown, except under hermes-plugin/
+              # and the app's copy of it, whose README and skill ship in the app.
+              if [ -s "$RUNNER_TEMP/changed" ]; then
+                builds=false
+                while IFS= read -r file; do
+                  case $file in
+                    hermes-plugin/* | apps/hermuse_app/assets/*) builds=true ;;
+                    docs/* | *.md) ;;
+                    *) builds=true ;;
+                  esac
+                done <"$RUNNER_TEMP/changed"
+              fi
+              ;;
+            schedule)
+              last=$(gh api "repos/$REPOSITORY/actions/workflows/release.yml/runs?event=schedule&branch=$REF_NAME&status=success&per_page=1" \
+                --jq '.workflow_runs[0].head_sha // ""')
+              echo "Last successful nightly: ${last:-none}"
+              [ "$last" != "$EVENT_SHA" ] || builds=false
+              ;;
+          esac
+          [ "$builds" = true ] || echo "::notice::nothing to build: documentation only, or main unchanged since the last successful nightly"
+          echo "builds=$builds" >>"$GITHUB_OUTPUT"
 
       - name: Release metadata from the app pubspec
         id: meta
@@ -167,34 +256,58 @@ jobs:
             tool/release/release-metadata.sh | tee -a "$GITHUB_OUTPUT"
           fi
 
-      - name: Smoke legs
+      - name: Smoke legs and platform packages
         id: legs
         env:
           SET: ${{ steps.source.outputs.set }}
           FILTER: ${{ steps.source.outputs.filter }}
+          BUILDS: ${{ steps.scope.outputs.builds }}
         run: |
           set -euo pipefail
-          smoke=$(python3 packaging/smoke/proof_summary.py matrix guests --set "$SET" --filter "$FILTER")
-          compat=$(python3 packaging/smoke/proof_summary.py matrix containers --set "$SET" --filter "$FILTER")
-          desktop=$(python3 packaging/smoke/proof_summary.py matrix desktop --set "$SET" --filter "$FILTER")
+          smoke='{"include":[]}' compat='{"include":[]}' desktop='{"include":[]}'
+          if [ "$BUILDS" = true ] && [ "$SET" != none ]; then
+            smoke=$(python3 packaging/smoke/proof_summary.py matrix guests --set "$SET" --filter "$FILTER")
+            compat=$(python3 packaging/smoke/proof_summary.py matrix containers --set "$SET" --filter "$FILTER")
+            desktop=$(python3 packaging/smoke/proof_summary.py matrix desktop --set "$SET" --filter "$FILTER")
+          fi
+          macos=$(jq '[.include[] | select(.os == "macos")] | length > 0' <<<"$desktop")
+          windows=$(jq '[.include[] | select(.os == "windows")] | length > 0' <<<"$desktop")
+          # A run that builds packages the three platforms, except a test run
+          # whose `legs` filter leaves out the macOS or Windows leg.
+          package_macos=$BUILDS package_windows=$BUILDS
+          if [ -n "$FILTER" ]; then package_macos=$macos package_windows=$windows; fi
           {
             echo "smoke=$smoke"
             echo "compat=$compat"
             echo "desktop=$desktop"
             echo "smoke_count=$(jq '.include | length' <<<"$smoke")"
             echo "compat_count=$(jq '.include | length' <<<"$compat")"
+            echo "has_legs=$(jq -n --argjson s "$smoke" --argjson c "$compat" --argjson d "$desktop" '[$s, $c, $d] | any(.include | length > 0)')"
             echo "macos_matrix=$(jq -c '{include: [.include[] | select(.os == "macos")]}' <<<"$desktop")"
             echo "windows_matrix=$(jq -c '{include: [.include[] | select(.os == "windows")]}' <<<"$desktop")"
-            echo "macos=$(jq '[.include[] | select(.os == "macos")] | length > 0' <<<"$desktop")"
-            echo "windows=$(jq '[.include[] | select(.os == "windows")] | length > 0' <<<"$desktop")"
+            echo "macos=$macos"
+            echo "windows=$windows"
+            echo "package_macos=$package_macos"
+            echo "package_windows=$package_windows"
           } | tee -a "$GITHUB_OUTPUT"
 
   checks:
     name: Checks
     needs: metadata
+    # Also runs when Metadata did not succeed, to fail: skipped because of an
+    # upstream failure, this required check would count as passed.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.metadata.outputs.builds != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
+      - name: Metadata succeeded
+        if: needs.metadata.result != 'success'
+        env:
+          RESULT: ${{ needs.metadata.result }}
+        run: |
+          echo "::error::the Metadata job ended with '$RESULT': nothing to check"
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.metadata.outputs.commit }}
@@ -422,10 +535,10 @@ jobs:
   package-macos:
     name: Build and package (macOS)
     needs: [metadata, checks]
-    if: needs.metadata.outputs.macos == 'true'
+    if: needs.metadata.outputs.package_macos == 'true'
     runs-on: macos-15
     timeout-minutes: 150
-    environment: ${{ needs.metadata.outputs.signing == 'true' && 'release' || '' }}
+    environment: ${{ needs.metadata.outputs.signing == 'true' && 'signing' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -446,7 +559,7 @@ jobs:
           "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-cli-animations
           echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
 
-      - name: Build, sign when the release environment allows it, package (packaging/macos/build-release.sh)
+      - name: Build, sign when the signing environment allows it, package (packaging/macos/build-release.sh)
         env:
           MACOS_DEVELOPER_ID_P12_BASE64: ${{ needs.metadata.outputs.signing == 'true' && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
           MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ needs.metadata.outputs.signing == 'true' && secrets.MACOS_DEVELOPER_ID_P12_PASSWORD || '' }}
@@ -495,10 +608,10 @@ jobs:
   package-windows:
     name: Build and package (Windows)
     needs: [metadata, checks]
-    if: needs.metadata.outputs.windows == 'true'
+    if: needs.metadata.outputs.package_windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 150
-    environment: ${{ needs.metadata.outputs.signing == 'true' && 'release' || '' }}
+    environment: ${{ needs.metadata.outputs.signing == 'true' && 'signing' || '' }}
     permissions:
       contents: read
       id-token: write # Azure login (OIDC) of Artifact Signing; used on signing runs only
@@ -528,7 +641,7 @@ jobs:
           if ($LASTEXITCODE) { throw "flutter config exited with $LASTEXITCODE" }
           Add-Content -Path $env:GITHUB_PATH -Value $bin
 
-      - name: Azure login for Artifact Signing (OIDC, release environment)
+      - name: Azure login for Artifact Signing (OIDC, signing environment)
         if: env.AZURE_LOGIN == 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -536,7 +649,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build, sign when the release environment allows it, package (packaging/windows/build-release.ps1)
+      - name: Build, sign when the signing environment allows it, package (packaging/windows/build-release.ps1)
         shell: pwsh
         env:
           WINDOWS_SIGNING_ENDPOINT: ${{ needs.metadata.outputs.signing == 'true' && secrets.WINDOWS_SIGNING_ENDPOINT || '' }}
@@ -918,7 +1031,7 @@ jobs:
   smoke-report:
     name: Smoke report
     needs: [metadata, smoke, compat, smoke-macos, smoke-windows]
-    if: always() && needs.metadata.result == 'success'
+    if: ${{ !cancelled() && needs.metadata.result == 'success' && needs.metadata.outputs.has_legs == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -961,6 +1074,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  # The one manual step of a release: the reviewer of the `release`
+  # environment approves this job, whose secrets hold the model test account.
   release-approval:
     name: Release approval
     needs: [metadata, assemble, attest, smoke-report]
@@ -971,8 +1086,6 @@ jobs:
     permissions:
       contents: read
       actions: read # read the environment's protection rules
-    outputs:
-      public_ready: ${{ steps.proof.outputs.public_ready }}
     env:
       RUN_LABEL: ${{ needs.metadata.outputs.run_label }}
       WORK: /mnt/hermuse-smoke
@@ -1022,7 +1135,7 @@ jobs:
           set -euo pipefail
           if [ -z "$PROVIDER" ] || [ -z "$MODEL" ] || [ -z "$API_KEY" ]; then
             echo "available=false" >>"$GITHUB_OUTPUT"
-            echo "::notice::no HERMUSE_TEST_MODEL_* account: the conversation proof is recorded as missing and the release stays a draft"
+            echo "::notice::no HERMUSE_TEST_MODEL_* account: the conversation proof is missing, listed under Not yet proven in the release notes"
             exit 0
           fi
           sudo install -d -o "$(id -u)" -g "$(id -g)" "$WORK"
@@ -1108,8 +1221,8 @@ jobs:
           model=()
           [ "$MODEL_AVAILABLE" = true ] && model=(--model "$RUNNER_TEMP/legs/$MODEL_LEG")
           python3 packaging/smoke/proof_summary.py finalize --summary proof/proof-summary.json "${model[@]}" \
-            --release-version release/VERSION.json --out release-proof.json --markdown release-proof.md |
-            tee -a "$GITHUB_OUTPUT"
+            --release-version release/VERSION.json --out release-proof.json --markdown release-proof.md \
+            --notes not-yet-proven.md | tee -a "$GITHUB_OUTPUT"
           cat release-proof.md >>"$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1118,8 +1231,15 @@ jobs:
           path: |
             release-proof.json
             release-proof.md
+            not-yet-proven.md
           if-no-files-found: error
           retention-days: 90
+
+      - name: No failed or missing automated result
+        if: steps.proof.outputs.automated_ok != 'true'
+        run: |
+          echo "::error::a failed or missing automated result blocks the publication (see the release-proof artifact)"
+          exit 1
 
   publish:
     name: Publish
@@ -1139,10 +1259,10 @@ jobs:
       COMMIT: ${{ needs.metadata.outputs.commit }}
       APP_VERSION: ${{ needs.metadata.outputs.app_version }}
       PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
-      PUBLIC_READY: ${{ needs.release-approval.outputs.public_ready }}
       DEB_FILE: ${{ needs.metadata.outputs.deb_file }}
       DMG_FILE: ${{ needs.metadata.outputs.dmg_file }}
       SETUP_FILE: ${{ needs.metadata.outputs.windows_setup_file }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1171,7 +1291,12 @@ jobs:
               '[.platforms[].artifacts[] | select(.name == $n and .sha256 == $sha)] | length == 1' VERSION.json
           done
 
-      - name: Draft release (never overwrites an asset)
+      - name: No failed or missing automated result
+        run: |
+          jq -e '.automated_ok == true and .smoke_ok == true and .complete == true
+            and .model_proof.status != "fail" and .signing_proof.status != "fail"' proof/release-proof.json
+
+      - name: Public pre-release, never marked latest (never replaces an asset)
         run: |
           set -euo pipefail
           {
@@ -1188,52 +1313,58 @@ jobs:
             echo "authorization. On macOS and Windows the agent's computer needs a Docker engine you install yourself."
             echo "Model accounts stay yours to connect. See docs/guides/desktop.md. Source commit \`$COMMIT\`."
             echo "Checksums: SHA256SUMS.txt; build provenance: \`gh attestation verify <file> --repo $REPOSITORY\`."
+            echo "The release run and its evidence: $RUN_URL"
+            echo
+            cat proof/not-yet-proven.md
           } >notes.md
-          flags=(--draft --verify-tag --title "Hermuse Agent $APP_VERSION" --notes-file notes.md)
-          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          title="Hermuse Agent $APP_VERSION"
           existing=$(gh api "repos/$REPOSITORY/releases" --paginate \
             --jq ".[] | select(.tag_name == \"$TAG\") | {id, draft, assets: [.assets[] | {name, digest}]}")
           if [ -z "$existing" ]; then
-            gh release create "$TAG" -R "$REPOSITORY" "${flags[@]}" dist/*
+            # gh uploads the assets to a draft, then publishes it.
+            gh release create "$TAG" -R "$REPOSITORY" --verify-tag --prerelease --latest=false \
+              --title "$title" --notes-file notes.md dist/*
             exit 0
           fi
-          if [ "$(jq -r .draft <<<"$existing")" != true ]; then
-            echo "::error::$TAG is already published: refusing to replace it"
-            exit 1
-          fi
-          # Re-run on an existing draft: identical assets stay, missing ones are
-          # added, a different asset under the same name is refused.
+          # A re-run: the assets already there must be identical. A draft (an
+          # interrupted upload) receives the missing ones and is published; a
+          # published release stays as it is, never replaced nor demoted.
+          draft=$(jq -r .draft <<<"$existing")
           for file in dist/*; do
             name=$(basename "$file")
             digest=$(jq -r --arg n "$name" '.assets[] | select(.name == $n) | .digest // "none"' <<<"$existing")
             if [ -z "$digest" ]; then
+              if [ "$draft" != true ]; then
+                echo "::error::the published $TAG has no $name: refusing to change a public release"
+                exit 1
+              fi
               gh release upload "$TAG" -R "$REPOSITORY" "$file"
             elif [ "$digest" != "sha256:$(sha256sum "$file" | cut -d' ' -f1)" ]; then
-              echo "::error::the draft of $TAG already has a different $name: refusing to overwrite it"
+              echo "::error::$TAG already has a different $name: refusing to overwrite it"
               exit 1
             fi
           done
+          if [ "$draft" = true ]; then
+            gh release edit "$TAG" -R "$REPOSITORY" --draft=false --prerelease --latest=false \
+              --title "$title" --notes-file notes.md
+          else
+            echo "::notice::$TAG is already published with these exact files: nothing to change"
+          fi
 
-      - name: Publish when every proof exists
-        if: env.PUBLIC_READY == 'true'
+      - name: The public downloads match SHA256SUMS.txt
         run: |
           set -euo pipefail
-          jq -e '.public_ready == true and .smoke_ok == true and .model_proof.status == "pass" and .signing_ok == true' \
-            proof/release-proof.json
-          if [ "$PRERELEASE" = true ]; then
-            gh release edit "$TAG" -R "$REPOSITORY" --draft=false --prerelease
-          else
-            gh release edit "$TAG" -R "$REPOSITORY" --draft=false --latest
-          fi
           mkdir public
           gh release download "$TAG" -R "$REPOSITORY" -D public
           (cd public && sha256sum -c SHA256SUMS.txt)
-          echo "Published $TAG; the public downloads match SHA256SUMS.txt." >>"$GITHUB_STEP_SUMMARY"
-
-      - name: Draft kept
-        if: env.PUBLIC_READY != 'true'
-        run: |
           {
-            echo "$TAG stays a DRAFT: a required proof or signature is missing (see the release-proof artifact)."
-            cat proof/release-proof.md
+            echo "$TAG is published; its public downloads match SHA256SUMS.txt."
+            if [ "$PRERELEASE" = true ]; then
+              echo "A release candidate stays a pre-release."
+            else
+              echo "Once the points under \"Not yet proven\" of its notes are checked, make it the latest release:"
+              echo "\`gh release edit $TAG --prerelease=false --latest\`"
+            fi
+            echo
+            cat proof/not-yet-proven.md
           } >>"$GITHUB_STEP_SUMMARY"

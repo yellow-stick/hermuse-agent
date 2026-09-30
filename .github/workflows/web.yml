@@ -1,12 +1,22 @@
 # Web app on Netlify (project `hermuse-agent`, https://hermuse.app).
 #
-#   build (analyze, jaspr build) -> deploy
+#   changes -> build (analyze, jaspr build) -> deploy
 #
-# Push to main: production deploy. Pull request from this repository: draft
-# deploy under the alias pr-<N>, URL in the job summary (fork PRs have no
-# secrets and stop after the build). Dispatch: production deploy of the
-# dispatched ref. Netlify's own Git builds are stopped; this workflow is the
-# only publisher. Secrets: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID.
+# `changes` compares the commit with its base (the previous main for a push,
+# the base branch for a pull request or a merge group). When none of the web
+# app's inputs changed (apps/hermuse_web, packages, pubspec.*, netlify.toml,
+# the toolchain lock, this workflow), `build` is skipped by its condition,
+# which reports success, so `Build` can be a required check; it runs and fails
+# when `changes` did not succeed. Draft pull requests run nothing: marking one
+# ready for review starts the run, and a new push cancels the run it
+# supersedes.
+#
+# Push to main: production deploy. Pull request from this repository, ready
+# for review: draft deploy under the alias pr-<N>, URL in the job summary (fork
+# PRs have no secrets and stop after the build). Merge queue: build only.
+# Dispatch: production deploy of the dispatched ref. Netlify's own Git builds
+# are stopped; this workflow is the only publisher. Secrets:
+# NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID.
 #
 # Actions are pinned by commit (tag in the trailing comment); the Flutter SDK
 # comes from tool/release/toolchain.lock.json, checked by SHA-256.
@@ -15,16 +25,10 @@ name: Web
 on:
   push:
     branches: [main]
-    paths: &paths
-      - apps/hermuse_web/**
-      - packages/**
-      - pubspec.yaml
-      - pubspec.lock
-      - netlify.toml
-      - tool/release/toolchain.lock.json
-      - .github/workflows/web.yml
   pull_request:
-    paths: *paths
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -32,18 +36,72 @@ permissions:
 
 concurrency:
   group: web-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   JASPR_CLI_VERSION: 0.23.5
   NETLIFY_CLI_VERSION: 27.10.1
 
 jobs:
+  changes:
+    name: Changes
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      web: ${{ steps.paths.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull request's merge commit and its first parent, the base it merges onto.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+      - name: Does the change touch the web app
+        id: paths
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          case $EVENT in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            merge_group) base=$MERGE_GROUP_BASE ;;
+            push) base=$BEFORE ;;
+            *) base= ;;
+          esac
+          web=true
+          # A dispatch, or a push without a previous commit, builds.
+          if [[ $base =~ ^[0-9a-f]{40}$ && $base != 0000000000000000000000000000000000000000 ]]; then
+            [ "$EVENT" = pull_request ] || git fetch -q --no-tags --depth=1 origin "$base"
+            echo "Changed against $base:"
+            git diff --name-only "$base" HEAD | tee "$RUNNER_TEMP/changed"
+            web=false
+            while IFS= read -r file; do
+              case $file in
+                apps/hermuse_web/* | packages/* | pubspec.yaml | pubspec.lock | netlify.toml | \
+                  tool/release/toolchain.lock.json | .github/workflows/web.yml) web=true ;;
+              esac
+            done <"$RUNNER_TEMP/changed"
+          fi
+          echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Build
+    needs: changes
+    # Also runs when `changes` did not succeed, to fail: skipped because of an
+    # upstream failure, this required check would count as passed.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && needs.changes.outputs.web != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Changes succeeded
+        if: needs.changes.result != 'success'
+        env:
+          RESULT: ${{ needs.changes.result }}
+        run: |
+          echo "::error::the Changes job ended with '$RESULT': nothing to build"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The Flutter SDK from toolchain.lock.json
         run: |
@@ -72,8 +130,11 @@ jobs:
   deploy:
     name: Deploy
     needs: build
-    # Pull requests from forks have no secrets: skip instead of failing.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Production for a push or a dispatch, a preview for a pull request from
+    # this repository (forks have no secrets), nothing for a merge group.
+    if: >-
+      github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
