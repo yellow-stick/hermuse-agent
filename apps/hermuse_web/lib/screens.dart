@@ -18,8 +18,8 @@ class HermuseRelayRequired extends StatelessComponent {
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-screen', [
-    div(classes: 'hermuse-card', [
-      div(classes: 'hermuse-card-icon', [YsIconView(YsIcon.chat, size: 28)]),
+    div(classes: 'hermuse-card ys-enter', [
+      HermuseCardArt(YsArt.relay),
       h1(classes: 'hermuse-card-title', [.text('A Hermuse relay is required')]),
       p(classes: 'hermuse-card-body', [
         .text(
@@ -42,6 +42,22 @@ class HermuseRelayRequired extends StatelessComponent {
   @css
   // ignore: unused_element
   static List<StyleRule> get styles => hermuseScreenStyles;
+}
+
+/// Card illustration: [art] draws in when the card shows, plays again under
+/// the pointer and loops while [busy] (work under way). Desktop parity:
+/// `YsDialogArt`.
+class HermuseCardArt extends StatelessComponent {
+  const HermuseCardArt(this.art, {this.busy = false, super.key});
+
+  final YsArt art;
+  final bool busy;
+
+  @override
+  Component build(BuildContext context) => YsHover(
+    builder: (context, hovered) =>
+        YsArtView(art, size: YsLayout.artStep, active: hovered, busy: busy),
+  );
 }
 
 /// Shared full-screen card styles (relay-required, welcome, instances…).
@@ -74,16 +90,6 @@ List<StyleRule> get hermuseScreenStyles => [
       backgroundColor: .variable('--paper'),
     ),
     css('.hermuse-card-narrow').styles(maxWidth: YsLayout.dialogNarrow.px),
-    css('.hermuse-card-icon').styles(
-      width: 56.px,
-      height: 56.px,
-      radius: .circular(28.px),
-      display: .flex,
-      alignItems: .center,
-      justifyContent: .center,
-      color: .variable('--primary-content'),
-      backgroundColor: .variable('--primary'),
-    ),
     css('.hermuse-card-title').styles(
       margin: .zero,
       textAlign: .center,
