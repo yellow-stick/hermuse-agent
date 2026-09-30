@@ -71,11 +71,13 @@ jobs:
             *) base= ;;
           esac
           web=true
-          # A dispatch, or a push without a previous commit, builds.
-          if [[ $base =~ ^[0-9a-f]{40}$ && $base != 0000000000000000000000000000000000000000 ]]; then
-            [ "$EVENT" = pull_request ] || git fetch -q --no-tags --depth=1 origin "$base"
+          # A dispatch, a push without a previous commit, or a base that cannot
+          # be fetched (a force-pushed main) builds.
+          if [[ $base =~ ^[0-9a-f]{40}$ && $base != 0000000000000000000000000000000000000000 ]] &&
+            { [ "$EVENT" = pull_request ] || git fetch -q --no-tags --depth=1 origin "$base"; } &&
+            git diff --name-only "$base" HEAD >"$RUNNER_TEMP/changed"; then
             echo "Changed against $base:"
-            git diff --name-only "$base" HEAD | tee "$RUNNER_TEMP/changed"
+            cat "$RUNNER_TEMP/changed"
             web=false
             while IFS= read -r file; do
               case $file in

@@ -213,25 +213,27 @@ jobs:
           builds=true
           case $EVENT in
             pull_request | merge_group)
-              if [ "$EVENT" = pull_request ]; then
-                base=$(git rev-parse HEAD^1)
+              if [ "$EVENT" = pull_request ]; then base=$(git rev-parse HEAD^1); else base=$MERGE_GROUP_BASE; fi
+              # A merge group fetches its base; a change set that cannot be
+              # computed builds everything.
+              if { [ "$EVENT" = pull_request ] || git fetch -q --no-tags --depth=1 origin "$base"; } &&
+                git diff --name-only "$base" HEAD >"$RUNNER_TEMP/changed"; then
+                echo "Changed against $base:"
+                cat "$RUNNER_TEMP/changed"
+                # Documentation only: docs/ and Markdown, except under hermes-plugin/
+                # and the app's copy of it, whose README and skill ship in the app.
+                if [ -s "$RUNNER_TEMP/changed" ]; then
+                  builds=false
+                  while IFS= read -r file; do
+                    case $file in
+                      hermes-plugin/* | apps/hermuse_app/assets/*) builds=true ;;
+                      docs/* | *.md) ;;
+                      *) builds=true ;;
+                    esac
+                  done <"$RUNNER_TEMP/changed"
+                fi
               else
-                base=$MERGE_GROUP_BASE
-                git fetch -q --no-tags --depth=1 origin "$base"
-              fi
-              echo "Changed against $base:"
-              git diff --name-only "$base" HEAD | tee "$RUNNER_TEMP/changed"
-              # Documentation only: docs/ and Markdown, except under hermes-plugin/
-              # and the app's copy of it, whose README and skill ship in the app.
-              if [ -s "$RUNNER_TEMP/changed" ]; then
-                builds=false
-                while IFS= read -r file; do
-                  case $file in
-                    hermes-plugin/* | apps/hermuse_app/assets/*) builds=true ;;
-                    docs/* | *.md) ;;
-                    *) builds=true ;;
-                  esac
-                done <"$RUNNER_TEMP/changed"
+                echo "::warning::no change set against '$base': everything is built"
               fi
               ;;
             schedule)
@@ -614,7 +616,10 @@ jobs:
     environment: ${{ needs.metadata.outputs.signing == 'true' && 'signing' || '' }}
     permissions:
       contents: read
-      id-token: write # Azure login (OIDC) of Artifact Signing; used on signing runs only
+      # Azure login (OIDC) of Artifact Signing, on signing runs only: the
+      # federated credential of the Azure app trusts the subject
+      # repo:<owner>/<repo>:environment:signing.
+      id-token: write
     env:
       # A partial Azure identity still logs in, and fails loudly.
       AZURE_LOGIN: ${{ needs.metadata.outputs.signing == 'true' && (secrets.AZURE_CLIENT_ID != '' || secrets.AZURE_TENANT_ID != '' || secrets.AZURE_SUBSCRIPTION_ID != '') }}
