@@ -12,6 +12,7 @@ import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'add_instance.dart';
 import 'brand.dart';
+import 'components.dart';
 import 'computer_viewer.dart';
 import 'connections.dart';
 import 'feed.dart';
@@ -41,7 +42,14 @@ class HermuseChatRoot extends StatefulComponent {
 }
 
 /// Which full-screen surface is on top of the chat shell.
-enum _Overlay { none, addInstance, instances, onboarding, connections }
+enum _Overlay {
+  none,
+  addInstance,
+  instances,
+  onboarding,
+  connections,
+  components,
+}
 
 /// Width of the side-by-side chat column on product routes.
 const _splitChatWidth = 564.0;
@@ -169,30 +177,15 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
   Future<void> _openSetup(ThreadRef setup) =>
       context.readProvider(activeThreadProvider.notifier).openSetup(setup);
 
-  /// After adding an instance: show the onboarding overlay only when its
-  /// step is not `ready` yet; ready instances (e.g. the VPS) go straight
-  /// to chat. Onboarding re-check failures fall back to showing the flow,
-  /// which renders its own loading/error states.
-  Future<void> _afterAdd(String instanceId) async {
-    OnboardingStep? step;
-    try {
-      final onboarding = await HermuseScope.container.read(
-        onboardingProvider(instanceId).future,
-      );
-      step = onboarding.step;
-    } on Object catch (_) {
-      step = null;
-    }
-    if (!mounted) return;
-    if (step == null || step != OnboardingStep.ready) {
-      setState(() {
-        _overlay = _Overlay.onboarding;
-        _onboardingInstanceId = instanceId;
-      });
-    } else {
-      setState(() => _overlay = _Overlay.none);
-    }
-    await _openInstance(instanceId);
+  /// After adding an instance: its component checklist, what Hermuse needs
+  /// on it; Continue then opens its chat, or its onboarding until a model
+  /// answers.
+  Future<void> _afterAdd(String instanceId) {
+    setState(() {
+      _overlay = _Overlay.components;
+      _onboardingInstanceId = instanceId;
+    });
+    return _openInstance(instanceId);
   }
 
   /// Discuss / Start in chat: [seed] lands in the main chat's composer
@@ -304,6 +297,10 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             _overlay = _Overlay.onboarding;
             _onboardingInstanceId = id;
           }),
+          onComponents: (id) => setState(() {
+            _overlay = _Overlay.components;
+            _onboardingInstanceId = id;
+          }),
           onConnections: (id) => setState(() {
             _overlay = _Overlay.connections;
             _onboardingInstanceId = id;
@@ -350,6 +347,26 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             _overlay = _Overlay.none;
             _onboardingInstanceId = null;
           }),
+        ),
+      );
+    }
+    if (_overlay == _Overlay.components &&
+        overlayId != null &&
+        instances.any((candidate) => candidate.id == overlayId)) {
+      final instance = instances.firstWhere(
+        (candidate) => candidate.id == overlayId,
+      );
+      return _loadingShell(
+        child: HermuseComponents(
+          instance: instance,
+          onChat: () {
+            setState(() {
+              _overlay = _Overlay.none;
+              _onboardingInstanceId = null;
+            });
+            unawaited(_openInstance(instance.id));
+          },
+          onSetUpModel: () => setState(() => _overlay = _Overlay.onboarding),
         ),
       );
     }

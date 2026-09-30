@@ -83,13 +83,15 @@ class HermuseWelcome extends StatelessComponent {
   ];
 }
 
-/// Registered instances: state dot, version, rename, primary, delete.
+/// Registered instances: state dot, version, rename, primary, the setup,
+/// the components on the Hermes and its connections, delete.
 class HermuseInstances extends StatelessComponent {
   const HermuseInstances({
     required this.onAdd,
     required this.onBack,
     required this.onOpen,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
     super.key,
   });
@@ -98,6 +100,10 @@ class HermuseInstances extends StatelessComponent {
   final VoidCallback onBack;
   final ValueChanged<String> onOpen;
   final ValueChanged<String> onSetup;
+
+  /// Opens the component checklist of an instance: what Hermuse needs on
+  /// its Hermes.
+  final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
 
   @override
@@ -149,6 +155,7 @@ class HermuseInstances extends StatelessComponent {
               onSetPrimary: () => _setPrimary(context, instance),
               onDelete: () => _delete(context, instance),
               onSetup: () => onSetup(instance.id),
+              onComponents: () => onComponents(instance.id),
               onConnections: () => onConnections(instance.id),
             ),
           ),
@@ -306,6 +313,13 @@ class HermuseInstances extends StatelessComponent {
       backgroundColor: Colors.transparent,
       padding: .zero,
     ),
+    // Phones: the actions leave the name its line and wrap under it,
+    // right-aligned.
+    css.media(MediaQuery.screen(maxWidth: 767.px), [
+      css('.hermuse-instance-row').styles(flexWrap: .wrap),
+      css('.hermuse-instance-actions')
+          .styles(width: 100.percent, flexWrap: .wrap, justifyContent: .end),
+    ]),
   ];
 }
 
@@ -320,6 +334,7 @@ class _InstanceRow extends StatefulComponent {
     required this.onSetPrimary,
     required this.onDelete,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
   });
 
@@ -334,6 +349,7 @@ class _InstanceRow extends StatefulComponent {
   final VoidCallback onSetPrimary;
   final VoidCallback onDelete;
   final VoidCallback onSetup;
+  final VoidCallback onComponents;
   final VoidCallback onConnections;
   @override
   State<_InstanceRow> createState() => _InstanceRowState();
@@ -472,6 +488,10 @@ class _InstanceRowState extends State<_InstanceRow> {
               size: 32,
             ),
           YsButton.neutral(label: 'Setup', onPressed: component.onSetup),
+          YsButton.neutral(
+            label: 'Components',
+            onPressed: component.onComponents,
+          ),
           YsButton.neutral(
             label: 'Connections',
             onPressed: component.onConnections,

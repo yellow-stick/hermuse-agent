@@ -90,6 +90,7 @@ class HermuseDialogHead extends StatelessComponent {
     required this.helper,
     required this.trailing,
     this.busy = false,
+    this.live = false,
     super.key,
   });
 
@@ -98,6 +99,10 @@ class HermuseDialogHead extends StatelessComponent {
   final String helper;
   final Component trailing;
   final bool busy;
+
+  /// [helper] says what happens now: it is announced as it changes and a
+  /// new line fades in.
+  final bool live;
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-head', [
@@ -108,7 +113,18 @@ class HermuseDialogHead extends StatelessComponent {
     ),
     div(classes: 'hermuse-head-titles', [
       h1(classes: 'hermuse-head-title', [.text(title)]),
-      p(classes: 'hermuse-head-helper', [.text(helper)]),
+      p(
+        classes: 'hermuse-head-helper',
+        attributes: live ? const {'role': 'status'} : null,
+        [
+          if (live)
+            span(key: ValueKey(helper), classes: 'hermuse-head-live', [
+              .text(helper),
+            ])
+          else
+            .text(helper),
+        ],
+      ),
     ]),
     trailing,
   ]);
@@ -180,6 +196,21 @@ List<StyleRule> get hermuseScreenStyles => [
       fontSize: YsType.small.size.px,
       lineHeight: YsType.small.lineHeight.px,
     ),
+    // A new line of a live helper fades in.
+    css('.hermuse-head-live').styles(
+      raw: {
+        'animation':
+            'hermuse-head-swap ${YsStepMotion.swap}ms ${YsEase.standard.css} '
+            'backwards',
+      },
+    ),
+  ]),
+  css.keyframes('hermuse-head-swap', {
+    '0%': Styles(opacity: 0),
+    '100%': Styles(opacity: 1),
+  }),
+  css.media(MediaQuery.raw(ysReducedMotionQuery), [
+    css('.hermuse-head-live').styles(raw: {'animation': 'none'}),
   ]),
   css('.hermuse-check-line').styles(
     display: .flex,
