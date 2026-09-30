@@ -10,18 +10,22 @@ import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:riverpod/misc.dart';
 import 'package:universal_web/web.dart' as web;
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'relay.dart';
 import 'scope_vm.dart' if (dart.library.js_interop) 'scope_web.dart' as boot;
+import 'screens.dart';
 
 /// Owns the web app's [ProviderContainer]: database, secrets, HTTP client.
 ///
 /// Created lazily on the client only (never during SSR): the drift WASM
 /// worker needs a real browser. The first open can take a moment (worker
-/// boot + OPFS); the container appears once the database answers.
+/// boot + OPFS): [loading] shows meanwhile, the pre-rendered wait, so the
+/// page stays as it was; the container appears once the database answers.
 final class HermuseScope extends StatefulComponent {
-  const HermuseScope({required this.child, super.key});
+  const HermuseScope({required this.loading, required this.child, super.key});
 
+  final Component loading;
   final Component child;
 
   @override
@@ -38,67 +42,7 @@ final class HermuseScope extends StatefulComponent {
 
   @css
   // ignore: unused_element
-  static List<StyleRule> get styles => [
-    css('.hermuse-boot', [
-      css('&').styles(
-        flex: .grow(1),
-        height: 100.percent,
-        display: .flex,
-        alignItems: .center,
-        justifyContent: .center,
-        backgroundColor: .variable('--canvas'),
-      ),
-      css('.hermuse-boot-card').styles(
-        maxWidth: YsLayout.dialogNarrow.px,
-        margin: .symmetric(horizontal: 24.px),
-        padding: .symmetric(vertical: 32.px, horizontal: 28.px),
-        radius: .circular(YsRadius.bubble.px),
-        display: .flex,
-        flexDirection: .column,
-        alignItems: .center,
-        gap: .all(16.px),
-        color: .variable('--content'),
-        backgroundColor: .variable('--paper'),
-      ),
-      css('.hermuse-boot-title').styles(
-        margin: .zero,
-        fontSize: 22.px,
-        lineHeight: 28.px,
-        fontWeight: .w500,
-      ),
-      css('.hermuse-boot-body').styles(
-        margin: .zero,
-        textAlign: .center,
-        fontSize: 16.px,
-        lineHeight: 22.px,
-        color: .variable('--content-muted'),
-      ),
-      css('.hermuse-boot-spinner').styles(
-        width: 28.px,
-        height: 28.px,
-        radius: .circular(14.px),
-        border: .all(style: .solid, color: .variable('--line'), width: 3.px),
-        raw: {
-          'border-top-color': 'var(--primary)',
-          'animation': 'hermuse-spin 800ms linear infinite',
-        },
-      ),
-      css('.hermuse-boot-retry').styles(
-        height: 40.px,
-        padding: .symmetric(horizontal: 20.px),
-        radius: .circular(YsRadius.pill.px),
-        color: .variable('--primary-content'),
-        backgroundColor: .variable('--primary'),
-        cursor: .pointer,
-        border: .none,
-        fontSize: 15.px,
-        fontWeight: .w600,
-      ),
-    ]),
-    css('@keyframes hermuse-spin', [
-      css('to').styles(raw: {'transform': 'rotate(360deg)'}),
-    ]),
-  ];
+  static List<StyleRule> get styles => hermuseScreenStyles;
 }
 
 class _HermuseScopeState extends State<HermuseScope> {
@@ -166,30 +110,27 @@ class _HermuseScopeState extends State<HermuseScope> {
         child: component.child,
       );
     }
-    return div(classes: 'hermuse-boot', [
-      if (error != null)
-        div(classes: 'hermuse-boot-card', [
-          h1(classes: 'hermuse-boot-title', [.text('Storage unavailable')]),
-          p(classes: 'hermuse-boot-body', [
-            .text(
-              'Hermuse could not open its local database in this browser '
-              '($error). Private windows without storage access are not '
-              'supported.',
-            ),
-          ]),
-          button(
-            classes: 'hermuse-boot-retry',
-            onClick: () {
+    if (error == null) return component.loading;
+    return div(classes: 'hermuse-screen', [
+      div(classes: 'hermuse-card hermuse-card-narrow', [
+        HermuseCardArt(YsArt.unreachable),
+        h1(classes: 'hermuse-card-title', [.text('Storage unavailable')]),
+        p(classes: 'hermuse-card-body', [
+          .text(
+            'Hermuse could not open its local database in this browser '
+            '($error). Private windows without storage access are not '
+            'supported.',
+          ),
+        ]),
+        div(classes: 'hermuse-card-actions', [
+          YsButton.primary(
+            label: 'Retry',
+            onPressed: () {
               if (kIsWeb) web.window.location.reload();
             },
-            [.text('Retry')],
           ),
-        ])
-      else
-        div(classes: 'hermuse-boot-card', [
-          div(classes: 'hermuse-boot-spinner', []),
-          p(classes: 'hermuse-boot-body', [.text('Opening Hermuse…')]),
         ]),
+      ]),
     ]);
   }
 }

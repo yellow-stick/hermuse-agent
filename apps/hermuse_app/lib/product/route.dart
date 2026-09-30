@@ -146,6 +146,26 @@ final class HermuseRouteError extends StatelessWidget {
   }
 }
 
+/// Hero drawing of a route that cannot show its content yet (the plugin to
+/// turn on, the plugin out of reach), at the start of the column: it plays
+/// again under the pointer and loops while [busy] (web
+/// `.hermuse-card-art` parity).
+final class HermuseRouteArt extends StatelessWidget {
+  const HermuseRouteArt(this.art, {this.busy = false, super.key});
+
+  final YsArt art;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: AlignmentDirectional.centerStart,
+    child: YsHover(
+      builder: (context, hovered) =>
+          YsArtView.hero(art, active: hovered, busy: busy),
+    ),
+  );
+}
+
 /// Section group: 14/20/500 head + 12 gaps.
 final class HermuseRouteSection extends StatelessWidget {
   const HermuseRouteSection({
@@ -178,43 +198,119 @@ final class HermuseRouteSection extends StatelessWidget {
   }
 }
 
-/// Empty state: 26 icon + 16/22/500 title + 14/20 body, top pad 48.
+/// Empty state: its line illustration drawing in above a 16/22/500 title,
+/// a 14/20 friendly line and an optional [action]. Pointing at it plays the
+/// illustration once more.
 final class HermuseRouteEmpty extends StatelessWidget {
   const HermuseRouteEmpty({
-    required this.icon,
+    required this.art,
     required this.title,
     required this.body,
+    this.action,
+    this.size = YsLayout.artEmpty,
+    this.top = 48,
     super.key,
   });
 
-  final YsIcon icon;
+  final YsArt art;
   final String title;
   final String body;
+  final Widget? action;
+  final double size;
+
+  /// Space above the illustration.
+  final double top;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
+    final action = this.action;
     return Padding(
-      padding: const EdgeInsets.only(top: 48),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          YsIconWidget(icon, size: 26, color: palette.contentMutedColor),
-          const SizedBox(height: 8),
-          Text(
-            title,
-            style: YsType.heading.flutter.copyWith(color: palette.contentColor),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            body,
-            style: YsType.small.flutter.copyWith(
-              color: palette.contentMutedColor,
+      padding: EdgeInsets.only(top: top),
+      child: YsHover(
+        builder: (context, hovered) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            YsArtView(art, size: size, active: hovered),
+            const SizedBox(height: YsSpace.md),
+            Text(
+              title,
+              style: YsType.heading.flutter.copyWith(
+                color: palette.contentColor,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
-          ),
-        ],
+            const SizedBox(height: YsSpace.xs + YsSpace.xxs),
+            Text(
+              body,
+              style: YsType.small.flutter.copyWith(
+                color: palette.contentMutedColor,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            if (action != null) ...[const SizedBox(height: YsSpace.md), action],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Loading placeholder of a product list: [count] paper cards whose lines
+/// shimmer where the content will be (web `.hermuse-skeleton` parity).
+final class HermuseRouteSkeleton extends StatelessWidget {
+  const HermuseRouteSkeleton({required this.label, this.count = 2, super.key});
+
+  /// Announced while it shows ("Loading feed").
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      label: label,
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < count; i++) ...[
+              if (i > 0) const SizedBox(height: YsSpace.md),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: palette.paperColor,
+                  borderRadius: BorderRadius.circular(YsRadius.bubble),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: YsSkeleton(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        FractionallySizedBox(
+                          widthFactor: 0.55,
+                          child: YsSkeletonBox(height: 20),
+                        ),
+                        SizedBox(height: YsSpace.md),
+                        FractionallySizedBox(
+                          widthFactor: 0.25,
+                          child: YsSkeletonBox(height: 12),
+                        ),
+                        SizedBox(height: YsSpace.lg),
+                        YsSkeletonBox(height: 14),
+                        SizedBox(height: YsSpace.sm),
+                        FractionallySizedBox(
+                          widthFactor: 0.8,
+                          child: YsSkeletonBox(height: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

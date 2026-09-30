@@ -8,44 +8,90 @@ import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'mascot.dart';
 import 'scope.dart';
 import 'screens.dart';
 
-/// Welcome screen: no instance is registered yet.
+/// Welcome screen: no instance is registered yet. The mascot says hello
+/// above the one way to start on the web: adding a Hermes.
 class HermuseWelcome extends StatelessComponent {
   const HermuseWelcome({required this.onAdd, super.key});
 
   final VoidCallback onAdd;
 
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-screen', [
-    div(classes: 'hermuse-card', [
-      div(classes: 'hermuse-card-icon', [YsIconView(YsIcon.chat, size: 28)]),
-      h1(classes: 'hermuse-card-title', [.text('Welcome to Hermuse')]),
-      p(classes: 'hermuse-card-body', [
-        .text(
-          'Hermuse talks to your Hermes instances. Add your first one '
-          'to start chatting.',
-        ),
-      ]),
-      div(classes: 'hermuse-card-actions', [
-        YsButton.primary(label: 'Add a Hermes', onPressed: onAdd),
-      ]),
-    ]),
-  ]);
+  Component build(BuildContext context) =>
+      div(classes: 'hermuse-screen hermuse-welcome-screen', [
+        div(classes: 'hermuse-welcome ys-enter', [
+          const HermuseMascot(),
+          h1(classes: 'hermuse-welcome-title', [.text("Hi, I'm Hermuse")]),
+          p(classes: 'hermuse-welcome-body', [
+            .text('I run on your own Hermes Agent. Add one to start chatting.'),
+          ]),
+          div(classes: 'hermuse-welcome-choices', [
+            YsChoiceCard(
+              art: YsArt.remote,
+              title: 'Add a Hermes',
+              body: 'A Hermes already running on a server or another computer.',
+              onPressed: onAdd,
+            ),
+          ]),
+        ]),
+      ]);
 
   @css
   // ignore: unused_element
-  static List<StyleRule> get styles => hermuseScreenStyles;
+  static List<StyleRule> get styles => [
+    ...hermuseScreenStyles,
+    // Centred while it fits, scrolling from the top once it does not.
+    css('.hermuse-screen.hermuse-welcome-screen').styles(
+      alignItems: .start,
+      overflow: .only(y: .auto, x: .hidden),
+    ),
+    css('.hermuse-welcome', [
+      css('&').styles(
+        width: 100.percent,
+        maxWidth: YsLayout.listWidth.px,
+        padding: .all(YsSpace.xl.px),
+        margin: .all(.auto),
+        display: .flex,
+        flexDirection: .column,
+        alignItems: .center,
+        color: .variable('--content'),
+        textAlign: .center,
+      ),
+      css('.hermuse-welcome-title').styles(
+        margin: .fromLTRB(.zero, YsSpace.xl.px, .zero, .zero),
+        fontSize: YsType.title.size.px,
+        fontWeight: .w500,
+        lineHeight: YsType.title.lineHeight.px,
+      ),
+      css('.hermuse-welcome-body').styles(
+        margin: .fromLTRB(.zero, YsSpace.sm.px, .zero, .zero),
+        color: .variable('--content-muted'),
+        fontSize: YsType.body.size.px,
+        lineHeight: YsType.body.lineHeight.px,
+      ),
+      css('.hermuse-welcome-choices').styles(
+        width: 100.percent,
+        margin: .only(top: YsSpace.xxl.px),
+        display: .flex,
+        flexDirection: .column,
+        gap: .all(YsSpace.md.px),
+      ),
+    ]),
+  ];
 }
 
-/// Registered instances: state dot, version, rename, primary, delete.
+/// Registered instances: state dot, version, rename, primary, the setup,
+/// the components on the Hermes and its connections, delete.
 class HermuseInstances extends StatelessComponent {
   const HermuseInstances({
     required this.onAdd,
     required this.onBack,
     required this.onOpen,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
     super.key,
   });
@@ -54,6 +100,10 @@ class HermuseInstances extends StatelessComponent {
   final VoidCallback onBack;
   final ValueChanged<String> onOpen;
   final ValueChanged<String> onSetup;
+
+  /// Opens the component checklist of an instance: what Hermuse needs on
+  /// its Hermes.
+  final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
 
   @override
@@ -72,16 +122,17 @@ class HermuseInstances extends StatelessComponent {
     AsyncValue<HermesRegistry> registry,
   ) => div(classes: 'hermuse-screen hermuse-screen-top', [
     div(classes: 'hermuse-list-card', [
-      div(classes: 'hermuse-list-head', [
-        h1(classes: 'hermuse-list-title', [.text('Instances')]),
-        div(classes: 'hermuse-list-head-spacer', []),
-        YsButton.icon(
+      HermuseDialogHead(
+        art: YsArt.remote,
+        title: 'Instances',
+        helper: 'The Hermes you chat with and the state of each connection.',
+        trailing: YsButton.icon(
           icon: YsIcon.close,
           label: 'Back to chat',
           onPressed: onBack,
           size: 36,
         ),
-      ]),
+      ),
       for (final instance in instances)
         HermuseWatch(
           key: ValueKey(instance.id),
@@ -91,15 +142,20 @@ class HermuseInstances extends StatelessComponent {
             builder: (context, connection) => _InstanceRow(
               instance: instance,
               state: state.value,
+              // Refused credentials, on the first connection or on a later
+              // reconnect (the chat's sign-in banner reads the same).
               authFailed:
-                  state.value == ConnectionState.error &&
-                  connection.error is HermesAuthFailed,
+                  connection.error is HermesAuthFailed ||
+                  (state.value == ConnectionState.error &&
+                      connection.value?.transport.lastError
+                          is HermesAuthFailed),
               isPrimary: registry.value?.primary?.id == instance.id,
               onOpen: () => onOpen(instance.id),
               onRename: (name) => _rename(context, instance, name),
               onSetPrimary: () => _setPrimary(context, instance),
               onDelete: () => _delete(context, instance),
               onSetup: () => onSetup(instance.id),
+              onComponents: () => onComponents(instance.id),
               onConnections: () => onConnections(instance.id),
             ),
           ),
@@ -155,20 +211,8 @@ class HermuseInstances extends StatelessComponent {
       color: .variable('--content'),
       backgroundColor: .variable('--paper'),
     ),
-    css('.hermuse-list-head').styles(
-      display: .flex,
-      flexDirection: .row,
-      alignItems: .center,
-      gap: .all(8.px),
-    ),
-    css('.hermuse-list-title').styles(
-      margin: .zero,
-      flex: .grow(1),
-      fontSize: 22.px,
-      lineHeight: 28.px,
-      fontWeight: .w500,
-    ),
-    css('.hermuse-list-head-spacer').styles(width: 36.px),
+    css('.hermuse-instance-body > .hermuse-check-line')
+        .styles(margin: .only(top: YsSpace.sm.px)),
     css('.hermuse-instance-row').styles(
       padding: .symmetric(vertical: 12.px, horizontal: 12.px),
       radius: .circular(YsRadius.row.px),
@@ -180,9 +224,9 @@ class HermuseInstances extends StatelessComponent {
       border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
     ),
     css('.hermuse-instance-dot').styles(
-      width: 8.px,
-      height: 8.px,
-      radius: .circular(4.px),
+      width: YsLayout.statusDot.px,
+      height: YsLayout.statusDot.px,
+      radius: .circular(YsRadius.pill.px),
       backgroundColor: .variable('--content-subtle'),
       raw: {'flex-shrink': '0'},
     ),
@@ -260,12 +304,6 @@ class HermuseInstances extends StatelessComponent {
         .styles(height: 36.px, fontSize: 14.px, lineHeight: 20.px),
     css('.hermuse-instance-signin-field')
         .styles(flex: .grow(1), raw: {'min-width': '0'}),
-    css('.hermuse-instance-signin-error').styles(
-      margin: .zero,
-      fontSize: 13.px,
-      lineHeight: 18.px,
-      color: .variable('--primary-2'),
-    ),
     css('.hermuse-instance-signin-link').styles(
       fontSize: 13.px,
       lineHeight: 18.px,
@@ -275,6 +313,13 @@ class HermuseInstances extends StatelessComponent {
       backgroundColor: Colors.transparent,
       padding: .zero,
     ),
+    // Phones: the actions leave the name its line and wrap under it,
+    // right-aligned.
+    css.media(MediaQuery.screen(maxWidth: 767.px), [
+      css('.hermuse-instance-row').styles(flexWrap: .wrap),
+      css('.hermuse-instance-actions')
+          .styles(width: 100.percent, flexWrap: .wrap, justifyContent: .end),
+    ]),
   ];
 }
 
@@ -289,6 +334,7 @@ class _InstanceRow extends StatefulComponent {
     required this.onSetPrimary,
     required this.onDelete,
     required this.onSetup,
+    required this.onComponents,
     required this.onConnections,
   });
 
@@ -303,6 +349,7 @@ class _InstanceRow extends StatefulComponent {
   final VoidCallback onSetPrimary;
   final VoidCallback onDelete;
   final VoidCallback onSetup;
+  final VoidCallback onComponents;
   final VoidCallback onConnections;
   @override
   State<_InstanceRow> createState() => _InstanceRowState();
@@ -317,6 +364,11 @@ class _InstanceRowState extends State<_InstanceRow> {
   var _password = '';
   var _signInBusy = false;
   String? _signInError;
+
+  /// The sign-in under way or just done, as its check line says it; null
+  /// once another action starts.
+  String? _signCheck;
+  var _signedIn = false;
 
   @override
   void initState() {
@@ -335,7 +387,11 @@ class _InstanceRowState extends State<_InstanceRow> {
       _ => 'hermuse-instance-dot',
     };
     return div(classes: 'hermuse-instance-row', [
-      div(classes: dot, []),
+      YsPing(
+        live: component.state == ConnectionState.ready,
+        color: YsTheme.success,
+        child: div(classes: dot, []),
+      ),
       div(classes: 'hermuse-instance-body', [
         if (_editing)
           div(classes: 'hermuse-instance-edit', [
@@ -384,6 +440,14 @@ class _InstanceRowState extends State<_InstanceRow> {
             ].join(' · '),
           ),
         ]),
+        // The sign-in's line: an empty box while it runs, ticked with
+        // sparks once signed in; it stays until another action starts.
+        if (_signCheck case final check?)
+          HermuseCheckLine(
+            key: const ValueKey('sign-in'),
+            text: check,
+            done: _signedIn,
+          ),
         if (component.authFailed && instance.auth == AuthMethod.password)
           _RowSignIn(
             instanceId: instance.id,
@@ -395,6 +459,7 @@ class _InstanceRowState extends State<_InstanceRow> {
             onToggle: () => setState(() {
               _signingIn = !_signingIn;
               _signInError = null;
+              _signCheck = null;
             }),
             onUsername: (v) => setState(() => _username = v),
             onPassword: (v) => setState(() => _password = v),
@@ -411,6 +476,7 @@ class _InstanceRowState extends State<_InstanceRow> {
             onPressed: () => setState(() {
               _draft = instance.label;
               _editing = !_editing;
+              _signCheck = null;
             }),
             size: 32,
           ),
@@ -423,13 +489,20 @@ class _InstanceRowState extends State<_InstanceRow> {
             ),
           YsButton.neutral(label: 'Setup', onPressed: component.onSetup),
           YsButton.neutral(
+            label: 'Components',
+            onPressed: component.onComponents,
+          ),
+          YsButton.neutral(
             label: 'Connections',
             onPressed: component.onConnections,
           ),
           YsButton.icon(
             icon: YsIcon.close,
             label: 'Delete',
-            onPressed: () => setState(() => _confirmDelete = true),
+            onPressed: () => setState(() {
+              _confirmDelete = true;
+              _signCheck = null;
+            }),
             size: 32,
           ),
         ],
@@ -439,16 +512,19 @@ class _InstanceRowState extends State<_InstanceRow> {
 
   Future<void> _signIn(BuildContext context) async {
     if (_signInBusy || _username.isEmpty || _password.isEmpty) return;
+    final username = _username;
     setState(() {
       _signInBusy = true;
       _signInError = null;
+      _signCheck = 'Signing in as $username…';
+      _signedIn = false;
     });
     try {
       await HermuseScope.container
           .read(instanceAuthProvider)
           .signIn(
             component.instance.id,
-            username: _username,
+            username: username,
             password: _password,
           );
       if (mounted) {
@@ -456,15 +532,22 @@ class _InstanceRowState extends State<_InstanceRow> {
           _username = '';
           _password = '';
           _signingIn = false;
+          _signCheck = 'Signed in as $username';
+          _signedIn = true;
         });
       }
     } on HermesAuthFailed {
-      if (mounted) setState(() => _signInError = 'Wrong username or password.');
+      if (mounted) _failSignIn('Wrong username or password.');
     } on Object catch (e) {
-      if (mounted) setState(() => _signInError = '$e');
+      if (mounted) _failSignIn('$e');
     }
     if (mounted) setState(() => _signInBusy = false);
   }
+
+  void _failSignIn(String message) => setState(() {
+    _signInError = message;
+    _signCheck = null;
+  });
 }
 
 /// Collapsed "Sign in" link expanding to an inline credential form.
@@ -513,6 +596,7 @@ class _RowSignIn extends StatelessComponent {
             placeholder: 'Username',
             name: 'row-username-$instanceId',
             label: 'Username',
+            icon: YsIcon.user,
             autocomplete: 'username',
           ),
         ]),
@@ -525,18 +609,18 @@ class _RowSignIn extends StatelessComponent {
             name: 'row-password-$instanceId',
             label: 'Password',
             obscure: true,
+            icon: YsIcon.lock,
             autocomplete: 'current-password',
           ),
         ]),
         YsButton.primary(
-          label: busy ? '…' : 'Sign in',
+          label: busy ? 'Signing in…' : 'Sign in',
           onPressed: busy || username.isEmpty || password.isEmpty
               ? null
               : onSubmit,
         ),
       ]),
-      if (error case final message?)
-        p(classes: 'hermuse-instance-signin-error', [.text(message)]),
+      if (error case final message?) HermuseErrorNotice(message),
     ]);
   }
 }

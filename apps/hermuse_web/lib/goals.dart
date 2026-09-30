@@ -10,6 +10,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'feed.dart';
+import 'route.dart';
 import 'route_styles.dart';
 import 'scope.dart';
 import 'screens.dart';
@@ -30,12 +31,31 @@ class HermuseGoals extends StatefulComponent {
     ...hermuseRouteStyles,
     css('.hermuse-goals-tracking').styles(color: .variable('--success')),
     css('.hermuse-goals-left').styles(textAlign: .left),
+    // A tracked goal: a paper row that lifts under the pointer. Marked done,
+    // it celebrates, then folds away.
+    css('.hermuse-goals-fold').styles(
+      display: .grid,
+      raw: {
+        'grid-template-rows': '1fr',
+        'transition':
+            'grid-template-rows ${YsDoneMotion.fold}ms ${YsEase.standard.css}, '
+            'opacity ${YsDoneMotion.fold}ms ${YsEase.standard.css}',
+      },
+    ),
+    css('.hermuse-goals-fold[data-folding]')
+        .styles(opacity: 0, raw: {'grid-template-rows': '0fr'}),
+    css('.hermuse-goals-clip').styles(raw: {'min-height': '0'}),
+    css('.hermuse-goals-fold[data-folding] .hermuse-goals-clip')
+        .styles(overflow: .hidden),
     css('.hermuse-goals-row').styles(
       width: 100.percent,
+      padding: .all(YsSpace.sm.px),
+      radius: .circular(YsRadius.row.px),
       display: .flex,
       flexDirection: .row,
       alignItems: .start,
-      gap: .all(12.px),
+      gap: .all(YsSpace.xs.px),
+      backgroundColor: .variable('--paper'),
     ),
     css('.hermuse-goals-check').styles(
       width: 36.px,
@@ -50,18 +70,9 @@ class HermuseGoals extends StatefulComponent {
       border: .none,
       raw: {'flex-shrink': '0'},
     ),
-    css('.hermuse-goals-box').styles(
-      width: 20.px,
-      height: 20.px,
-      radius: .circular(6.px),
-      border: .all(
-        style: .solid,
-        color: .variable('--content-subtle'),
-        width: 1.2.px,
-      ),
-    ),
     css('.hermuse-goals-body').styles(
       flex: .grow(1),
+      padding: .only(top: YsSpace.sm.px),
       display: .flex,
       flexDirection: .column,
       gap: .all(2.px),
@@ -69,10 +80,11 @@ class HermuseGoals extends StatefulComponent {
       backgroundColor: Colors.transparent,
       cursor: .pointer,
       border: .none,
-      padding: .zero,
       textAlign: .left,
       raw: {'min-width': '0'},
     ),
+    css('[data-done] .hermuse-goals-title')
+        .styles(color: .variable('--content-muted')),
     css('.hermuse-goals-title')
         .styles(fontSize: 15.px, lineHeight: 20.px, fontWeight: .w600),
     css('.hermuse-goals-why').styles(
@@ -101,8 +113,16 @@ class HermuseGoals extends StatefulComponent {
       fontSize: 15.px,
       lineHeight: 22.px,
     ),
+    css('.hermuse-goals-category.ys-lift').styles(
+      raw: {
+        'transition':
+            'background-color ${YsMotion.fast}ms linear, $ysLiftTransition',
+      },
+    ),
     css('.hermuse-goals-category:hover')
         .styles(backgroundColor: .variable('--neutral-film')),
+    css('.hermuse-goals-category:hover .ys-icon')
+        .styles(color: .variable('--primary')),
     css('.hermuse-goals-category-label').styles(flex: .grow(1)),
     css('.hermuse-goals-timeline')
         .styles(display: .flex, flexDirection: .column, gap: .all(12.px)),
@@ -135,6 +155,9 @@ class _HermuseGoalsState extends State<HermuseGoals> {
   String? _detailId;
   String? _createCategory;
 
+  /// Goals marked done here, still on screen while their row celebrates.
+  final _leaving = <String>{};
+
   @override
   Component build(BuildContext context) => HermusePluginGate(
     instance: component.instance,
@@ -149,7 +172,8 @@ class _HermuseGoalsState extends State<HermuseGoals> {
     final all = goals.value ?? const <Goal>[];
     final tracking = [
       for (final goal in all)
-        if (goal.status == GoalStatus.tracking) goal,
+        if (goal.status == GoalStatus.tracking || _leaving.contains(goal.id))
+          goal,
     ];
     final detail = _detailId == null
         ? null
@@ -171,9 +195,13 @@ class _HermuseGoalsState extends State<HermuseGoals> {
               .text('Tracking'),
             ]),
             if (tracking.isEmpty)
-              p(classes: 'hermuse-route-sub', [
-                .text('Nothing tracked yet. Create your first goal below.'),
-              ])
+              HermuseRouteEmpty(
+                art: YsArt.goals,
+                size: YsLayout.artCompact,
+                top: 0,
+                title: 'Nothing tracked yet',
+                body: 'Pick a category below to set your first goal.',
+              )
             else
               for (final goal in tracking)
                 _TrackingRow(
@@ -181,6 +209,11 @@ class _HermuseGoalsState extends State<HermuseGoals> {
                   instanceId: component.instance.id,
                   goal: goal,
                   onOpen: () => setState(() => _detailId = goal.id),
+                  onLeaving: (leaving) => setState(
+                    () => leaving
+                        ? _leaving.add(goal.id)
+                        : _leaving.remove(goal.id),
+                  ),
                 ),
           ]),
           div(classes: 'hermuse-route-section', [
@@ -189,7 +222,7 @@ class _HermuseGoalsState extends State<HermuseGoals> {
               YsPressable(
                 onPressed: () => setState(() => _createCategory = category),
                 label: 'Create a ${_goalLabel(category)} goal',
-                classes: 'hermuse-goals-category',
+                classes: 'hermuse-goals-category ys-lift ys-press',
                 builder: (context, press) => .fragment([
                   span(classes: 'hermuse-goals-category-label', [
                     .text(_goalLabel(category)),
@@ -234,18 +267,25 @@ class _HermuseGoalsState extends State<HermuseGoals> {
   };
 }
 
-/// One Tracking row: checkbox flips to done, body opens the detail dialog.
+/// One Tracking row: the box marks the goal done, the body opens the detail
+/// dialog.
+///
+/// Marked done, the box fills, its tick draws and sparks fly out; the row
+/// holds a moment ([YsDoneMotion.hold]), then folds away. [onLeaving] keeps
+/// the row listed meanwhile, although the goal is no longer tracked.
 class _TrackingRow extends StatefulComponent {
   const _TrackingRow({
     required this.instanceId,
     required this.goal,
     required this.onOpen,
+    required this.onLeaving,
     super.key,
   });
 
   final String instanceId;
   final Goal goal;
   final VoidCallback onOpen;
+  final ValueChanged<bool> onLeaving;
 
   @override
   State<_TrackingRow> createState() => _TrackingRowState();
@@ -253,41 +293,82 @@ class _TrackingRow extends StatefulComponent {
 
 class _TrackingRowState extends State<_TrackingRow> {
   var _busy = false;
+  var _done = false;
+  var _folding = false;
 
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-goals-row', [
-    YsPressable(
-      onPressed: _busy ? null : () => unawaited(_complete(context)),
-      label: 'Mark ${component.goal.title} complete',
-      classes: 'hermuse-goals-check',
-      builder: (context, press) => div(classes: 'hermuse-goals-box', []),
-    ),
-    YsPressable(
-      onPressed: component.onOpen,
-      label: 'Open ${component.goal.title}',
-      classes: 'hermuse-goals-body',
-      builder: (context, press) => .fragment([
-        span(classes: 'hermuse-goals-title', [.text(component.goal.title)]),
-        if (component.goal.why.isNotEmpty)
-          span(classes: 'hermuse-goals-why', [.text(component.goal.why)]),
+  Component build(BuildContext context) => div(
+    classes: 'hermuse-goals-fold',
+    attributes: {if (_folding) 'data-folding': ''},
+    [
+      div(classes: 'hermuse-goals-clip', [
+        div(
+          classes: _done ? 'hermuse-goals-row' : 'hermuse-goals-row ys-lift',
+          attributes: {if (_done) 'data-done': ''},
+          [
+            YsPressable(
+              onPressed: _busy ? null : () => unawaited(_complete(context)),
+              label: 'Mark ${component.goal.title} complete',
+              classes: 'hermuse-goals-check',
+              builder: (context, press) =>
+                  YsDoneBox(done: _done, hovered: press.hovered),
+            ),
+            YsPressable(
+              onPressed: component.onOpen,
+              label: 'Open ${component.goal.title}',
+              classes: 'hermuse-goals-body',
+              builder: (context, press) => .fragment([
+                span(classes: 'hermuse-goals-title', [
+                  .text(component.goal.title),
+                ]),
+                if (component.goal.why.isNotEmpty)
+                  span(classes: 'hermuse-goals-why', [
+                    .text(component.goal.why),
+                  ]),
+              ]),
+            ),
+          ],
+        ),
       ]),
-    ),
-  ]);
+    ],
+  );
 
   Future<void> _complete(BuildContext context) async {
-    setState(() => _busy = true);
+    final still = ysReducedMotion();
+    component.onLeaving(true);
+    setState(() {
+      _busy = true;
+      _done = true;
+    });
     try {
-      await context.container
-          .read(goalsProvider(component.instanceId).notifier)
-          .updateGoal(
-            goalId: component.goal.id,
-            note: 'Marked complete.',
-            status: GoalStatus.done,
-          );
+      await Future.wait<void>([
+        context.container
+            .read(goalsProvider(component.instanceId).notifier)
+            .updateGoal(
+              goalId: component.goal.id,
+              note: 'Marked complete.',
+              status: GoalStatus.done,
+            ),
+        if (!still)
+          Future<void>.delayed(
+            Duration(
+              milliseconds: YsStepMark.tick.durationMs + YsDoneMotion.hold,
+            ),
+          ),
+      ]);
+      if (!still && mounted) {
+        setState(() => _folding = true);
+        await Future<void>.delayed(
+          const Duration(milliseconds: YsDoneMotion.fold),
+        );
+      }
     } on Object catch (_) {
-      // The list refresh shows the truth.
+      // The box empties again; the list refresh shows the truth.
+      if (mounted) setState(() => _done = false);
     }
-    if (mounted) setState(() => _busy = false);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    component.onLeaving(false);
   }
 }
 

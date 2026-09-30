@@ -174,32 +174,38 @@ class HermuseThread extends StatelessComponent {
                 ),
               ]),
               div(classes: 'hermuse-composer-trailing', [
-                if (busy)
-                  YsPressable(
-                    onPressed: onInterrupt,
-                    label: 'Stop',
-                    classes: 'hermuse-stop',
-                    builder: (context, press) =>
-                        YsIconView(YsIcon.close, size: 18),
-                  )
-                else if (draft.trim().isEmpty)
-                  YsTooltip(
-                    label: 'Voice',
-                    child: YsButton.icon(
-                      icon: YsIcon.mic,
-                      label: 'Voice',
-                      onPressed: null,
-                      size: 32,
-                    ),
-                  )
-                else
-                  YsPressable(
-                    onPressed: onSend,
-                    label: 'Send',
-                    classes: 'hermuse-send',
-                    builder: (context, press) =>
-                        YsIconView(YsIcon.send, size: 18),
-                  ),
+                _Morph(
+                  action: busy
+                      ? 'stop'
+                      : draft.trim().isEmpty
+                      ? 'voice'
+                      : 'send',
+                  child: busy
+                      ? YsPressable(
+                          onPressed: onInterrupt,
+                          label: 'Stop',
+                          classes: 'hermuse-stop',
+                          builder: (context, press) =>
+                              YsIconView(YsIcon.close, size: 18),
+                        )
+                      : draft.trim().isEmpty
+                      ? YsTooltip(
+                          label: 'Voice',
+                          child: YsButton.icon(
+                            icon: YsIcon.mic,
+                            label: 'Voice',
+                            onPressed: null,
+                            size: 32,
+                          ),
+                        )
+                      : YsPressable(
+                          onPressed: onSend,
+                          label: 'Send',
+                          classes: 'hermuse-send',
+                          builder: (context, press) =>
+                              YsIconView(YsIcon.send, size: 18),
+                        ),
+                ),
               ]),
             ]),
           ]),
@@ -449,6 +455,13 @@ class HermuseThread extends StatelessComponent {
         gap: .all(8.px),
         flex: .grow(1),
       ),
+      css('.hermuse-signin-head').styles(
+        display: .flex,
+        flexDirection: .row,
+        alignItems: .center,
+        gap: .all(8.px),
+        color: .variable('--error'),
+      ),
       css('.hermuse-signin-grow').styles(flex: .grow(1)),
       css('.hermuse-signin-row').styles(
         display: .flex,
@@ -464,14 +477,61 @@ class HermuseThread extends StatelessComponent {
       ),
       css('.hermuse-signin-fields .ys-inputbox')
           .styles(height: 36.px, fontSize: 14.px, lineHeight: 20.px),
-      css('.hermuse-signin-error').styles(
-        margin: .zero,
-        fontSize: 13.px,
-        lineHeight: 18.px,
-        color: .variable('--primary-2'),
+    ]),
+    // A new composer action turns in and grows from half size.
+    css.keyframes('hermuse-morph', {
+      '0%': Styles(
+        opacity: 0,
+        raw: {
+          'rotate': '${-YsMorphMotion.turn * 360}deg',
+          'scale': '${YsMorphMotion.from}',
+        },
       ),
+      '100%': Styles(opacity: 1, raw: {'rotate': '0deg', 'scale': '1'}),
+    }),
+    css('.hermuse-morph').styles(display: .inlineFlex),
+    css('.hermuse-morph-in').styles(
+      raw: {
+        'animation':
+            'hermuse-morph ${YsMorphMotion.swap}ms ${YsEase.settle.css} '
+            'backwards',
+      },
+    ),
+    css.media(MediaQuery.raw(ysReducedMotionQuery), [
+      css('.hermuse-morph-in').styles(raw: {'animation': 'none'}),
     ]),
   ];
+}
+
+/// The composer's trailing [action] (voice, send or stop): a new action
+/// turns in [YsMorphMotion.turn] of a turn and grows from
+/// [YsMorphMotion.from] ([YsMorphMotion.swap] ms) while the previous one is
+/// gone at once; the first one simply shows.
+class _Morph extends StatefulComponent {
+  const _Morph({required this.action, required this.child});
+
+  final String action;
+  final Component child;
+
+  @override
+  State<_Morph> createState() => _MorphState();
+}
+
+class _MorphState extends State<_Morph> {
+  var _changed = false;
+
+  @override
+  void didUpdateComponent(_Morph oldComponent) {
+    super.didUpdateComponent(oldComponent);
+    if (oldComponent.action != component.action) _changed = true;
+  }
+
+  @override
+  Component build(BuildContext context) => span(
+    key: ValueKey(component.action),
+    classes: _changed ? 'hermuse-morph hermuse-morph-in' : 'hermuse-morph',
+    [component.child],
+  );
 }
 
 /// Display title of a side chat: the agent names it after the first
@@ -590,10 +650,12 @@ class _SignInBannerState extends State<_SignInBanner> {
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-conn-banner', [
-    YsIconView(YsIcon.close, size: 16),
     div(classes: 'hermuse-signin', [
-      span(classes: 'hermuse-conn-text', [
-        .text(component.error ?? 'Signed out — sign in again to reconnect.'),
+      div(classes: 'hermuse-signin-head', [
+        YsIconView(YsIcon.lock, size: YsLayout.inlineIcon),
+        span(classes: 'hermuse-conn-text', [
+          .text(component.error ?? 'Signed out — sign in again to reconnect.'),
+        ]),
       ]),
       div(classes: 'hermuse-signin-row', [
         div(classes: 'hermuse-signin-fields', [
@@ -605,6 +667,7 @@ class _SignInBannerState extends State<_SignInBanner> {
               placeholder: 'Username',
               name: 'signin-username',
               label: 'Username',
+              icon: YsIcon.user,
               autocomplete: 'username',
             ),
           ]),
@@ -617,6 +680,7 @@ class _SignInBannerState extends State<_SignInBanner> {
               name: 'signin-password',
               label: 'Password',
               obscure: true,
+              icon: YsIcon.lock,
               autocomplete: 'current-password',
             ),
           ]),
@@ -627,11 +691,11 @@ class _SignInBannerState extends State<_SignInBanner> {
               : _submit,
           label: 'Sign in',
           classes: 'hermuse-conn-retry',
-          builder: (context, press) => span([.text(_busy ? '…' : 'Sign in')]),
+          builder: (context, press) =>
+              span([.text(_busy ? 'Signing in…' : 'Sign in')]),
         ),
       ]),
-      if (_error case final error?)
-        p(classes: 'hermuse-signin-error', [.text(error)]),
+      if (_error case final error?) HermuseErrorNotice(error),
     ]),
   ]);
 
@@ -649,6 +713,7 @@ class _SignInBannerState extends State<_SignInBanner> {
             username: _username,
             password: _password,
           );
+      // The chat reconnects and the banner goes away.
       if (mounted) {
         setState(() {
           _username = '';

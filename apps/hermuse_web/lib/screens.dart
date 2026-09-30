@@ -18,8 +18,8 @@ class HermuseRelayRequired extends StatelessComponent {
 
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-screen', [
-    div(classes: 'hermuse-card', [
-      div(classes: 'hermuse-card-icon', [YsIconView(YsIcon.chat, size: 28)]),
+    div(classes: 'hermuse-card ys-enter', [
+      HermuseCardArt(YsArt.relay),
       h1(classes: 'hermuse-card-title', [.text('A Hermuse relay is required')]),
       p(classes: 'hermuse-card-body', [
         .text(
@@ -44,8 +44,193 @@ class HermuseRelayRequired extends StatelessComponent {
   static List<StyleRule> get styles => hermuseScreenStyles;
 }
 
+/// Card illustration of a full-page status: [art], hero-sized, draws in
+/// when the card shows, plays again under the pointer and loops while
+/// [busy] (work under way). Desktop parity: `YsDialogArt`.
+class HermuseCardArt extends StatelessComponent {
+  const HermuseCardArt(this.art, {this.busy = false, super.key});
+
+  final YsArt art;
+  final bool busy;
+
+  // The drawing ignores the pointer: its host tracks it.
+  @override
+  Component build(BuildContext context) => YsHover(
+    builder: (context, hovered) => span(classes: 'hermuse-card-art', [
+      YsArtView.hero(art, active: hovered, busy: busy),
+    ]),
+  );
+}
+
+/// Full-screen wait: [art] loops in the middle of the canvas until what the
+/// screen waits for arrives; [label] is announced. Desktop parity:
+/// `LoadingScreen`.
+class HermuseLoading extends StatelessComponent {
+  const HermuseLoading({required this.art, required this.label, super.key});
+
+  final YsArt art;
+  final String label;
+
+  @override
+  Component build(BuildContext context) => div(
+    classes: 'hermuse-screen',
+    attributes: {'role': 'status', 'aria-label': label},
+    [HermuseCardArt(art, busy: true)],
+  );
+}
+
+/// Head of a dialog or list page: its drawing beside the [title] and a
+/// muted [helper] line, then [trailing] (its close button). The drawing
+/// plays again under the pointer and loops while [busy]. Desktop parity:
+/// `YsDialogHead`.
+class HermuseDialogHead extends StatelessComponent {
+  const HermuseDialogHead({
+    required this.art,
+    required this.title,
+    required this.helper,
+    required this.trailing,
+    this.busy = false,
+    this.live = false,
+    super.key,
+  });
+
+  final YsArt art;
+  final String title;
+  final String helper;
+  final Component trailing;
+  final bool busy;
+
+  /// [helper] says what happens now: it is announced as it changes and a
+  /// new line fades in.
+  final bool live;
+
+  @override
+  Component build(BuildContext context) => div(classes: 'hermuse-head', [
+    YsHover(
+      builder: (context, hovered) => span(classes: 'hermuse-head-art', [
+        YsArtView(art, size: YsLayout.artHeader, active: hovered, busy: busy),
+      ]),
+    ),
+    div(classes: 'hermuse-head-titles', [
+      h1(classes: 'hermuse-head-title', [.text(title)]),
+      p(
+        classes: 'hermuse-head-helper',
+        attributes: live ? const {'role': 'status'} : null,
+        [
+          if (live)
+            span(key: ValueKey(helper), classes: 'hermuse-head-live', [
+              .text(helper),
+            ])
+          else
+            .text(helper),
+        ],
+      ),
+    ]),
+    trailing,
+  ]);
+}
+
+/// What a check says: an empty box while it runs, ticked with sparks the
+/// moment it succeeds ([done]). Desktop parity: `YsDialogCheck`.
+class HermuseCheckLine extends StatelessComponent {
+  const HermuseCheckLine({required this.text, required this.done, super.key});
+
+  final String text;
+  final bool done;
+
+  @override
+  Component build(BuildContext context) => div(
+    classes: done
+        ? 'hermuse-check-line hermuse-check-line-done'
+        : 'hermuse-check-line',
+    attributes: {'role': 'status'},
+    [
+      YsDoneBox(done: done),
+      span([.text(text)]),
+    ],
+  );
+}
+
+/// A failure, on a faint error wash. Desktop parity: `YsDialogError`.
+class HermuseErrorNotice extends StatelessComponent {
+  const HermuseErrorNotice(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Component build(BuildContext context) => p(
+    classes: 'hermuse-error-notice',
+    attributes: {'role': 'alert'},
+    [.text(text)],
+  );
+}
+
 /// Shared full-screen card styles (relay-required, welcome, instances…).
 List<StyleRule> get hermuseScreenStyles => [
+  css('.hermuse-card-art').styles(display: .flex),
+  css('.hermuse-head', [
+    css('&').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .start,
+      gap: .all(YsSpace.lg.px),
+      margin: .only(bottom: YsSpace.xs.px),
+    ),
+    css('.hermuse-head-art').styles(display: .flex, raw: {'flex-shrink': '0'}),
+    css('.hermuse-head-titles').styles(
+      flex: .grow(1),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(YsSpace.xs.px),
+      raw: {'min-width': '0'},
+    ),
+    css('.hermuse-head-title').styles(
+      margin: .zero,
+      fontSize: YsType.title.size.px,
+      fontWeight: .w500,
+      lineHeight: YsType.title.lineHeight.px,
+    ),
+    css('.hermuse-head-helper').styles(
+      margin: .zero,
+      color: .variable('--content-muted'),
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
+    ),
+    // A new line of a live helper fades in.
+    css('.hermuse-head-live').styles(
+      raw: {
+        'animation':
+            'hermuse-head-swap ${YsStepMotion.swap}ms ${YsEase.standard.css} '
+            'backwards',
+      },
+    ),
+  ]),
+  css.keyframes('hermuse-head-swap', {
+    '0%': Styles(opacity: 0),
+    '100%': Styles(opacity: 1),
+  }),
+  css.media(MediaQuery.raw(ysReducedMotionQuery), [
+    css('.hermuse-head-live').styles(raw: {'animation': 'none'}),
+  ]),
+  css('.hermuse-check-line').styles(
+    display: .flex,
+    flexDirection: .row,
+    alignItems: .center,
+    gap: .all((YsSpace.sm + YsSpace.xxs).px),
+    color: .variable('--content-muted'),
+    fontSize: YsType.small.size.px,
+    lineHeight: YsType.small.lineHeight.px,
+  ),
+  css('.hermuse-check-line-done').styles(color: .variable('--success')),
+  css('.hermuse-error-notice').styles(
+    margin: .zero,
+    padding: .all(YsSpace.md.px),
+    radius: .circular(YsRadius.row.px),
+    color: .variable('--error'),
+    backgroundColor: .variable('--error-wash'),
+    fontSize: YsType.small.size.px,
+    lineHeight: YsType.small.lineHeight.px,
+  ),
   css('.hermuse-screen', [
     css('&').styles(
       flex: .grow(1),
@@ -74,16 +259,6 @@ List<StyleRule> get hermuseScreenStyles => [
       backgroundColor: .variable('--paper'),
     ),
     css('.hermuse-card-narrow').styles(maxWidth: YsLayout.dialogNarrow.px),
-    css('.hermuse-card-icon').styles(
-      width: 56.px,
-      height: 56.px,
-      radius: .circular(28.px),
-      display: .flex,
-      alignItems: .center,
-      justifyContent: .center,
-      color: .variable('--primary-content'),
-      backgroundColor: .variable('--primary'),
-    ),
     css('.hermuse-card-title').styles(
       margin: .zero,
       textAlign: .center,

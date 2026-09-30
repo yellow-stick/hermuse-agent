@@ -177,6 +177,69 @@ final linuxSetupProvider =
       LinuxSetupController.new,
     );
 
+/// A part of this computer the assistant prepares, in the order it does.
+enum SetupPart {
+  /// The system packages Hermes Agent needs to build and run.
+  systemPackages,
+
+  /// A Secret Service keyring that stores, returns and deletes a secret.
+  keyring,
+
+  /// A Docker engine the agent's computer can use.
+  docker,
+
+  /// A compatible Hermes Agent, adopted or installed, and its backend.
+  hermes,
+
+  /// The bundled Hermuse plugin on that Hermes Agent.
+  plugin,
+
+  /// The bundled subscription bridge, verified.
+  bridge,
+
+  /// The agent's computer: its image, its container and its screen.
+  computer,
+}
+
+/// How a [SetupPart] became ready in this session.
+enum SetupPartReadiness {
+  /// It was already there and works: reused as it is.
+  found,
+
+  /// This session installed, started or set it up.
+  prepared,
+}
+
+extension LinuxStepPart on LinuxDependencyStep {
+  /// The part this system step prepares; null for the authorization.
+  SetupPart? get part => switch (this) {
+    LinuxDependencyStep.authorization => null,
+    LinuxDependencyStep.hermesTools => SetupPart.systemPackages,
+    LinuxDependencyStep.secretService ||
+    LinuxDependencyStep.activateSecretService => SetupPart.keyring,
+    LinuxDependencyStep.dockerInstall ||
+    LinuxDependencyStep.dockerStart ||
+    LinuxDependencyStep.dockerGroup ||
+    LinuxDependencyStep.startRootlessDocker => SetupPart.docker,
+  };
+}
+
+extension LinuxBlockerPart on LinuxBlocker {
+  /// The part this blocker holds back; null when it concerns the whole
+  /// system (no setup helper, an unsupported system, no way to authorize).
+  SetupPart? get part => switch (kind) {
+    LinuxBlockerKind.sessionBusMissing => SetupPart.keyring,
+    LinuxBlockerKind.systemdMissing ||
+    LinuxBlockerKind.userManagerMissing ||
+    LinuxBlockerKind.dockerRemoteContext ||
+    LinuxBlockerKind.dockerContextUnavailable ||
+    LinuxBlockerKind.dockerUnusable => SetupPart.docker,
+    LinuxBlockerKind.helperUnavailable ||
+    LinuxBlockerKind.unsupportedOs ||
+    LinuxBlockerKind.authorizationUnavailable => null,
+  };
+}
+
 /// Where the assistant is.
 @immutable
 final class LinuxSetupState {
@@ -186,6 +249,8 @@ final class LinuxSetupState {
     this.keystoreVerified = false,
     this.stopping = false,
     this.log = const [],
+    this.parts = const {},
+    this.hermesVersion,
   });
 
   final LinuxSetupGoal? goal;
@@ -202,8 +267,23 @@ final class LinuxSetupState {
   /// 200).
   final List<String> log;
 
+  /// The parts known ready in this session, and how. A part that a fresh
+  /// check finds missing again leaves this map.
+  final Map<SetupPart, SetupPartReadiness> parts;
+
+  /// Release of the Hermes Agent in use (`0.21.5`), once known.
+  final String? hermesVersion;
+
   /// Whether the assistant has something to show.
   bool get active => phase is! SetupIdle && phase is! SetupFinished;
+
+  /// Whether the reached goal still shows its "ready" moment before the app
+  /// takes the user on ([LinuxSetupController.acknowledge] ends it): the
+  /// local Hermes Agent and the agent's computer, which the user watched
+  /// being prepared.
+  bool get showsReady =>
+      phase is SetupFinished &&
+      (goal == LinuxSetupGoal.local || goal == LinuxSetupGoal.computer);
 
   LinuxSetupState copyWith({
     LinuxSetupGoal? goal,
@@ -211,12 +291,16 @@ final class LinuxSetupState {
     bool? keystoreVerified,
     bool? stopping,
     List<String>? log,
+    Map<SetupPart, SetupPartReadiness>? parts,
+    String? hermesVersion,
   }) => LinuxSetupState(
     goal: goal ?? this.goal,
     phase: phase ?? this.phase,
     keystoreVerified: keystoreVerified ?? this.keystoreVerified,
     stopping: stopping ?? this.stopping,
     log: log ?? this.log,
+    parts: parts ?? this.parts,
+    hermesVersion: hermesVersion ?? this.hermesVersion,
   );
 }
 
@@ -230,10 +314,35 @@ final class SetupIdle extends SetupPhase {
   const SetupIdle();
 }
 
+/// What a [SetupWorking] phase does.
+enum SetupActivity {
+  /// Inspecting the system half of the goal: the keyring, and for a local
+  /// Hermes Agent its system packages and Docker.
+  inspectingSystem(null),
+  checkingKeyring(SetupPart.keyring),
+  checkingDocker(SetupPart.docker),
+  lookingForHermes(SetupPart.hermes),
+  readingInstallPlan(SetupPart.hermes),
+
+  /// Another app window runs the same install; this one waits for it.
+  waitingForOtherInstall(SetupPart.hermes),
+  startingHermes(SetupPart.hermes),
+  installingPlugin(SetupPart.plugin),
+  checkingBridge(SetupPart.bridge),
+
+  /// The plugin's doctor, once everything else is ready.
+  checkingPlugin(SetupPart.plugin);
+
+  const SetupActivity(this.part);
+
+  /// The part it works on; null for the whole system half.
+  final SetupPart? part;
+}
+
 /// Checking or waiting on something that needs no answer.
 final class SetupWorking extends SetupPhase {
-  const SetupWorking(this.message);
-  final String message;
+  const SetupWorking(this.activity);
+  final SetupActivity activity;
 }
 
 /// What the user must decide or fix: steps to authorize ("Prepare"),
@@ -360,8 +469,12 @@ final class SetupComputer extends SetupPhase {
 
 /// A step failed; "Check again" goes on from there.
 final class SetupFailed extends SetupPhase {
-  const SetupFailed(this.message);
+  const SetupFailed(this.message, {this.part});
   final String message;
+
+  /// The part that failed; null when the failure concerns none in
+  /// particular.
+  final SetupPart? part;
 }
 
 /// Stopped on request before the next step.
@@ -402,6 +515,9 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
 
   /// The bundled plugin went onto the local Hermes in this session.
   bool _pluginInstalled = false;
+
+  /// This session ran the Hermes Agent install to its end.
+  bool _hermesInstalled = false;
 
   @override
   LinuxSetupState build() => const LinuxSetupState();
@@ -538,7 +654,9 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       try {
         await body();
       } on Object catch (error) {
-        _show(SetupFailed(_describe(error)));
+        if (ref.mounted) {
+          _show(SetupFailed(_describe(error), part: _partOf(state.phase)));
+        }
       } finally {
         if (identical(_operation, operation)) _operation = null;
         _cancellation = null;
@@ -556,7 +674,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     KeyringProblem? keyring;
     if (goal == LinuxSetupGoal.reopen) {
       // A working keyring needs no inspection of the system.
-      _show(const SetupWorking('Checking the system keyring…'));
+      _show(const SetupWorking(SetupActivity.checkingKeyring));
       keyring = await _probeKeystore();
       if (keyring == null) return _reopened();
     }
@@ -581,13 +699,14 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       _show(SetupReview(keyring: keyring, blockers: [?_unavailable()]));
       return false;
     }
-    _show(const SetupWorking('Checking this computer…'));
+    _show(const SetupWorking(SetupActivity.inspectingSystem));
     final inspection = _inspection = await inspect();
     final plan = LinuxDependencyPlan.compute(
       inspection,
       goal.targets,
       useLocalDockerEngine: await _localDockerChosen(),
     );
+    _noteSystem(plan, inspection);
     if (plan.steps.isNotEmpty &&
         plan.blockers.isEmpty &&
         !plan.needsAuthorization) {
@@ -671,6 +790,14 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       return false;
     }
     _inspection = ended.inspection;
+    _noteSystem(
+      ended.plan,
+      ended.inspection,
+      prepared: {
+        for (final f in finished)
+          if (f.outcome == LinuxStepOutcome.done) ?f.step.part,
+      },
+    );
     if (ended.outcome == LinuxApplyOutcome.ready) {
       _plan = ended.plan;
       return true;
@@ -681,7 +808,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
 
   /// The system is ready: a verified keyring, then the rest of [goal].
   Future<void> _continue(LinuxSetupGoal goal) async {
-    _show(const SetupWorking('Checking the system keyring…'));
+    _show(const SetupWorking(SetupActivity.checkingKeyring));
     final keyring = await _probeKeystore();
     if (keyring != null) {
       _show(
@@ -712,12 +839,22 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     try {
       await verifySecretStore(ref.read(secretStoreProvider));
     } on Object catch (error) {
+      _forget(SetupPart.keyring);
       return KeyringProblem(
         locked: isKeyringLocked(error),
         detail: _describe(error),
       );
     }
-    if (ref.mounted) state = state.copyWith(keystoreVerified: true);
+    if (ref.mounted) {
+      state = state.copyWith(
+        keystoreVerified: true,
+        parts: {
+          ...state.parts,
+          SetupPart.keyring:
+              state.parts[SetupPart.keyring] ?? SetupPartReadiness.found,
+        },
+      );
+    }
     return null;
   }
 
@@ -727,7 +864,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     final registry = await ref.read(registryProvider.future);
     final inspect = _services.system.inspect;
     if (registry.byId(localInstanceId) != null && inspect != null) {
-      _show(const SetupWorking("Checking Docker for the agent's computer…"));
+      _show(const SetupWorking(SetupActivity.checkingDocker));
       DockerEndpoint? endpoint;
       try {
         endpoint = LinuxDependencyPlan.compute(await inspect(), const {
@@ -739,6 +876,9 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
         endpoint = null;
       }
       _services.useDockerEndpoint(endpoint);
+      if (endpoint != null && !state.parts.containsKey(SetupPart.docker)) {
+        _note(SetupPart.docker, SetupPartReadiness.found);
+      }
     }
     _finish();
   }
@@ -747,19 +887,20 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     final hermes = await _hermes();
     if (hermes == null || _stopped()) return;
     final registry = await ref.read(registryProvider.future);
-    _show(const SetupWorking('Starting Hermes Agent…'));
+    _show(const SetupWorking(SetupActivity.startingHermes));
     await _startBackend(registry, hermes);
     if (_stopped()) return;
     if (!_pluginInstalled) {
-      _show(const SetupWorking('Installing the Hermuse plugin…'));
+      _show(const SetupWorking(SetupActivity.installingPlugin));
       await _services.installPlugin(registry);
       // The backend restarted on a new port.
       _reconnectLocal();
       await _withLocalRest(_pluginMounted);
       _pluginInstalled = true;
-      if (_stopped()) return;
     }
-    _show(const SetupWorking('Checking the subscription bridge…'));
+    _note(SetupPart.plugin, SetupPartReadiness.prepared);
+    if (_stopped()) return;
+    _show(const SetupWorking(SetupActivity.checkingBridge));
     try {
       await _services.verifyBridge();
     } on CliproxyVerificationFailed catch (e) {
@@ -767,18 +908,20 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
         SetupFailed(
           'The subscription bridge cannot be trusted: ${e.message}. '
           'Reinstall Hermuse Agent.',
+          part: SetupPart.bridge,
         ),
       );
       return;
     }
+    _note(SetupPart.bridge, SetupPartReadiness.found);
     if (_stopped() || !await _computerUntilReady(registry, hermes)) return;
-    _show(const SetupWorking('Checking the Hermuse plugin…'));
+    _show(const SetupWorking(SetupActivity.checkingPlugin));
     try {
       await _services.pluginDoctor();
     } on ProcessFailed catch (e) {
       _clearLog();
       e.outputTail.split('\n').where((l) => l.trim().isNotEmpty).forEach(_log);
-      _show(SetupFailed(e.message));
+      _show(SetupFailed(e.message, part: SetupPart.plugin));
       return;
     }
     await ref.read(activeThreadProvider.notifier).openInstance(localInstanceId);
@@ -786,7 +929,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
   }
 
   Future<void> _computerGoal() async {
-    _show(const SetupWorking('Looking for Hermes Agent…'));
+    _show(const SetupWorking(SetupActivity.lookingForHermes));
     final hermes = await _services.detectHermes();
     if (hermes == null || !hermes.compatible) {
       _show(
@@ -794,12 +937,14 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
           hermes == null
               ? 'Hermes Agent is not installed on this computer.'
               : incompatibleHermesMessage(hermes),
+          part: SetupPart.hermes,
         ),
       );
       return;
     }
+    _noteHermes(hermes);
     final registry = await ref.read(registryProvider.future);
-    _show(const SetupWorking('Starting Hermes Agent…'));
+    _show(const SetupWorking(SetupActivity.startingHermes));
     await _startBackend(registry, hermes);
     if (!_stopped() && await _computerUntilReady(registry, hermes)) _finish();
   }
@@ -807,24 +952,47 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
   /// A compatible Hermes to supervise: the one found (an unsupported one is
   /// left as it is), or the journaled install, fresh or resumed.
   Future<DetectedHermes?> _hermes() async {
-    _show(const SetupWorking('Looking for Hermes Agent…'));
+    _show(const SetupWorking(SetupActivity.lookingForHermes));
     final found = await _services.detectHermes();
     if (found != null) {
-      if (found.compatible) return found;
+      if (found.compatible) {
+        _noteHermes(found);
+        return found;
+      }
+      _forget(SetupPart.hermes);
       _show(SetupHermesKept(incompatibleHermesMessage(found), found: found));
       return null;
     }
     if (_stopped() || !await _install()) return null;
     final installed = await _services.detectHermes();
-    if (installed != null && installed.compatible) return installed;
+    if (installed != null && installed.compatible) {
+      _noteHermes(installed);
+      return installed;
+    }
     _show(
       SetupFailed(
         installed == null
             ? 'The install finished, but its Hermes Agent does not answer.'
             : incompatibleHermesMessage(installed),
+        part: SetupPart.hermes,
       ),
     );
     return null;
+  }
+
+  /// [hermes] is the one in use: prepared when this session installed it,
+  /// found otherwise.
+  void _noteHermes(DetectedHermes hermes) {
+    if (!ref.mounted) return;
+    state = state.copyWith(
+      parts: {
+        ...state.parts,
+        SetupPart.hermes: _hermesInstalled
+            ? SetupPartReadiness.prepared
+            : SetupPartReadiness.found,
+      },
+      hermesVersion: hermes.semver,
+    );
   }
 
   Future<bool> _install() async {
@@ -832,7 +1000,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     if (lock == null) return false;
     try {
       final installer = _services.newInstaller();
-      _show(const SetupWorking('Reading the Hermes Agent install plan…'));
+      _show(const SetupWorking(SetupActivity.readingInstallPlan));
       final manifest = await installer.manifest();
       if (_stopped()) return false;
       _clearLog();
@@ -892,6 +1060,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       );
       return false;
     }
+    _hermesInstalled = true;
     return true;
   }
 
@@ -909,12 +1078,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       } on FileSystemException {
         if (!waiting) {
           waiting = true;
-          _show(
-            const SetupWorking(
-              'Another Hermuse Agent window is installing Hermes Agent. '
-              'Waiting for it to finish…',
-            ),
-          );
+          _show(const SetupWorking(SetupActivity.waitingForOtherInstall));
         }
       }
       if (_stopped()) {
@@ -977,72 +1141,81 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
   /// state until it runs and its screen answers. A download or build in
   /// progress is not ready; Docker missing (the desktop-setup hint) or not
   /// answering goes back to the system, once ([recheck]).
-  Future<_ComputerResult> _computer({required bool recheck}) =>
-      _withLocalRest((rest) async {
-        final computer = ComputerClient(rest);
-        _show(const SetupComputer());
-        var status = await computer.setup();
-        var setupAt = DateTime.now();
-        var starts = 0;
-        while (true) {
-          _show(SetupComputer(status: status));
-          switch (status.state) {
-            case ComputerState.running:
-              return await _showsScreen(computer)
-                  ? _ComputerResult.ready
-                  : _ComputerResult.stopped;
-            case ComputerState.stopped:
-              if (++starts > _maxStarts) {
-                _show(
-                  SetupFailed(
-                    "The agent's computer stops right after it starts"
-                    '${status.detail.isEmpty ? '' : ': ${status.detail}'}.',
-                  ),
-                );
-                return _ComputerResult.stopped;
-              }
-              await computer.start();
-              status = await computer.status();
-              continue;
-            case ComputerState.dockerMissing || ComputerState.daemonDown:
-              if (!recheck) {
-                _show(SetupFailed(_dockerUnusable(status)));
-                return _ComputerResult.stopped;
-              }
-              return await _prepareSystem(state.goal ?? LinuxSetupGoal.computer)
-                  ? _ComputerResult.recheck
-                  : _ComputerResult.stopped;
-            case ComputerState.error:
-              _show(
-                SetupFailed(
-                  status.detail.isEmpty
-                      ? "The agent's computer could not be prepared."
-                      : status.detail,
-                ),
-              );
-              return _ComputerResult.stopped;
-            case ComputerState.missing:
-              _show(
-                const SetupFailed(
-                  'The Hermuse plugin does not answer on this computer.',
-                ),
-              );
-              return _ComputerResult.stopped;
-            case ComputerState.imageMissing || ComputerState.building:
-              break;
+  Future<_ComputerResult> _computer({required bool recheck}) => _withLocalRest((
+    rest,
+  ) async {
+    final computer = ComputerClient(rest);
+    _show(const SetupComputer());
+    var status = await computer.setup();
+    // Running at once: the computer was already there.
+    final found = status.state == ComputerState.running;
+    var setupAt = DateTime.now();
+    var starts = 0;
+    while (true) {
+      _show(SetupComputer(status: status));
+      switch (status.state) {
+        case ComputerState.running:
+          if (!await _showsScreen(computer)) return _ComputerResult.stopped;
+          _note(
+            SetupPart.computer,
+            found ? SetupPartReadiness.found : SetupPartReadiness.prepared,
+          );
+          return _ComputerResult.ready;
+        case ComputerState.stopped:
+          if (++starts > _maxStarts) {
+            _show(
+              SetupFailed(
+                "The agent's computer stops right after it starts"
+                '${status.detail.isEmpty ? '' : ': ${status.detail}'}.',
+                part: SetupPart.computer,
+              ),
+            );
+            return _ComputerResult.stopped;
           }
-          if (_stopped()) return _ComputerResult.stopped;
-          await Future<void>.delayed(_services.pollInterval);
-          if (status.state == ComputerState.imageMissing &&
-              DateTime.now().difference(setupAt) >= _setupRetry) {
-            // No bootstrap runs: start it again (this retries a failed one).
-            status = await computer.setup();
-            setupAt = DateTime.now();
-          } else {
-            status = await computer.status();
+          await computer.start();
+          status = await computer.status();
+          continue;
+        case ComputerState.dockerMissing || ComputerState.daemonDown:
+          if (!recheck) {
+            _show(SetupFailed(_dockerUnusable(status), part: SetupPart.docker));
+            return _ComputerResult.stopped;
           }
-        }
-      });
+          return await _prepareSystem(state.goal ?? LinuxSetupGoal.computer)
+              ? _ComputerResult.recheck
+              : _ComputerResult.stopped;
+        case ComputerState.error:
+          _show(
+            SetupFailed(
+              status.detail.isEmpty
+                  ? "The agent's computer could not be prepared."
+                  : status.detail,
+              part: SetupPart.computer,
+            ),
+          );
+          return _ComputerResult.stopped;
+        case ComputerState.missing:
+          _show(
+            const SetupFailed(
+              'The Hermuse plugin does not answer on this computer.',
+              part: SetupPart.plugin,
+            ),
+          );
+          return _ComputerResult.stopped;
+        case ComputerState.imageMissing || ComputerState.building:
+          break;
+      }
+      if (_stopped()) return _ComputerResult.stopped;
+      await Future<void>.delayed(_services.pollInterval);
+      if (status.state == ComputerState.imageMissing &&
+          DateTime.now().difference(setupAt) >= _setupRetry) {
+        // No bootstrap runs: start it again (this retries a failed one).
+        status = await computer.setup();
+        setupAt = DateTime.now();
+      } else {
+        status = await computer.status();
+      }
+    }
+  });
 
   static String _dockerUnusable(ComputerStatus status) =>
       'Docker is prepared on this computer, but Hermes Agent cannot use it'
@@ -1064,6 +1237,7 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       SetupFailed(
         "The agent's computer runs but its screen does not answer"
         '${failure == null ? '' : ': ${_describe(failure)}'}.',
+        part: SetupPart.computer,
       ),
     );
     return false;
@@ -1134,6 +1308,77 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
   void _show(SetupPhase phase) {
     if (ref.mounted) state = state.copyWith(phase: phase);
   }
+
+  void _note(SetupPart part, SetupPartReadiness readiness) {
+    if (ref.mounted) {
+      state = state.copyWith(parts: {...state.parts, part: readiness});
+    }
+  }
+
+  void _forget(SetupPart part) {
+    if (ref.mounted && state.parts.containsKey(part)) {
+      state = state.copyWith(parts: {...state.parts}..remove(part));
+    }
+  }
+
+  /// Records the system parts of [plan]'s targets that [inspection] finds
+  /// ready: the [prepared] ones as prepared by this session, the others as
+  /// found (a part this session prepared stays so). A part with work left
+  /// or a blocker is forgotten.
+  void _noteSystem(
+    LinuxDependencyPlan plan,
+    LinuxDependencyInspection inspection, {
+    Set<SetupPart> prepared = const {},
+  }) {
+    if (!ref.mounted) return;
+    final parts = {...state.parts};
+    for (final part in [
+      if (plan.targets.contains(LinuxTarget.local)) SetupPart.systemPackages,
+      if (plan.targets.contains(LinuxTarget.core)) SetupPart.keyring,
+      if (plan.targets.contains(LinuxTarget.local)) SetupPart.docker,
+    ]) {
+      if (!_systemReady(part, plan, inspection)) {
+        parts.remove(part);
+      } else if (prepared.contains(part)) {
+        parts[part] = SetupPartReadiness.prepared;
+      } else {
+        parts.putIfAbsent(part, () => SetupPartReadiness.found);
+      }
+    }
+    state = state.copyWith(parts: parts);
+  }
+
+  /// Whether [plan] leaves [part] nothing to do, nothing blocks it, and
+  /// [inspection] saw it in place.
+  static bool _systemReady(
+    SetupPart part,
+    LinuxDependencyPlan plan,
+    LinuxDependencyInspection inspection,
+  ) {
+    if (plan.steps.any((s) => s.step.part == part) ||
+        plan.blockers.any((b) => b.part == part)) {
+      return false;
+    }
+    final system = inspection.system;
+    return switch (part) {
+      SetupPart.systemPackages =>
+        system != null &&
+            system.os == LinuxOsSupport.supported &&
+            system.missing(LinuxHelperCategory.hermesTools).isEmpty,
+      SetupPart.keyring =>
+        inspection.secretService.state == SecretServiceState.running,
+      SetupPart.docker => plan.dockerState == LinuxDockerState.usable,
+      _ => false,
+    };
+  }
+
+  /// The part [phase] works on, which a failure during it concerns.
+  static SetupPart? _partOf(SetupPhase phase) => switch (phase) {
+    SetupWorking(:final activity) => activity.part,
+    SetupInstalling() => SetupPart.hermes,
+    SetupComputer() => SetupPart.computer,
+    _ => null,
+  };
 
   void _clearLog() {
     if (ref.mounted) state = state.copyWith(log: const []);

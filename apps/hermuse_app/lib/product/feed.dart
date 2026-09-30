@@ -133,15 +133,15 @@ final class _FeedState extends ConsumerState<_Feed> {
           ],
         ),
         if (feed.isLoading && feed.value == null)
-          const HermuseRouteSub('Loading feed…')
+          const HermuseRouteSkeleton(label: 'Loading feed…')
         else if (feed.hasError && feed.value == null)
           HermuseRouteError('Feed failed: ${feed.error}')
         else if (posts.isEmpty)
-          const HermuseRouteEmpty(
-            icon: YsIcon.feed,
+          HermuseRouteEmpty(
+            art: YsArt.feed,
             title: 'Your feed is empty',
             body:
-                'Posts appear here as your Hermes gets to know you. Edit the '
+                'Posts show up here as your Hermes gets to know you. Edit the '
                 'prompt above to steer it.',
           )
         else
@@ -214,46 +214,49 @@ final class _PostCardState extends ConsumerState<_PostCard> {
       if (post.createdAt.isNotEmpty)
         formatTimestamp(post.createdAt, DateTime.now()),
     ].join(' · ');
-    return ProductCard(
-      children: [
-        Text(
-          post.title,
-          style: YsType.title.flutter.copyWith(color: palette.contentColor),
-        ),
-        if (meta.isNotEmpty)
+    return YsHover(
+      builder: (context, hovered) => ProductCard(
+        lifted: hovered,
+        children: [
           Text(
-            meta,
-            style: YsType.caption.flutter.copyWith(
-              color: palette.contentSubtleColor,
+            post.title,
+            style: YsType.title.flutter.copyWith(color: palette.contentColor),
+          ),
+          if (meta.isNotEmpty)
+            Text(
+              meta,
+              style: YsType.caption.flutter.copyWith(
+                color: palette.contentSubtleColor,
+              ),
+            ),
+          Text(
+            post.body,
+            style: YsType.agentBubble.flutter.copyWith(
+              color: palette.contentColor,
             ),
           ),
-        Text(
-          post.body,
-          style: YsType.agentBubble.flutter.copyWith(
-            color: palette.contentColor,
+          Row(
+            children: [
+              ProductPill(
+                label: 'Love',
+                semanticLabel: 'Love this post',
+                on: post.reacted(FeedReaction.love),
+                onPressed: _busy
+                    ? null
+                    : () => unawaited(_react(FeedReaction.love)),
+              ),
+              const SizedBox(width: 12),
+              ProductPill(
+                label: 'Discuss',
+                semanticLabel: 'Discuss this post',
+                on: post.reacted(FeedReaction.discuss),
+                onPressed: _busy ? null : () => unawaited(_discuss()),
+              ),
+            ],
           ),
-        ),
-        Row(
-          children: [
-            ProductPill(
-              label: 'Love',
-              semanticLabel: 'Love this post',
-              on: post.reacted(FeedReaction.love),
-              onPressed: _busy
-                  ? null
-                  : () => unawaited(_react(FeedReaction.love)),
-            ),
-            const SizedBox(width: 12),
-            ProductPill(
-              label: 'Discuss',
-              semanticLabel: 'Discuss this post',
-              on: post.reacted(FeedReaction.discuss),
-              onPressed: _busy ? null : () => unawaited(_discuss()),
-            ),
-          ],
-        ),
-        if (_error case final error?) HermuseRouteError(error),
-      ],
+          if (_error case final error?) HermuseRouteError(error),
+        ],
+      ),
     );
   }
 }

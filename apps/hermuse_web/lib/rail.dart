@@ -56,27 +56,46 @@ class HermuseRail extends StatelessComponent {
     attributes: {'aria-label': 'Primary'},
     [
       div(classes: 'hermuse-rail-destinations', [
-        for (final (icon, label, target) in _destinations)
-          _item(
-            label: label,
-            classes: target == destination ? 'hermuse-rail-current' : null,
-            attributes:
-                target == HermuseDestination.chat &&
-                    destination == HermuseDestination.chat
-                ? {'aria-expanded': '$chatsPanelOpen'}
-                : null,
-            onPressed: target != destination
-                ? () => onDestination(target)
-                : target == HermuseDestination.chat
-                ? onToggleChatsPanel
-                : () {},
-            builder: (state) => YsMotionIconView(
-              icon,
-              size: YsLayout.railIconSize,
-              strokeWidth: YsLayout.railIconStroke,
-              hovered: state.hovered,
+        // The marker slides along the rail's edge to the current
+        // destination.
+        div(classes: 'hermuse-rail-dests', [
+          for (final (icon, label, target) in _destinations)
+            _item(
+              label: label,
+              classes: target == destination ? 'hermuse-rail-current' : null,
+              attributes:
+                  target == HermuseDestination.chat &&
+                      destination == HermuseDestination.chat
+                  ? {'aria-expanded': '$chatsPanelOpen'}
+                  : null,
+              onPressed: target != destination
+                  ? () => onDestination(target)
+                  : target == HermuseDestination.chat
+                  ? onToggleChatsPanel
+                  : () {},
+              builder: (state) => YsMotionIconView(
+                icon,
+                size: YsLayout.railIconSize,
+                strokeWidth: YsLayout.railIconStroke,
+                hovered: state.hovered,
+              ),
             ),
+          span(
+            classes: 'hermuse-rail-marker',
+            styles: Styles(
+              transform: .translate(
+                y:
+                    (destination.index * YsLayout.railItemHeight +
+                            (YsLayout.railItemHeight -
+                                    YsLayout.railMarkerHeight) /
+                                2)
+                        .px,
+              ),
+            ),
+            attributes: {'aria-hidden': 'true'},
+            [],
           ),
+        ]),
         if (instances.isNotEmpty) div(classes: 'hermuse-rail-divider', []),
         for (final instance in instances)
           _item(
@@ -170,6 +189,27 @@ class HermuseRail extends StatelessComponent {
         height: YsLayout.railItemHeight.px,
         display: .flex,
       ),
+      css('.hermuse-rail-dests').styles(
+        position: .relative(),
+        width: 100.percent,
+        display: .flex,
+        flexDirection: .column,
+      ),
+      css('.hermuse-rail-marker').styles(
+        position: .absolute(top: .zero, left: .zero),
+        width: YsLayout.railMarkerWidth.px,
+        height: YsLayout.railMarkerHeight.px,
+        radius: .only(
+          topRight: .circular(YsRadius.pill.px),
+          bottomRight: .circular(YsRadius.pill.px),
+        ),
+        pointerEvents: .none,
+        backgroundColor: .variable('--primary'),
+        raw: {
+          'transition':
+              'transform ${YsRailMotion.slide}ms ${YsEase.settle.css}',
+        },
+      ),
       css('.hermuse-rail-row > .ys-has-tooltip')
           .styles(width: 100.percent, height: 100.percent),
       css('.hermuse-rail-item').styles(
@@ -232,6 +272,9 @@ class HermuseRail extends StatelessComponent {
         flexDirection: .column,
         alignItems: .center,
       ),
+    ]),
+    css.media(MediaQuery.raw(ysReducedMotionQuery), [
+      css('.hermuse-rail-marker').styles(raw: {'transition': 'none'}),
     ]),
   ];
 }

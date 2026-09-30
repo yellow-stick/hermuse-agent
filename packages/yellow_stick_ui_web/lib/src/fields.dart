@@ -1,6 +1,11 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:universal_web/web.dart' as web;
+import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+import 'icon.dart';
+import 'keyframes.dart';
+import 'motion.dart';
 
 /// Labeled wrapper for a [child] field (text/options/notes).
 class YsField extends StatelessComponent {
@@ -35,7 +40,9 @@ class YsField extends StatelessComponent {
   ];
 }
 
-/// A boxed text input (44 high, canvas fill, hairline border).
+/// A boxed text input (44 high, canvas fill, hairline border) with an
+/// optional leading [icon]. Focus eases the border to `primary`, lights the
+/// icon and rings the box with a soft [YsLayout.inputHalo] halo.
 class YsInputBox extends StatelessComponent {
   const YsInputBox({
     required this.value,
@@ -45,6 +52,8 @@ class YsInputBox extends StatelessComponent {
     this.name,
     this.label,
     this.obscure = false,
+    this.url = false,
+    this.icon,
     this.autocomplete,
     super.key,
   });
@@ -56,55 +65,125 @@ class YsInputBox extends StatelessComponent {
   final String? name;
   final String? label;
   final bool obscure;
+
+  /// A web address (`type="url"`): phones offer their URL keyboard.
+  final bool url;
+
+  /// Glyph before the text, muted until the box has focus.
+  final YsIcon? icon;
   final String? autocomplete;
 
   @override
-  Component build(BuildContext context) => input<String>(
-    type: obscure ? .password : .text,
-    name: name,
-    value: value,
-    classes: 'ys-inputbox',
-    attributes: {
-      'placeholder': ?placeholder,
-      'aria-label': ?(label ?? placeholder),
-      'autocomplete': ?autocomplete,
-    },
-    onInput: onChanged,
-    events: {
-      'keydown': (event) {
-        if ((event as web.KeyboardEvent).key == 'Enter') {
-          event.preventDefault();
-          onSubmitted?.call();
-        }
+  Component build(BuildContext context) {
+    final field = input<String>(
+      type: obscure
+          ? .password
+          : url
+          ? .url
+          : .text,
+      name: name,
+      value: value,
+      classes: 'ys-inputbox',
+      attributes: {
+        'placeholder': ?placeholder,
+        'aria-label': ?(label ?? placeholder),
+        'autocomplete': ?autocomplete,
       },
-    },
-  );
+      onInput: onChanged,
+      events: {
+        'keydown': (event) {
+          if ((event as web.KeyboardEvent).key == 'Enter') {
+            event.preventDefault();
+            onSubmitted?.call();
+          }
+        },
+      },
+    );
+    final icon = this.icon;
+    if (icon == null) return field;
+    return span(classes: 'ys-inputbox-host', [
+      span(classes: 'ys-inputbox-icon', [
+        YsIconView(icon, size: YsLayout.inlineIcon),
+      ]),
+      field,
+    ]);
+  }
 
   @css
   // ignore: unused_element
-  static List<StyleRule> get styles => [
-    css('.ys-inputbox', [
-      css('&').styles(
-        height: 44.px,
-        padding: .symmetric(horizontal: 14.px),
-        radius: .circular(10.px),
-        color: .variable('--content'),
-        backgroundColor: .variable('--canvas'),
-        border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
-        fontSize: 15.px,
-        lineHeight: 24.px,
-        raw: {'outline': 'none', 'font-family': 'inherit'},
-      ),
-      css('&:focus').styles(
-        border: .all(
-          style: .solid,
-          color: .variable('--primary'),
-          width: 1.2.px,
+  static List<StyleRule> get styles {
+    final ease = '${YsMotion.fast}ms ${YsEase.standard.css}';
+    const pad = 14.0;
+    return [
+      css('.ys-inputbox', [
+        css('&').styles(
+          height: 44.px,
+          padding: .symmetric(horizontal: pad.px),
+          radius: .circular(10.px),
+          color: .variable('--content'),
+          backgroundColor: .variable('--canvas'),
+          border: .all(
+            style: .solid,
+            color: .variable('--line'),
+            width: 1.2.px,
+          ),
+          fontSize: 15.px,
+          lineHeight: 24.px,
+          raw: {
+            'outline': 'none',
+            'font-family': 'inherit',
+            // The halo at rest: transparent, so focus eases it in.
+            'box-shadow':
+                '0px 0px 0px ${ysNum(YsLayout.inputHalo)}px '
+                'transparent',
+            'transition': 'border-color $ease, box-shadow $ease',
+          },
         ),
-      ),
-      css('&::placeholder').styles(color: .variable('--content-subtle')),
-    ]),
-  ];
+        css('&:focus').styles(
+          border: .all(
+            style: .solid,
+            color: .variable('--primary'),
+            width: 1.2.px,
+          ),
+          raw: {
+            'box-shadow':
+                '0px 0px 0px ${ysNum(YsLayout.inputHalo)}px '
+                'var(--primary-muted)',
+          },
+        ),
+        css('&::placeholder').styles(color: .variable('--content-subtle')),
+      ]),
+      // With an icon, the box fills its host and its text clears the icon.
+      css('.ys-inputbox-host', [
+        css('&').styles(
+          position: .relative(),
+          display: .flex,
+          alignItems: .center,
+          raw: {'min-width': '0'},
+        ),
+        css('.ys-inputbox').styles(
+          flex: .grow(1),
+          padding: .only(
+            left: (pad + YsLayout.inlineIcon + YsSpace.sm + YsSpace.xxs).px,
+          ),
+          raw: {'min-width': '0'},
+        ),
+        css('.ys-inputbox-icon').styles(
+          position: .absolute(left: pad.px),
+          display: .flex,
+          color: .variable('--content-subtle'),
+          pointerEvents: .none,
+          raw: {'transition': 'color $ease'},
+        ),
+        css('&:focus-within .ys-inputbox-icon')
+            .styles(color: .variable('--primary')),
+      ]),
+      css.media(MediaQuery.raw(ysReducedMotionQuery), [
+        css('.ys-inputbox, .ys-inputbox-icon')
+            .styles(raw: {'transition': 'none'}),
+      ]),
+    ];
+  }
 }
 
 /// A multi-line boxed editor (grows with content up to [maxHeight]).

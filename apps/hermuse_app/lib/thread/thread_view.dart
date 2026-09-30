@@ -10,6 +10,7 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../shell/brand.dart';
+import '../shell/screens.dart' show YsDialogError;
 import '../sidebar/side_chats.dart' show sideChatLabel;
 
 import 'message_row.dart';
@@ -493,27 +494,58 @@ final class _Composer extends StatelessWidget {
                   const SizedBox(width: 8),
                   Padding(
                     padding: const EdgeInsets.only(bottom: 5),
-                    child: busy
-                        ? _RoundAction(
-                            onPressed: onStop,
-                            semanticLabel: 'Stop',
-                            tooltip: 'Stop',
-                            icon: YsIcon.stop,
-                          )
-                        : hasText
-                        ? _RoundAction(
-                            onPressed: onSend,
-                            semanticLabel: 'Send message',
-                            icon: YsIcon.send,
-                          )
-                        : YsButton.icon(
-                            icon: YsIcon.mic,
-                            onPressed: () {},
-                            semanticLabel: 'Voice',
-                            tooltip: 'Voice',
-                            size: 32,
-                            iconSize: 20,
+                    // The action morphs: the new glyph turns and grows in
+                    // while the old one shrinks away.
+                    child: AnimatedSwitcher(
+                      duration: MediaQuery.disableAnimationsOf(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: YsMorphMotion.swap),
+                      switchInCurve: YsEase.settle.curve,
+                      switchOutCurve: YsEase.standard.curve,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        // Announced from its first frame, like the button
+                        // it replaces.
+                        alwaysIncludeSemantics: true,
+                        child: RotationTransition(
+                          turns: Tween(
+                            begin: -YsMorphMotion.turn,
+                            end: 0.0,
+                          ).animate(animation),
+                          child: ScaleTransition(
+                            scale: Tween(
+                              begin: YsMorphMotion.from,
+                              end: 1.0,
+                            ).animate(animation),
+                            child: child,
                           ),
+                        ),
+                      ),
+                      child: busy
+                          ? _RoundAction(
+                              key: const ValueKey('stop'),
+                              onPressed: onStop,
+                              semanticLabel: 'Stop',
+                              tooltip: 'Stop',
+                              icon: YsIcon.stop,
+                            )
+                          : hasText
+                          ? _RoundAction(
+                              key: const ValueKey('send'),
+                              onPressed: onSend,
+                              semanticLabel: 'Send message',
+                              icon: YsIcon.send,
+                            )
+                          : YsButton.icon(
+                              key: const ValueKey('voice'),
+                              icon: YsIcon.mic,
+                              onPressed: () {},
+                              semanticLabel: 'Voice',
+                              tooltip: 'Voice',
+                              size: 32,
+                              iconSize: 20,
+                            ),
+                    ),
                   ),
                 ],
               ),
@@ -532,6 +564,7 @@ final class _RoundAction extends StatelessWidget {
     required this.semanticLabel,
     required this.icon,
     this.tooltip,
+    super.key,
   });
 
   final VoidCallback onPressed;
@@ -721,15 +754,30 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'Sign in again — the saved password was rejected.',
-              style: YsType.small.flutter.copyWith(color: palette.errorColor),
+            Row(
+              children: [
+                YsIconWidget(
+                  YsIcon.lock,
+                  size: YsLayout.inlineIcon,
+                  color: palette.errorColor,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Sign in again — the saved password was rejected.',
+                    style: YsType.small.flutter.copyWith(
+                      color: palette.errorColor,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             YsInputBox(
               controller: _username,
               placeholder: 'Username',
               semanticLabel: 'Username',
+              icon: YsIcon.user,
               onSubmitted: (_) => unawaited(_signIn()),
             ),
             const SizedBox(height: 8),
@@ -737,15 +785,13 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
               controller: _password,
               placeholder: 'Password',
               semanticLabel: 'Password',
+              icon: YsIcon.lock,
               obscure: true,
               onSubmitted: (_) => unawaited(_signIn()),
             ),
-            if (_error != null) ...[
+            if (_error case final error?) ...[
               const SizedBox(height: 8),
-              Text(
-                _error!,
-                style: YsType.small.flutter.copyWith(color: palette.errorColor),
-              ),
+              YsDialogError(error),
             ],
             const SizedBox(height: 8),
             Align(

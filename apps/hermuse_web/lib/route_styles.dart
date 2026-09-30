@@ -64,24 +64,6 @@ List<StyleRule> get hermuseRouteStyles => [
       lineHeight: 20.px,
       color: .variable('--primary-2'),
     ),
-    css('.hermuse-route-empty').styles(
-      display: .flex,
-      flexDirection: .column,
-      alignItems: .center,
-      gap: .all(8.px),
-      padding: .only(top: 48.px),
-      color: .variable('--content-muted'),
-      textAlign: .center,
-    ),
-    css('.hermuse-route-empty-title').styles(
-      margin: .zero,
-      fontSize: 16.px,
-      lineHeight: 22.px,
-      fontWeight: .w500,
-      color: .variable('--content'),
-    ),
-    css('.hermuse-route-empty-body')
-        .styles(margin: .zero, fontSize: 14.px, lineHeight: 20.px),
   ]),
   css.media(MediaQuery.screen(maxWidth: 767.px), [
     css('.hermuse-shell .hermuse-route .hermuse-route-column').styles(

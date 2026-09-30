@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_host/hermuse_host.dart';
@@ -9,15 +10,17 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../platform/local_host.dart';
-import '../shell/screens.dart';
+import 'setup_view.dart';
 
 /// Desktop install flow: detect → (supervise | staged install) → onboard.
 ///
 /// [detected] is the [HermesDetector.detect] outcome computed by the caller
 /// (so Welcome can decide). When non-null the flow just supervises the
 /// existing install via [host] and hands the registered local instance back.
-/// Otherwise it runs the staged installer UI: prerequisites → manifest →
-/// stage progress with output log → retry-this-stage on failure → supervise.
+/// Otherwise it runs the staged installer: prerequisites → manifest →
+/// stages with their output log → retry-this-stage on failure → supervise.
+/// Both show as the setup checklist: the developer tools, then Hermes
+/// Agent.
 final class InstallFlowScreen extends ConsumerStatefulWidget {
   const InstallFlowScreen({
     required this.host,
@@ -44,13 +47,32 @@ final class InstallFlowScreen extends ConsumerStatefulWidget {
 
 enum _Phase { working, stages, failed, supervising }
 
+/// What the flow does while it works or supervises.
+enum _Activity {
+  lookingForHermes,
+  checkingTools,
+  readingPlan,
+  startingFound,
+  startingInstalled,
+}
+
+/// The checklist's rows.
+enum _Row { tools, hermes }
+
 final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   _Phase _phase = _Phase.working;
-  String _status = 'Looking for Hermes…';
+  _Activity _activity = _Activity.lookingForHermes;
   PrerequisiteCheck? _prereqs;
 
   /// Whether the installer of the missing prerequisites was opened.
   bool _prereqsRequested = false;
+
+  /// Whether a check found prerequisites missing: once present they were
+  /// installed now, not found in place.
+  bool _toolsWereMissing = false;
+
+  /// Whether the prerequisites could not be checked at all.
+  bool _toolsFailed = false;
   InstallManifest? _manifest;
   final _done = <String, StageResult>{};
   String? _running;
@@ -84,15 +106,16 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     if (existing != null) {
       setState(() {
         _phase = _Phase.supervising;
-        _status = 'Found ${existing.version} — starting it…';
+        _activity = _Activity.startingFound;
       });
       await _superviseAndFinish();
       return;
     }
     setState(() {
       _phase = _Phase.working;
-      _status = 'Checking prerequisites…';
+      _activity = _Activity.checkingTools;
       _error = null;
+      _toolsFailed = false;
     });
     try {
       _prereqs = await _installer.checkPrerequisites();
@@ -101,17 +124,21 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
         setState(() {
           _phase = _Phase.failed;
           _error = '$e';
+          _toolsFailed = true;
         });
       }
       return;
     }
     if (!mounted) return;
     if (!_prereqs!.ok) {
-      setState(() => _phase = _Phase.failed);
+      setState(() {
+        _phase = _Phase.failed;
+        _toolsWereMissing = true;
+      });
       return;
     }
     _prereqsRequested = false;
-    setState(() => _status = 'Reading install plan…');
+    setState(() => _activity = _Activity.readingPlan);
     try {
       _manifest = await _installer.manifest();
     } on Object catch (e) {
@@ -180,7 +207,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     if (!mounted) return;
     setState(() {
       _phase = _Phase.supervising;
-      _status = 'Install finished — starting Hermes…';
+      _activity = _Activity.startingInstalled;
     });
     await _superviseAndFinish();
   }
@@ -251,359 +278,198 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: YsLayout.dialogWidth),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.paperColor,
-              borderRadius: BorderRadius.circular(YsRadius.bubble),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const YsDialogTitle('Install Hermes'),
-                  const SizedBox(height: 16),
-                  ..._body(palette),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      YsButton.neutral(
-                        label: 'Cancel',
-                        onPressed: widget.onCancel,
-                      ),
-                      if (_phase == _Phase.failed && _failedStage != null)
-                        YsButton.primary(
-                          label: 'Retry this stage',
-                          onPressed: _retryStage,
-                        ),
-                      if (_phase == _Phase.failed &&
-                          _prereqs != null &&
-                          !_prereqs!.ok) ...[
-                        if (_prereqs!.installable && !_prereqsRequested)
-                          YsButton.primary(
-                            label: 'Install',
-                            onPressed: _installPrerequisites,
-                          ),
-                        YsButton.neutral(
-                          label: 'Check again',
-                          onPressed: _start,
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  /// Whether the flow stopped on the prerequisites rather than on Hermes.
+  bool get _toolsBlock =>
+      _phase == _Phase.failed &&
+      (_toolsFailed || (_prereqs != null && !_prereqs!.ok));
 
-  List<Widget> _body(YsPalette palette) {
-    switch (_phase) {
-      case _Phase.working:
-      case _Phase.supervising:
-        return [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const YsSpinner(size: 16),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Text(
-                  _status,
-                  style: YsType.body.flutter.copyWith(
-                    color: palette.contentMutedColor,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ];
-      case _Phase.failed:
-        final prereqs = _prereqs;
-        if (prereqs != null && !prereqs.ok) {
-          return [
-            Text(
-              'Missing tools: ${prereqs.missing.join(', ')}.',
-              style: YsType.body.flutter.copyWith(color: palette.errorColor),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            if (prereqs.installable)
-              Text(
-                _prereqsRequested
-                    ? 'Finish the installation in the dialog that opened, '
-                          'then check again.'
-                    : 'Install them, then check again.',
-                style: YsType.body.flutter.copyWith(
-                  color: palette.contentMutedColor,
-                ),
-                textAlign: TextAlign.center,
-              )
-            else if (prereqs.fixCommand != null)
-              SelectableText(
-                prereqs.fixCommand!,
-                style: YsType.body.flutter.copyWith(
-                  color: palette.contentColor,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            if (_error case final error?) ...[
-              const SizedBox(height: 8),
-              Text(
-                error,
-                style: YsType.small.flutter.copyWith(color: palette.errorColor),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ];
-        }
-        return [
-          Text(
-            _error ?? 'The install failed.',
-            style: YsType.body.flutter.copyWith(color: palette.errorColor),
-            textAlign: TextAlign.center,
-          ),
-          if (_failedStage != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Stage "${_failedStage!}" failed; fix the cause, then retry '
-              'just this stage.',
-              style: YsType.small.flutter.copyWith(
-                color: palette.contentMutedColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          if (_log.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            InstallLogBox(log: _log),
-          ],
-          if (_manifest != null) ...[
-            const SizedBox(height: 12),
-            InstallStageList(
-              manifest: _manifest!,
-              done: _done,
-              running: _running,
-            ),
-          ],
-        ];
-      case _Phase.stages:
-        final manifest = _manifest!;
-        final total = manifest.stages.length;
-        final finished = _done.length;
-        return [
-          Text(
-            'Step $finished of $total',
-            style: YsType.small.flutter.copyWith(
-              color: palette.contentMutedColor,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          InstallProgressBar(value: total == 0 ? 1 : finished / total),
-          const SizedBox(height: 12),
-          InstallStageList(manifest: manifest, done: _done, running: _running),
-          if (_log.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            InstallLogBox(log: _log),
-          ],
-        ];
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+    padding: const EdgeInsets.symmetric(
+      vertical: YsSpace.xxl + YsSpace.lg,
+      horizontal: YsSpace.xl,
+    ),
+    child: SetupCard(
+      title: 'Install Hermes',
+      status: _status,
+      items: [_tools(), _hermes()],
+      log: _log,
+      actions: [YsButton.neutral(label: 'Cancel', onPressed: widget.onCancel)],
+    ),
+  );
+
+  String get _status => switch (_phase) {
+    _Phase.working || _Phase.supervising => switch (_activity) {
+      _Activity.lookingForHermes => 'Looking for Hermes…',
+      _Activity.checkingTools => 'Checking prerequisites…',
+      _Activity.readingPlan => 'Reading install plan…',
+      _Activity.startingFound =>
+        'Found ${widget.detected?.version ?? 'Hermes'} — starting it…',
+      _Activity.startingInstalled => 'Install finished — starting Hermes…',
+    },
+    _Phase.stages => 'Installing Hermes Agent…',
+    _Phase.failed when _toolsBlock => 'Some developer tools are missing.',
+    _Phase.failed => 'The install stopped on a failure.',
+  };
+
+  YsChecklistItem _tools() {
+    YsChecklistItem item(
+      YsStepState state,
+      String status, {
+      List<YsChecklistNote> notes = const [],
+      List<Widget> actions = const [],
+    }) => YsChecklistItem(
+      id: _Row.tools,
+      icon: YsIcon.package,
+      title: 'Developer tools',
+      state: state,
+      status: status,
+      notes: notes,
+      actions: actions,
+    );
+    if (widget.detected != null) {
+      return item(YsStepState.skipped, 'Not needed — Hermes is already here');
     }
-  }
-}
-
-/// Install progress: [value] from 0 to 1.
-final class InstallProgressBar extends StatelessWidget {
-  const InstallProgressBar({required this.value, super.key});
-
-  final double value;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return SizedBox(
-      height: 8,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: palette.neutralAmbientColor,
-          borderRadius: BorderRadius.circular(YsRadius.pill),
-        ),
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: FractionallySizedBox(
-            widthFactor: value.clamp(0.0, 1.0),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: palette.primaryColor,
-                borderRadius: BorderRadius.circular(YsRadius.pill),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The installer's stages with their state (waiting, running, done, skipped,
-/// failed).
-final class InstallStageList extends StatelessWidget {
-  const InstallStageList({
-    required this.manifest,
-    required this.done,
-    required this.running,
-    super.key,
-  });
-
-  final InstallManifest manifest;
-  final Map<String, StageResult> done;
-  final String? running;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final stage in manifest.stages)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Center(child: _stageIcon(palette, stage)),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        stage.title,
-                        style: YsType.label.flutter.copyWith(
-                          color: palette.contentColor,
-                        ),
-                      ),
-                      if (stage.category.isNotEmpty)
-                        Text(
-                          stage.category,
-                          style: YsType.caption.flutter.copyWith(
-                            color: palette.contentSubtleColor,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Text(
-                  _stageState(stage),
-                  style: YsType.caption.flutter.copyWith(
-                    color: palette.contentMutedColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  String _stageState(InstallStage stage) {
-    final result = done[stage.name];
-    if (stage.name == running) return 'Running…';
-    if (result == null) return 'Waiting';
-    if (result.failed) return 'Failed';
-    if (result.skipped) return 'Skipped';
-    return 'Done';
-  }
-
-  Widget _stageIcon(YsPalette palette, InstallStage stage) {
-    final result = done[stage.name];
-    if (stage.name == running) return const YsSpinner(size: 14);
-    if (result == null) {
-      return DecoratedBox(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: palette.lineColor, width: ysHairline),
-        ),
-        child: const SizedBox(width: 14, height: 14),
+    // The Windows installer provisions its own tools.
+    if (Platform.isWindows) {
+      return item(
+        YsStepState.skipped,
+        'Not needed — the installer brings them',
       );
     }
-    if (result.failed) {
-      return YsIconWidget(YsIcon.close, size: 14, color: palette.errorColor);
+    if (_phase == _Phase.working && _activity == _Activity.checkingTools) {
+      return item(YsStepState.checking, 'Checking…');
     }
-    return YsIconWidget(YsIcon.check, size: 14, color: palette.successColor);
-  }
-}
-
-/// Last output lines, scrolled to the newest.
-final class InstallLogBox extends StatefulWidget {
-  const InstallLogBox({required this.log, super.key});
-
-  final List<String> log;
-
-  @override
-  State<InstallLogBox> createState() => _InstallLogBoxState();
-}
-
-final class _InstallLogBoxState extends State<InstallLogBox> {
-  final _scroll = ScrollController();
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
-      }
-    });
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.canvasColor,
-        borderRadius: BorderRadius.circular(YsRadius.row),
-      ),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 160),
-        child: SingleChildScrollView(
-          controller: _scroll,
-          padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            width: double.infinity,
-            child: Text(
-              widget.log.join('\n'),
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                height: 18 / 12,
-              ).copyWith(color: palette.contentMutedColor),
+    final prereqs = _prereqs;
+    if (_toolsFailed || prereqs == null) {
+      return _toolsFailed
+          ? item(
+              YsStepState.failed,
+              'Could not be checked',
+              notes: [
+                if (_error case final error?)
+                  YsChecklistNote(error, tone: YsNoteTone.alert),
+              ],
+            )
+          : item(YsStepState.pending, 'Waiting');
+    }
+    if (!prereqs.ok) {
+      final fix = prereqs.fixCommand;
+      return item(
+        YsStepState.needsAction,
+        'Missing: ${prereqs.missing.join(', ')}',
+        notes: [
+          if (prereqs.installable)
+            YsChecklistNote(
+              _prereqsRequested
+                  ? 'Finish the installation in the dialog that opened, '
+                        'then choose Check again.'
+                  : 'Install them, then choose Check again.',
+            )
+          else if (fix != null)
+            YsChecklistNote('Run $fix, then choose Check again.'),
+          if (_error case final error?)
+            YsChecklistNote(error, tone: YsNoteTone.alert),
+        ],
+        actions: [
+          if (prereqs.installable && !_prereqsRequested)
+            YsButton.neutral(
+              label: 'Install',
+              onPressed: _installPrerequisites,
             ),
-          ),
-        ),
-      ),
+          YsButton.neutral(label: 'Check again', onPressed: _start),
+        ],
+      );
+    }
+    return _toolsWereMissing
+        ? item(YsStepState.done, 'Installed now')
+        : item(YsStepState.found, 'Found — reused');
+  }
+
+  YsChecklistItem _hermes() {
+    YsChecklistItem item(
+      YsStepState state,
+      String status, {
+      double? progress,
+      String? trailing,
+      List<YsChecklistNote> notes = const [],
+      List<Widget> actions = const [],
+    }) => YsChecklistItem(
+      id: _Row.hermes,
+      icon: YsIcon.bot,
+      title: 'Hermes Agent',
+      state: state,
+      status: status,
+      progress: progress,
+      trailing: trailing,
+      notes: notes,
+      actions: actions,
     );
+    final manifest = _manifest;
+    final total = manifest?.stages.length ?? 0;
+    final count = manifest == null ? null : '${_done.length}/$total';
+    switch (_phase) {
+      case _Phase.working:
+        return switch (_activity) {
+          _Activity.lookingForHermes => item(
+            YsStepState.checking,
+            'Looking for it on this computer…',
+          ),
+          _Activity.readingPlan => item(
+            YsStepState.working,
+            'Reading the install plan…',
+          ),
+          _ => item(YsStepState.pending, 'Waiting'),
+        };
+      case _Phase.stages:
+        final running = _running;
+        return item(
+          YsStepState.working,
+          running == null ? 'Preparing the next step…' : _stageTitle(running),
+          progress: total == 0 ? null : _done.length / total,
+          trailing: count,
+        );
+      case _Phase.supervising:
+        // An install found in place is started, not installed.
+        return _activity == _Activity.startingFound
+            ? item(YsStepState.checking, switch (widget.detected?.semver) {
+                final version? => 'Found $version — starting it…',
+                null => 'Found — starting it…',
+              })
+            : item(YsStepState.working, 'Starting it…');
+      case _Phase.failed when _toolsBlock:
+        return item(YsStepState.pending, 'Waiting');
+      case _Phase.failed:
+        final stage = _failedStage;
+        return item(
+          YsStepState.failed,
+          stage == null ? 'Failed' : 'Failed at “${_stageTitle(stage)}”',
+          trailing: count,
+          notes: [
+            YsChecklistNote(
+              _error ?? 'The install failed.',
+              tone: YsNoteTone.alert,
+            ),
+            if (stage != null)
+              const YsChecklistNote(
+                'Fix the cause, then retry just this stage.',
+              ),
+          ],
+          actions: [
+            if (stage != null)
+              YsButton.neutral(
+                label: 'Retry this stage',
+                onPressed: _retryStage,
+              ),
+          ],
+        );
+    }
+  }
+
+  String _stageTitle(String stage) {
+    for (final s in _manifest?.stages ?? const <InstallStage>[]) {
+      if (s.name == stage) return s.title;
+    }
+    return stage;
   }
 }

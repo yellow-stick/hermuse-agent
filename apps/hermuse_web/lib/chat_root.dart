@@ -12,6 +12,7 @@ import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'add_instance.dart';
 import 'brand.dart';
+import 'components.dart';
 import 'computer_viewer.dart';
 import 'connections.dart';
 import 'feed.dart';
@@ -41,7 +42,14 @@ class HermuseChatRoot extends StatefulComponent {
 }
 
 /// Which full-screen surface is on top of the chat shell.
-enum _Overlay { none, addInstance, instances, onboarding, connections }
+enum _Overlay {
+  none,
+  addInstance,
+  instances,
+  onboarding,
+  connections,
+  components,
+}
 
 /// Width of the side-by-side chat column on product routes.
 const _splitChatWidth = 564.0;
@@ -169,30 +177,15 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
   Future<void> _openSetup(ThreadRef setup) =>
       context.readProvider(activeThreadProvider.notifier).openSetup(setup);
 
-  /// After adding an instance: show the onboarding overlay only when its
-  /// step is not `ready` yet; ready instances (e.g. the VPS) go straight
-  /// to chat. Onboarding re-check failures fall back to showing the flow,
-  /// which renders its own loading/error states.
-  Future<void> _afterAdd(String instanceId) async {
-    OnboardingStep? step;
-    try {
-      final onboarding = await HermuseScope.container.read(
-        onboardingProvider(instanceId).future,
-      );
-      step = onboarding.step;
-    } on Object catch (_) {
-      step = null;
-    }
-    if (!mounted) return;
-    if (step == null || step != OnboardingStep.ready) {
-      setState(() {
-        _overlay = _Overlay.onboarding;
-        _onboardingInstanceId = instanceId;
-      });
-    } else {
-      setState(() => _overlay = _Overlay.none);
-    }
-    await _openInstance(instanceId);
+  /// After adding an instance: its component checklist, what Hermuse needs
+  /// on it; Continue then opens its chat, or its onboarding until a model
+  /// answers.
+  Future<void> _afterAdd(String instanceId) {
+    setState(() {
+      _overlay = _Overlay.components;
+      _onboardingInstanceId = instanceId;
+    });
+    return _openInstance(instanceId);
   }
 
   /// Discuss / Start in chat: [seed] lands in the main chat's composer
@@ -247,10 +240,11 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
 
   @override
   Component build(BuildContext context) {
-    // SSR (and the first client frames before hydration completes the
-    // scope boot) render the static shell with a loading thread.
+    // SSR, the first client frames and the database boot render the static
+    // shell with its wait: the pre-rendered page stays as it is.
     if (!kIsWeb) return _loadingShell();
     return HermuseScope(
+      loading: _loadingShell(),
       child: Builder(
         builder: (context) => HermuseWatch(
           provider: relayProvider,
@@ -303,6 +297,10 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             _overlay = _Overlay.onboarding;
             _onboardingInstanceId = id;
           }),
+          onComponents: (id) => setState(() {
+            _overlay = _Overlay.components;
+            _onboardingInstanceId = id;
+          }),
           onConnections: (id) => setState(() {
             _overlay = _Overlay.connections;
             _onboardingInstanceId = id;
@@ -352,6 +350,26 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
         ),
       );
     }
+    if (_overlay == _Overlay.components &&
+        overlayId != null &&
+        instances.any((candidate) => candidate.id == overlayId)) {
+      final instance = instances.firstWhere(
+        (candidate) => candidate.id == overlayId,
+      );
+      return _loadingShell(
+        child: HermuseComponents(
+          instance: instance,
+          onChat: () {
+            setState(() {
+              _overlay = _Overlay.none;
+              _onboardingInstanceId = null;
+            });
+            unawaited(_openInstance(instance.id));
+          },
+          onSetUpModel: () => setState(() => _overlay = _Overlay.onboarding),
+        ),
+      );
+    }
     if (instances.isEmpty) {
       return _loadingShell(
         child: HermuseWelcome(
@@ -393,7 +411,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           );
         }
         final controller = _shown;
-        if (controller == null) return _loadingShell();
+        if (controller == null) return _loadingShell(label: 'Opening the chat');
         syncChatListener(controller);
         return HermuseWatch(
           provider: chatPanelPinnedProvider,
@@ -420,12 +438,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     return instances.first;
   }
 
-  /// Static shell skeleton (SSR + loading states): rail/sidebar/thread
-  /// placeholders with the real layout so hydration matches.
-  Component _loadingShell({Component? child}) => div(classes: 'hermuse-shell', [
-    div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
-    child ?? div(classes: 'hermuse-thread-slot', []),
-  ]);
+  /// Static shell (SSR + loading states): the drawing of a wait, [label]
+  /// announced, or [child] in its place, so hydration matches.
+  Component _loadingShell({Component? child, String label = 'Loading'}) =>
+      div(classes: 'hermuse-shell', [
+        div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
+        child ?? HermuseLoading(art: YsArt.chats, label: label),
+      ]);
 
   Component _chatShell(
     BuildContext context, {
@@ -503,6 +522,21 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           ),
         ]);
 
+    // The product page on screen; null on the chat.
+    final product = switch (_destination) {
+      HermuseDestination.chat => null,
+      HermuseDestination.feed => HermuseFeed(
+        instance: instance,
+        onDiscuss: (seed) => _discussSeed(controller, seed),
+      ),
+      HermuseDestination.ideas => HermuseIdeas(
+        instance: instance,
+        onStartInChat: (seed) => _discussSeed(controller, seed),
+      ),
+      HermuseDestination.goals => HermuseGoals(instance: instance),
+      HermuseDestination.library => HermuseLibrary(instance: instance),
+    };
+
     // The agent's computer takes everything right of the rail.
     if (state.computerOpen) {
       return div(classes: 'hermuse-shell', [
@@ -541,20 +575,15 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           thread(),
         ]),
       div(key: const ValueKey('thread-slot'), classes: 'hermuse-thread-slot', [
-        if (onChat) header(),
-        switch (_destination) {
-          HermuseDestination.chat => thread(),
-          HermuseDestination.feed => HermuseFeed(
-            instance: instance,
-            onDiscuss: (seed) => _discussSeed(controller, seed),
-          ),
-          HermuseDestination.ideas => HermuseIdeas(
-            instance: instance,
-            onStartInChat: (seed) => _discussSeed(controller, seed),
-          ),
-          HermuseDestination.goals => HermuseGoals(instance: instance),
-          HermuseDestination.library => HermuseLibrary(instance: instance),
-        },
+        if (product != null)
+          // A product page enters with the page motion, once per destination.
+          div(key: ValueKey(_destination), classes: 'hermuse-page ys-enter', [
+            product,
+          ])
+        else ...[
+          header(),
+          thread(),
+        ],
         if (!onChat && _splitFits)
           div(classes: 'hermuse-floating-left', [
             YsTooltip(
@@ -675,6 +704,13 @@ List<StyleRule> get hermuseShellStyles => [
       display: .flex,
       flexDirection: .column,
       position: .relative(),
+      raw: {'min-width': '0', 'min-height': '0'},
+    ),
+    // A product page takes the slot like the route it holds.
+    css('& .hermuse-page').styles(
+      display: .flex,
+      flexDirection: .column,
+      flex: Flex(grow: 1, shrink: 1, basis: .zero),
       raw: {'min-width': '0', 'min-height': '0'},
     ),
     // Side-by-side chat on product routes: the chat (header, thread,

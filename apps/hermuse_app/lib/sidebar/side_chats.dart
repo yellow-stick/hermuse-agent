@@ -1073,7 +1073,13 @@ final class _EmptyBlock extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null) ...[
-              YsIconWidget(icon, size: 28, color: palette.contentMutedColor),
+              YsHover(
+                builder: (context, hovered) => YsArtView(
+                  YsArt.chats,
+                  size: YsLayout.artCompact,
+                  active: hovered,
+                ),
+              ),
               const SizedBox(height: 12),
             ],
             Text(

@@ -1,8 +1,12 @@
+import 'package:flutter/material.dart' show SelectableText;
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+import 'mascot.dart';
 
 /// Shared dialog card: paper surface, r22 bubble radius, 32/28 padding,
 /// 16 gaps — the same spec as the web `.hermuse-card`.
@@ -44,28 +48,227 @@ final class YsDialogCard extends StatelessWidget {
   }
 }
 
-/// Card icon: 56 primary disc (web `.hermuse-card-icon`).
-final class YsDialogIcon extends StatelessWidget {
-  const YsDialogIcon(this.icon, {super.key});
+/// Card illustration of a full-page status: [art], hero-sized, draws in
+/// when the card shows, plays again under the pointer and loops while
+/// [busy] (work under way). Web parity: `HermuseCardArt`.
+final class YsDialogArt extends StatelessWidget {
+  const YsDialogArt(this.art, {this.busy = false, super.key});
 
-  final YsIcon icon;
+  final YsArt art;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: YsHover(
+      builder: (context, hovered) =>
+          YsArtView.hero(art, active: hovered, busy: busy),
+    ),
+  );
+}
+
+/// Head of a dialog or list page: its drawing beside the [title] and a
+/// muted [helper] line, then [trailing] (its close button). The drawing
+/// plays again under the pointer and loops while [busy]. Web parity:
+/// `HermuseDialogHead`.
+final class YsDialogHead extends StatelessWidget {
+  const YsDialogHead({
+    required this.art,
+    required this.title,
+    required this.helper,
+    required this.trailing,
+    this.busy = false,
+    super.key,
+  });
+
+  final YsArt art;
+  final String title;
+  final String helper;
+  final Widget trailing;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    return Center(
-      child: Container(
-        width: 56,
-        height: 56,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: palette.primaryColor,
-          shape: BoxShape.circle,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        YsHover(
+          builder: (context, hovered) => YsArtView(
+            art,
+            size: YsLayout.artHeader,
+            active: hovered,
+            busy: busy,
+          ),
         ),
-        child: YsIconWidget(icon, size: 28, color: palette.primaryContentColor),
+        const SizedBox(width: YsSpace.lg),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Semantics(
+                header: true,
+                child: Text(
+                  title,
+                  style: YsType.title.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: YsSpace.xs),
+              Text(
+                helper,
+                style: YsType.small.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+        trailing,
+      ],
+    );
+  }
+}
+
+/// What a check says: an empty box while it runs, ticked with sparks the
+/// moment it succeeds ([done]). Web parity: `HermuseCheckLine`.
+final class YsDialogCheck extends StatelessWidget {
+  const YsDialogCheck({required this.text, required this.done, super.key});
+
+  final String text;
+  final bool done;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        children: [
+          YsDoneBox(done: done),
+          const SizedBox(width: YsSpace.sm + YsSpace.xxs),
+          Expanded(
+            child: Text(
+              text,
+              style: YsType.small.flutter.copyWith(
+                color: done ? palette.successColor : palette.contentMutedColor,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+/// A failure, on a faint error wash. Web parity: `HermuseErrorNotice`.
+final class YsDialogError extends StatelessWidget {
+  const YsDialogError(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return Semantics(
+      liveRegion: true,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.errorWashColor,
+          borderRadius: BorderRadius.circular(YsRadius.row),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(YsSpace.md),
+          child: Text(
+            text,
+            style: YsType.small.flutter.copyWith(color: palette.errorColor),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A shell command to run on a server, selectable in a monospace box, with
+/// a Copy button. On a paper card ([onPaper]) the box takes the canvas
+/// colour, elsewhere the paper one.
+final class CommandBox extends StatefulWidget {
+  const CommandBox(this.command, {this.onPaper = false, super.key});
+
+  final String command;
+  final bool onPaper;
+
+  @override
+  State<CommandBox> createState() => _CommandBoxState();
+}
+
+final class _CommandBoxState extends State<CommandBox> {
+  var _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.command));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _copied = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: widget.onPaper ? palette.canvasColor : palette.paperColor,
+        borderRadius: BorderRadius.circular(YsRadius.row),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: SelectableText(
+                widget.command,
+                style: TextStyle(
+                  fontFamily: YsType.monoFamily,
+                  fontSize: 13,
+                  height: 20 / 13,
+                  color: palette.contentColor,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            YsButton.neutral(
+              label: _copied ? 'Copied' : 'Copy',
+              onPressed: _copy,
+              textStyle: YsType.small,
+              height: 28,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen wait: [art] loops in the middle of the canvas until what
+/// the screen waits for arrives; [label] is announced.
+final class LoadingScreen extends StatelessWidget {
+  const LoadingScreen({required this.art, required this.label, super.key});
+
+  final YsArt art;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: YsTheme.of(context).canvasColor,
+    child: Center(
+      child: Semantics(
+        label: label,
+        liveRegion: true,
+        child: YsDialogArt(art, busy: true),
+      ),
+    ),
+  );
 }
 
 /// Full-width primary call to action, 40 high (web `.hermuse-card-cta`).
@@ -180,7 +383,8 @@ final class YsDialogBody extends StatelessWidget {
   }
 }
 
-/// First-run screen: the registry is empty, so there is no chat yet.
+/// First-run screen: the registry is empty, so there is no chat yet. The
+/// mascot says hello above one big card per way to start.
 final class WelcomeScreen extends ConsumerWidget {
   const WelcomeScreen({required this.onConnect, this.onInstall, super.key});
 
@@ -191,29 +395,81 @@ final class WelcomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return YsDialogCard(
-      narrow: true,
-      children: [
-        const YsDialogTitle('Connect to a Hermes'),
-        const YsDialogBody(
-          'Hermuse talks to your own Hermes instances. '
-          'Add one to start chatting.',
+    final palette = YsTheme.of(context);
+    final cards = [
+      YsChoiceCard(
+        art: YsArt.remote,
+        title: 'Connect to a Hermes',
+        body: 'A Hermes already running on a server or another computer.',
+        onPressed: onConnect,
+      ),
+      if (onInstall case final install?)
+        YsChoiceCard(
+          art: YsArt.local,
+          title: 'Install Hermes on this computer',
+          body: 'Hermuse installs it here and keeps it running for you.',
+          onPressed: install,
         ),
-        Center(
-          child: YsButton.primary(
-            label: 'Connect to a Hermes',
-            icon: YsIcon.plus,
-            onPressed: onConnect,
-          ),
-        ),
-        if (onInstall case final install?)
-          Center(
-            child: YsButton.neutral(
-              label: 'Install Hermes on this computer',
-              onPressed: install,
+    ];
+    return YsEntrance(
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(YsSpace.xl),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: YsLayout.listWidth),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const HermuseMascot(),
+                const SizedBox(height: YsSpace.xl),
+                Text(
+                  "Hi, I'm Hermuse",
+                  textAlign: TextAlign.center,
+                  style: YsType.title.flutter.copyWith(
+                    color: palette.contentColor,
+                  ),
+                ),
+                const SizedBox(height: YsSpace.sm),
+                Text(
+                  'I run on your own Hermes Agent. How do you want to start?',
+                  textAlign: TextAlign.center,
+                  style: YsType.body.flutter.copyWith(
+                    color: palette.contentMutedColor,
+                  ),
+                ),
+                const SizedBox(height: YsSpace.xxl),
+                LayoutBuilder(
+                  builder: (context, constraints) =>
+                      cards.length > 1 &&
+                          constraints.maxWidth >=
+                              YsLayout.choiceMin * cards.length +
+                                  YsSpace.lg * (cards.length - 1)
+                      ? IntrinsicHeight(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final (i, card) in cards.indexed) ...[
+                                if (i > 0) const SizedBox(width: YsSpace.lg),
+                                Expanded(child: card),
+                              ],
+                            ],
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final (i, card) in cards.indexed) ...[
+                              if (i > 0) const SizedBox(height: YsSpace.md),
+                              card,
+                            ],
+                          ],
+                        ),
+                ),
+              ],
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 }
@@ -226,17 +482,10 @@ final class KeystoreErrorScreen extends StatelessWidget {
   final Object error;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return YsDialogCard(
+  Widget build(BuildContext context) => YsEntrance(
+    child: YsDialogCard(
       children: [
-        Center(
-          child: YsIconWidget(
-            YsIcon.approvals,
-            size: 32,
-            color: palette.errorColor,
-          ),
-        ),
+        YsDialogArt(YsArt.unreachable),
         const YsDialogTitle('Secure storage unavailable'),
         YsDialogBody(
           'Hermuse keeps your Hermes credentials in the system keyring, '
@@ -244,8 +493,8 @@ final class KeystoreErrorScreen extends StatelessWidget {
           'Unlock the system keyring, then restart Hermuse.\n\n$error',
         ),
       ],
-    );
-  }
+    ),
+  );
 }
 
 /// Something went wrong loading the chat: registry, connection or resume.
@@ -263,20 +512,26 @@ final class ChatErrorScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return YsDialogCard(
-      children: [
-        const YsDialogTitle('Could not open the chat'),
-        YsDialogBody(describeError(error)),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            YsButton.primary(label: 'Retry', onPressed: onRetry),
-            const SizedBox(width: 12),
-            YsButton.neutral(label: 'Instances', onPressed: onManageInstances),
-          ],
-        ),
-      ],
+    return YsEntrance(
+      child: YsDialogCard(
+        children: [
+          YsDialogArt(YsArt.unreachable),
+          const YsDialogTitle('Could not open the chat'),
+          YsDialogBody(describeError(error)),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              YsButton.primary(label: 'Retry', onPressed: onRetry),
+              const SizedBox(width: 12),
+              YsButton.neutral(
+                label: 'Instances',
+                onPressed: onManageInstances,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

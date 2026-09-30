@@ -16,13 +16,17 @@ extension YsFlutterPalette on YsPalette {
   Color get primaryColor => Color(primary.value);
   Color get primary2Color => Color(primary2.value);
   Color get primaryMutedColor => Color(primaryMuted.value);
+  Color get primaryWashColor => Color(primaryWash.value);
   Color get primaryContentColor => Color(primaryContent.value);
   Color get lineColor => Color(line.value);
   Color get backdropColor => Color(backdrop.value);
   Color get successColor => Color(success.value);
+  Color get successMutedColor => Color(successMuted.value);
   Color get errorColor => Color(error.value);
+  Color get errorWashColor => Color(errorWash.value);
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
+  Color get shadowColor => Color(shadow.value);
 }
 
 extension YsFlutterType on YsTextStyle {
@@ -39,6 +43,11 @@ extension YsFlutterType on YsTextStyle {
     },
     leadingDistribution: TextLeadingDistribution.even,
   );
+}
+
+extension YsFlutterEase on YsEase {
+  /// The same cubic-bezier as a Flutter [Curve].
+  Curve get curve => Cubic(x1, y1, x2, y2);
 }
 
 /// Provides the [YsPalette] to the widget subtree.

@@ -18,6 +18,10 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 void main() {
   testWidgets('should open the Command Line Tools installer on macOS, then '
       'go on once they are installed', (tester) async {
+    // Tall enough for the whole checklist card.
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     const tools = '/Library/Developer/CommandLineTools';
     var installed = false;
     var requests = 0;
@@ -69,7 +73,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MediaQuery(
-          data: MediaQueryData.fromView(tester.view),
+          // Rows unfold at once: taps land on the buttons they show.
+          data: MediaQueryData.fromView(tester.view)
+              .copyWith(disableAnimations: true),
           child: Directionality(
             textDirection: TextDirection.ltr,
             child: YsTheme(
@@ -91,20 +97,11 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(
-      find.text('Missing tools: ${HermesInstaller.commandLineTools}.'),
-      findsOneWidget,
-    );
+    // The missing tools offer their installer inline.
     await tester.tap(find.widgetWithText(YsButton, 'Install'));
     await tester.pump();
 
     expect(requests, 1);
-    expect(
-      find.text(
-        'Finish the installation in the dialog that opened, then check again.',
-      ),
-      findsOneWidget,
-    );
     expect(find.widgetWithText(YsButton, 'Install'), findsNothing);
 
     // Still missing: the flow stays on the prerequisites.
@@ -118,7 +115,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(planRead.isCompleted, isTrue);
-    expect(find.text('Reading install plan…'), findsOneWidget);
+    expect(find.widgetWithText(YsButton, 'Check again'), findsNothing);
   });
 
   group('after the install', () {
@@ -177,7 +174,7 @@ void main() {
       );
       await _settle(tester);
       await tester.tap(
-        find.widgetWithText(YsButton, 'Install Hermes on this computer'),
+        find.widgetWithText(YsChoiceCard, 'Install Hermes on this computer'),
       );
       await _settle(tester);
       final container = ProviderScope.containerOf(

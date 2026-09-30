@@ -75,9 +75,12 @@ final class _PluginGateState extends ConsumerState<PluginGate> {
         title: title,
         onInstalled: (setup) => setState(() => _computer = setup),
       ),
-      AsyncError(:final error) => HermuseRoute(
+      // Out of reach, from the first failure: why, and the pulled plug
+      // looping while a retry runs.
+      AsyncValue(:final error?) => HermuseRoute(
         title: title,
         children: [
+          HermuseRouteArt(YsArt.unreachable, busy: status.isLoading),
           HermuseRouteError('Could not reach the Hermuse plugin: $error'),
           Align(
             alignment: Alignment.centerLeft,
@@ -89,9 +92,10 @@ final class _PluginGateState extends ConsumerState<PluginGate> {
           ),
         ],
       ),
+      // Loading: the page's cards shimmer where its content will be.
       _ => HermuseRoute(
         title: title,
-        children: const [HermuseRouteSub('Loading…')],
+        children: const [HermuseRouteSkeleton(label: 'Loading…')],
       ),
     };
   }
@@ -271,6 +275,8 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
     return HermuseRoute(
       title: widget.title,
       children: [
+        // The plugin piece, looping while it installs.
+        HermuseRouteArt(YsArt.plugin, busy: _busy),
         Text(
           'Enable the Hermuse plugin',
           style: YsType.heading.flutter.copyWith(color: palette.contentColor),

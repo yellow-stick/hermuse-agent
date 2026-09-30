@@ -130,6 +130,11 @@ class HermuseSidebar extends StatefulComponent {
       css('.hermuse-sidebar-empty-body')
           .styles(margin: .zero, fontSize: 13.px, lineHeight: 18.px),
       css('.hermuse-sidebar-empty-action').styles(margin: .only(top: 12.px)),
+      // 12 px under the illustration, with the column's 4 px gap.
+      css('.hermuse-sidebar-empty-art').styles(
+        display: .inlineFlex,
+        margin: .only(bottom: (YsSpace.md - YsSpace.xs).px),
+      ),
       css('.hermuse-sidebar-section-empty').styles(
         padding: .symmetric(vertical: 12.px, horizontal: 12.px),
         textAlign: .center,
@@ -667,7 +672,12 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
   // -------------------------------------------------------------------- lists
 
   Component _start() => div(classes: 'hermuse-sidebar-empty', [
-    YsIconView(YsIcon.sideChat, size: 28),
+    YsHover(
+      builder: (context, hovered) => span(
+        classes: 'hermuse-sidebar-empty-art',
+        [YsArtView(YsArt.chats, size: YsLayout.artCompact, active: hovered)],
+      ),
+    ),
     div(classes: 'hermuse-sidebar-empty-text', [
       h3(classes: 'hermuse-sidebar-empty-title', [.text('Start a side chat')]),
       p(classes: 'hermuse-sidebar-empty-body', [.text(_startBody)]),

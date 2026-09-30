@@ -18,6 +18,7 @@ import '../host/install_flow.dart';
 import '../host/linux_setup.dart';
 import '../host/linux_setup_gate.dart';
 import '../platform/local_host.dart';
+import '../onboarding/components.dart';
 import '../onboarding/connections.dart';
 import '../onboarding/onboarding.dart';
 import '../panel/profile_panel.dart';
@@ -110,6 +111,10 @@ enum _Route {
   instances,
   onboarding,
   connections,
+
+  /// What Hermuse needs on a remote instance: after it is added, and from
+  /// its row in the instances.
+  components,
 }
 
 /// Picks the route (welcome / chat / instance screens) and the chat scope.
@@ -135,6 +140,10 @@ final class _Root extends ConsumerStatefulWidget {
 final class _RootState extends ConsumerState<_Root> {
   _Route _route = _Route.chat;
   String? _overlayInstanceId;
+
+  /// The assistant keeps its state (the checklist's animations) when it
+  /// moves between the full screen and the overlay.
+  final _gateKey = GlobalKey();
 
   /// Whether the Linux setup assistant runs (Linux only, see `main()`).
   bool get _linux => ref.read(linuxSetupServicesProvider) != null;
@@ -163,7 +172,11 @@ final class _RootState extends ConsumerState<_Root> {
       case LinuxSetupGoal.reopen || LinuxSetupGoal.computer || null:
         break;
     }
-    Future.microtask(ref.read(linuxSetupProvider.notifier).acknowledge);
+    // A goal the user watched ends with its ready moment, which the
+    // assistant acknowledges itself.
+    if (!next.showsReady) {
+      Future.microtask(ref.read(linuxSetupProvider.notifier).acknowledge);
+    }
   }
 
   /// Connect to a Hermes server; on Linux the keyring comes first.
@@ -175,6 +188,15 @@ final class _RootState extends ConsumerState<_Root> {
       return;
     }
     setState(() => _route = _Route.addInstance);
+  }
+
+  /// A Hermes was just saved: what it has shows first, its chat opens behind.
+  void _added(String instanceId) {
+    setState(() {
+      _route = _Route.components;
+      _overlayInstanceId = instanceId;
+    });
+    unawaited(ref.read(activeThreadProvider.notifier).openInstance(instanceId));
   }
 
   @override
@@ -200,16 +222,16 @@ final class _RootState extends ConsumerState<_Root> {
     if ((instances == null || instances.isNotEmpty) &&
         (!setup.keystoreVerified ||
             (setup.goal == LinuxSetupGoal.reopen && setup.active))) {
-      return const LinuxSetupGate(canLeave: false);
+      return LinuxSetupGate(key: _gateKey, canLeave: false);
     }
     final content = _routes(palette);
-    if (!setup.active) return content;
+    if (!setup.active && !setup.showsReady) return content;
     return Stack(
       fit: StackFit.expand,
       children: [
         // Kept alive under the assistant, back as it was once it closes.
         ExcludeFocus(child: Offstage(child: content)),
-        const LinuxSetupGate(canLeave: true),
+        LinuxSetupGate(key: _gateKey, canLeave: true),
       ],
     );
   }
@@ -219,16 +241,18 @@ final class _RootState extends ConsumerState<_Root> {
     final instances = ref.watch(instancesProvider);
     final active = ref.watch(activeThreadProvider);
     final instanceList = instances.value;
-    if (instanceList != null && instanceList.isEmpty) {
+    final thread = active.value;
+    // Add a Hermes stays on screen while it saves the first instance, until
+    // it hands over.
+    if (instanceList != null &&
+        (instanceList.isEmpty ||
+            (thread == null && _route == _Route.addInstance))) {
       final host = ref.read(localHostProvider);
       return ColoredBox(
         color: palette.canvasColor,
         child: switch (_route) {
           _Route.addInstance => AddInstanceScreen(
-            onDone: (id) => setState(() {
-              _route = _Route.onboarding;
-              _overlayInstanceId = id;
-            }),
+            onDone: _added,
             onCancel: () => setState(() => _route = _Route.chat),
           ),
           _Route.install when host != null => _InstallRoute(
@@ -251,7 +275,30 @@ final class _RootState extends ConsumerState<_Root> {
         },
       );
     }
-    final thread = active.value;
+    // What a remote instance has needs no open chat.
+    if (_route == _Route.components) {
+      final instance = instanceList
+          ?.where((i) => i.id == _overlayInstanceId)
+          .firstOrNull;
+      if (instance != null) {
+        return ColoredBox(
+          color: palette.canvasColor,
+          child: ComponentsScreen(
+            instance: instance,
+            onChat: () async {
+              setState(() => _route = _Route.chat);
+              await ref
+                  .read(activeThreadProvider.notifier)
+                  .openInstance(instance.id);
+            },
+            onSetUpModel: () => setState(() {
+              _route = _Route.onboarding;
+              _overlayInstanceId = instance.id;
+            }),
+          ),
+        );
+      }
+    }
     if (active.hasValue && thread != null) {
       return _ChatRoute(
         thread: thread,
@@ -262,6 +309,7 @@ final class _RootState extends ConsumerState<_Root> {
           _route = route;
           _overlayInstanceId = overlayId;
         }),
+        onAdded: _added,
         onAdopt: widget.onAdopt,
         chat: widget.chat,
         current: widget.current,
@@ -298,10 +346,7 @@ final class _RootState extends ConsumerState<_Root> {
         ),
       );
     }
-    return ColoredBox(
-      color: palette.canvasColor,
-      child: const Center(child: YsSpinner(size: 24)),
-    );
+    return LoadingScreen(art: YsArt.chats, label: 'Loading');
   }
 }
 
@@ -339,7 +384,10 @@ final class _InstallRouteState extends State<_InstallRoute> {
         );
       }
       if (snapshot.connectionState != .done) {
-        return const Center(child: YsSpinner(size: 24));
+        return LoadingScreen(
+          art: YsArt.check,
+          label: 'Looking for Hermes Agent',
+        );
       }
       return InstallFlowScreen(
         host: widget.host,
@@ -359,6 +407,7 @@ final class _ChatRoute extends ConsumerWidget {
     required this.route,
     required this.overlayInstanceId,
     required this.onRoute,
+    required this.onAdded,
     required this.onAdopt,
     required this.chat,
     required this.current,
@@ -369,6 +418,9 @@ final class _ChatRoute extends ConsumerWidget {
   final _Route route;
   final String? overlayInstanceId;
   final void Function(_Route route, [String? overlayId]) onRoute;
+
+  /// Add a Hermes saved one.
+  final ValueChanged<String> onAdded;
   final void Function(ChatController) onAdopt;
   final ChatListenable Function() chat;
   final ChatController? Function() current;
@@ -381,7 +433,7 @@ final class _ChatRoute extends ConsumerWidget {
         return ColoredBox(
           color: palette.canvasColor,
           child: AddInstanceScreen(
-            onDone: (id) => onRoute(_Route.onboarding, id),
+            onDone: onAdded,
             onCancel: () => onRoute(_Route.chat),
           ),
         );
@@ -403,6 +455,7 @@ final class _ChatRoute extends ConsumerWidget {
                 : null,
             onClose: () => onRoute(_Route.chat),
             onSetup: (id) => onRoute(_Route.onboarding, id),
+            onComponents: (id) => onRoute(_Route.components, id),
             onConnections: (id) => onRoute(_Route.connections, id),
           ),
         );
@@ -445,6 +498,8 @@ final class _ChatRoute extends ConsumerWidget {
             ),
           );
         }
+      // Shown by the root; an instance deleted meanwhile leaves the chat.
+      case _Route.components:
       case _Route.welcome:
       case _Route.chat:
         break;
@@ -479,10 +534,7 @@ final class _ChatRoute extends ConsumerWidget {
         ),
       );
     }
-    return ColoredBox(
-      color: palette.canvasColor,
-      child: const Center(child: YsSpinner(size: 24)),
-    );
+    return LoadingScreen(art: YsArt.chats, label: 'Opening the chat');
   }
 
   Widget _adopted(
@@ -627,11 +679,12 @@ final class _ShellState extends ConsumerState<_Shell> {
     );
   }
 
-  /// The product page for [_destination], or null for the chat.
+  /// The product page for [_destination], or null for the chat. A new page
+  /// enters with [YsEntrance].
   Widget? _product() {
     final instance = widget.instance;
     if (instance == null) return null;
-    return switch (_destination) {
+    final page = switch (_destination) {
       HermuseDestination.chat => null,
       HermuseDestination.feed => FeedScreen(
         instance: instance,
@@ -644,6 +697,9 @@ final class _ShellState extends ConsumerState<_Shell> {
       HermuseDestination.goals => GoalsScreen(instance: instance),
       HermuseDestination.library => LibraryScreen(instance: instance),
     };
+    return page == null
+        ? null
+        : YsEntrance(key: ValueKey(_destination), child: page);
   }
 
   KeyEventResult _onKeyFor(YsShell shell, FocusNode node, KeyEvent event) {
