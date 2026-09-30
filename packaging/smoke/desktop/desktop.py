@@ -976,8 +976,9 @@ def cmd_rest(args: argparse.Namespace) -> None:
     body = json.loads(args.body) if args.body else None
     status, response = http_call(backend.port, args.method.upper(), args.path, token=backend.token, body=body,
                                  timeout=args.timeout)
-    emit({"method": args.method.upper(), "path": args.path, "status": status, "body": response},
-         200 <= status < 300)
+    # backend_pid: which supervised process answered (a restart changes it).
+    emit({"method": args.method.upper(), "path": args.path, "status": status, "body": response,
+          "backend_pid": backend.proc.pid}, 200 <= status < 300)
 
 
 def cmd_plaintext(args: argparse.Namespace) -> None:

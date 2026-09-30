@@ -477,17 +477,28 @@ function Test-Plugin {
     return $false
   }
   Add-Check $id 'plugin-gate' 'pass' "Feed shows '$UiEnablePlugin' for the local instance" @($png)
+  # The install restarts the backend (copy, enable, jobs, then stop and start):
+  # the old one may already answer the plugin routes before it is stopped, so
+  # only a new backend process serving them marks the end of the install.
+  $preInstall = Join-Path $Probe 'backend-pre-plugin.json'
+  D backend *> $preInstall
+  $oldPid = (Read-Json $preInstall).backend.pid
   $png = Invoke-UiClick $UiInstallPlugin (T 30)
   if (-not $png) {
     Add-Check $id 'plugin-install' 'fail' "no '$UiInstallPlugin' button" @((Save-Shot 'install-plugin-missing'))
     return $false
   }
   $feedJson = Join-Path $Probe 'feed.json'
-  if (-not (Wait-Until (T 900) 5 { (Test-Path (Join-Path $HermesHome 'plugins\hermuse\plugin.yaml')) -and (Invoke-Rest GET /api/plugins/hermuse/feed $feedJson) })) {
-    Add-Check $id 'plugin-install' 'fail' 'the plugin never served /api/plugins/hermuse/feed' @((Save-Shot 'plugin-stuck'), $feedJson)
+  if (-not (Wait-Until (T 900) 5 {
+        (Test-Path (Join-Path $HermesHome 'plugins\hermuse\plugin.yaml')) -and (Invoke-Rest GET /api/plugins/hermuse/feed $feedJson) -and
+        $null -ne $oldPid -and (Read-Json $feedJson).backend_pid -ne $oldPid
+      })) {
+    Add-Check $id 'plugin-install' 'fail' 'no restarted backend (new process) served /api/plugins/hermuse/feed' `
+      @((Save-Shot 'plugin-stuck'), $feedJson, $preInstall)
     return $false
   }
-  Add-Check $id 'plugin-install' 'pass' "clicked '$UiInstallPlugin': the restarted backend serves the plugin" @($png)
+  Add-Check $id 'plugin-install' 'pass' "clicked '$UiInstallPlugin': the restarted backend (pid $oldPid -> $((Read-Json $feedJson).backend_pid)) serves the plugin" `
+    @($png, $preInstall, $feedJson)
   $assets = Join-Path $InstallDir 'data\flutter_assets\assets\hermes-plugin\hermuse'
   Add-Verdict $id 'plugin-copied' (Compare-Tree $assets (Join-Path $HermesHome 'plugins\hermuse') (Join-Path $Logs 'plugin-diff.txt')) `
     "HERMES_HOME\plugins\hermuse equals the plugin assets of the installed app" @((Join-Path $Logs 'plugin-diff.txt'))

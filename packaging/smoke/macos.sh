@@ -564,12 +564,17 @@ c3_keyring() {
 
 cron_ids() { jq -r '.body.jobs[] | select(.registered) | .job_id' "$1" 2>/dev/null | sort; }
 
-plugin_ready() {
-  [ -f "$HERMES_HOME/plugins/hermuse/plugin.yaml" ] && rest GET /api/plugins/hermuse/feed "$EVID/probe/feed.json"
+# The install restarts the backend (copy, enable, jobs, then stop and start):
+# the old one may already answer the plugin routes before it is stopped, so
+# only a new backend process serving them marks the end of the install.
+plugin_ready() { # <pre-install backend pid>
+  [ -n "$1" ] && [ -f "$HERMES_HOME/plugins/hermuse/plugin.yaml" ] &&
+    rest GET /api/plugins/hermuse/feed "$EVID/probe/feed.json" &&
+    [ "$(jq -r '.backend_pid' "$EVID/probe/feed.json")" != "$1" ]
 }
 
 c5_plugin() {
-  local id=c5-plugin ok png
+  local id=c5-plugin ok png old_pid
   local_network_prompt "$id" || true
   ui_click "$UI_BACK_TO_CHAT" 10 >/dev/null || true
   # The plugin gate sits on every product route: Feed, second in the rail.
@@ -578,16 +583,20 @@ c5_plugin() {
     return 1
   fi
   check "$id" plugin-gate pass "Feed shows '$UI_ENABLE_PLUGIN' for the local instance" "$png"
+  D backend >"$EVID/probe/backend-pre-plugin.json" 2>&1
+  old_pid=$(jq -r '.backend.pid // empty' "$EVID/probe/backend-pre-plugin.json" 2>/dev/null)
   if ! png=$(ui_click "$UI_INSTALL_PLUGIN" "$(T 30)"); then
     check "$id" plugin-install fail "no '$UI_INSTALL_PLUGIN' button" "$(shot install-plugin-missing)"
     return 1
   fi
-  if ! wait_until "$(T 900)" 5 plugin_ready; then
-    check "$id" plugin-install fail "the plugin never served /api/plugins/hermuse/feed" "$(shot plugin-stuck)" \
-      "$EVID/probe/feed.json"
+  if ! wait_until "$(T 900)" 5 plugin_ready "$old_pid"; then
+    check "$id" plugin-install fail "no restarted backend (new process) served /api/plugins/hermuse/feed" \
+      "$(shot plugin-stuck)" "$EVID/probe/feed.json" "$EVID/probe/backend-pre-plugin.json"
     return 1
   fi
-  check "$id" plugin-install pass "clicked '$UI_INSTALL_PLUGIN': the restarted backend serves the plugin" "$png"
+  check "$id" plugin-install pass \
+    "clicked '$UI_INSTALL_PLUGIN': the restarted backend (pid $old_pid -> $(jq -r '.backend_pid' "$EVID/probe/feed.json")) serves the plugin" \
+    "$png" "$EVID/probe/backend-pre-plugin.json" "$EVID/probe/feed.json"
   local assets=$APP/Contents/Frameworks/App.framework/Resources/flutter_assets/assets/hermes-plugin/hermuse
   diff -r -x __pycache__ "$assets" "$HERMES_HOME/plugins/hermuse" >"$EVID/logs/plugin-diff.txt" 2>&1
   pass_or_fail "$id" plugin-copied $? "HERMES_HOME/plugins/hermuse equals the plugin assets of the app bundle" \
