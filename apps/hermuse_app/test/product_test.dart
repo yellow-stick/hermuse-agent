@@ -92,6 +92,34 @@ void main() {
     );
   });
 
+  testWidgets('an unreachable plugin says why; Check again recovers', (
+    tester,
+  ) async {
+    var reachable = false;
+    await _pump(tester, GoalsScreen(instance: _instance), {
+      'GET /api/plugins/hermuse/files': (_) {
+        if (!reachable) throw http.ClientException('connection refused');
+        return {'files': []};
+      },
+      'GET /api/plugins/hermuse/goals': (_) => {
+        'goals': [
+          {'id': 'g1', 'title': 'Run 10k', 'status': 'tracking'},
+        ],
+      },
+    });
+    expect(
+      find.textContaining('Could not reach the Hermuse plugin'),
+      findsOneWidget,
+    );
+    expect(find.text('Run 10k'), findsNothing);
+
+    reachable = true;
+    await tester.tap(find.widgetWithText(YsButton, 'Check again'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Could not reach'), findsNothing);
+    expect(find.text('Run 10k'), findsOneWidget);
+  });
+
   testWidgets('feed: Love reacts; Discuss reacts then seeds a chat', (
     tester,
   ) async {

@@ -146,6 +146,26 @@ final class HermuseRouteError extends StatelessWidget {
   }
 }
 
+/// Hero drawing of a route that cannot show its content yet (the plugin to
+/// turn on, the plugin out of reach), at the start of the column: it plays
+/// again under the pointer and loops while [busy] (web
+/// `.hermuse-card-art` parity).
+final class HermuseRouteArt extends StatelessWidget {
+  const HermuseRouteArt(this.art, {this.busy = false, super.key});
+
+  final YsArt art;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: AlignmentDirectional.centerStart,
+    child: YsHover(
+      builder: (context, hovered) =>
+          YsArtView.hero(art, active: hovered, busy: busy),
+    ),
+  );
+}
+
 /// Section group: 14/20/500 head + 12 gaps.
 final class HermuseRouteSection extends StatelessWidget {
   const HermuseRouteSection({
