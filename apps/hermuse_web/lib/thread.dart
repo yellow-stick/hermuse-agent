@@ -174,32 +174,38 @@ class HermuseThread extends StatelessComponent {
                 ),
               ]),
               div(classes: 'hermuse-composer-trailing', [
-                if (busy)
-                  YsPressable(
-                    onPressed: onInterrupt,
-                    label: 'Stop',
-                    classes: 'hermuse-stop',
-                    builder: (context, press) =>
-                        YsIconView(YsIcon.close, size: 18),
-                  )
-                else if (draft.trim().isEmpty)
-                  YsTooltip(
-                    label: 'Voice',
-                    child: YsButton.icon(
-                      icon: YsIcon.mic,
-                      label: 'Voice',
-                      onPressed: null,
-                      size: 32,
-                    ),
-                  )
-                else
-                  YsPressable(
-                    onPressed: onSend,
-                    label: 'Send',
-                    classes: 'hermuse-send',
-                    builder: (context, press) =>
-                        YsIconView(YsIcon.send, size: 18),
-                  ),
+                _Morph(
+                  action: busy
+                      ? 'stop'
+                      : draft.trim().isEmpty
+                      ? 'voice'
+                      : 'send',
+                  child: busy
+                      ? YsPressable(
+                          onPressed: onInterrupt,
+                          label: 'Stop',
+                          classes: 'hermuse-stop',
+                          builder: (context, press) =>
+                              YsIconView(YsIcon.close, size: 18),
+                        )
+                      : draft.trim().isEmpty
+                      ? YsTooltip(
+                          label: 'Voice',
+                          child: YsButton.icon(
+                            icon: YsIcon.mic,
+                            label: 'Voice',
+                            onPressed: null,
+                            size: 32,
+                          ),
+                        )
+                      : YsPressable(
+                          onPressed: onSend,
+                          label: 'Send',
+                          classes: 'hermuse-send',
+                          builder: (context, press) =>
+                              YsIconView(YsIcon.send, size: 18),
+                        ),
+                ),
               ]),
             ]),
           ]),
@@ -471,7 +477,60 @@ class HermuseThread extends StatelessComponent {
         color: .variable('--primary-2'),
       ),
     ]),
+    // A new composer action turns in and grows from half size.
+    css.keyframes('hermuse-morph', {
+      '0%': Styles(
+        opacity: 0,
+        raw: {
+          'rotate': '${-YsMorphMotion.turn * 360}deg',
+          'scale': '${YsMorphMotion.from}',
+        },
+      ),
+      '100%': Styles(opacity: 1, raw: {'rotate': '0deg', 'scale': '1'}),
+    }),
+    css('.hermuse-morph').styles(display: .inlineFlex),
+    css('.hermuse-morph-in').styles(
+      raw: {
+        'animation':
+            'hermuse-morph ${YsMorphMotion.swap}ms ${YsEase.settle.css} '
+            'backwards',
+      },
+    ),
+    css.media(MediaQuery.raw(ysReducedMotionQuery), [
+      css('.hermuse-morph-in').styles(raw: {'animation': 'none'}),
+    ]),
   ];
+}
+
+/// The composer's trailing [action] (voice, send or stop): a new action
+/// turns in [YsMorphMotion.turn] of a turn and grows from
+/// [YsMorphMotion.from] ([YsMorphMotion.swap] ms) while the previous one is
+/// gone at once; the first one simply shows.
+class _Morph extends StatefulComponent {
+  const _Morph({required this.action, required this.child});
+
+  final String action;
+  final Component child;
+
+  @override
+  State<_Morph> createState() => _MorphState();
+}
+
+class _MorphState extends State<_Morph> {
+  var _changed = false;
+
+  @override
+  void didUpdateComponent(_Morph oldComponent) {
+    super.didUpdateComponent(oldComponent);
+    if (oldComponent.action != component.action) _changed = true;
+  }
+
+  @override
+  Component build(BuildContext context) => span(
+    key: ValueKey(component.action),
+    classes: _changed ? 'hermuse-morph hermuse-morph-in' : 'hermuse-morph',
+    [component.child],
+  );
 }
 
 /// Display title of a side chat: the agent names it after the first

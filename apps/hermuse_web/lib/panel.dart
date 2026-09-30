@@ -51,7 +51,11 @@ class HermusePanel extends StatelessComponent {
       h1(classes: 'hermuse-panel-name', [.text(agentName)]),
       div(classes: 'hermuse-panel-status', [
         span(classes: 'hermuse-panel-status-icon', [
-          RawText(ysConnectedSvg(YsPalette.dark.success.css)),
+          YsPing(
+            live: true,
+            color: YsTheme.success,
+            child: RawText(ysConnectedSvg(YsPalette.dark.success.css)),
+          ),
         ]),
         span(classes: 'hermuse-panel-status-text', [.text('Connected')]),
       ]),
@@ -107,15 +111,22 @@ class HermusePanel extends StatelessComponent {
             ]),
         ])
       else
-        div(classes: 'hermuse-panel-empty', [
-          YsIconView(switch (tab) {
-            PanelTab.approvals => YsIcon.approvals,
-            PanelTab.upcoming => YsIcon.upcoming,
-            _ => YsIcon.identity,
-          }, size: 26),
-          p(classes: 'hermuse-panel-empty-title', [.text(tab.label)]),
-          p(classes: 'hermuse-panel-empty-body', [.text(tab.emptyText)]),
-        ]),
+        YsHover(
+          builder: (context, hovered) => div(classes: 'hermuse-panel-empty', [
+            YsArtView(
+              switch (tab) {
+                PanelTab.activity => YsArt.activity,
+                PanelTab.approvals => YsArt.approvals,
+                PanelTab.upcoming => YsArt.upcoming,
+                PanelTab.identity => YsArt.identity,
+              },
+              size: YsLayout.artCompact,
+              active: hovered,
+            ),
+            p(classes: 'hermuse-panel-empty-title', [.text(tab.label)]),
+            p(classes: 'hermuse-panel-empty-body', [.text(tab.emptyText)]),
+          ]),
+        ),
     ],
   );
 
@@ -226,20 +237,22 @@ class HermusePanel extends StatelessComponent {
         display: .flex,
         flexDirection: .column,
         alignItems: .center,
-        gap: .all(8.px),
-        padding: .only(top: 32.px),
+        padding: .only(top: YsSpace.xl.px),
         color: .variable('--content-muted'),
         textAlign: .center,
       ),
       css('.hermuse-panel-empty-title').styles(
-        margin: .zero,
+        margin: .fromLTRB(.zero, YsSpace.sm.px, .zero, .zero),
         fontSize: 14.px,
         lineHeight: 20.px,
         fontWeight: .w500,
         color: .variable('--content'),
       ),
-      css('.hermuse-panel-empty-body')
-          .styles(margin: .zero, fontSize: 13.px, lineHeight: 18.px),
+      css('.hermuse-panel-empty-body').styles(
+        margin: .fromLTRB(.zero, YsSpace.xs.px, .zero, .zero),
+        fontSize: 13.px,
+        lineHeight: 18.px,
+      ),
     ]),
   ];
 }

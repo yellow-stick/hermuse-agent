@@ -8,35 +8,79 @@ import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'mascot.dart';
 import 'scope.dart';
 import 'screens.dart';
 
-/// Welcome screen: no instance is registered yet.
+/// Welcome screen: no instance is registered yet. The mascot says hello
+/// above the one way to start on the web: adding a Hermes.
 class HermuseWelcome extends StatelessComponent {
   const HermuseWelcome({required this.onAdd, super.key});
 
   final VoidCallback onAdd;
 
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-screen', [
-    div(classes: 'hermuse-card', [
-      div(classes: 'hermuse-card-icon', [YsIconView(YsIcon.chat, size: 28)]),
-      h1(classes: 'hermuse-card-title', [.text('Welcome to Hermuse')]),
-      p(classes: 'hermuse-card-body', [
-        .text(
-          'Hermuse talks to your Hermes instances. Add your first one '
-          'to start chatting.',
-        ),
-      ]),
-      div(classes: 'hermuse-card-actions', [
-        YsButton.primary(label: 'Add a Hermes', onPressed: onAdd),
-      ]),
-    ]),
-  ]);
+  Component build(BuildContext context) =>
+      div(classes: 'hermuse-screen hermuse-welcome-screen', [
+        div(classes: 'hermuse-welcome ys-enter', [
+          const HermuseMascot(),
+          h1(classes: 'hermuse-welcome-title', [.text("Hi, I'm Hermuse")]),
+          p(classes: 'hermuse-welcome-body', [
+            .text('I run on your own Hermes Agent. Add one to start chatting.'),
+          ]),
+          div(classes: 'hermuse-welcome-choices', [
+            YsChoiceCard(
+              art: YsArt.remote,
+              title: 'Add a Hermes',
+              body: 'A Hermes already running on a server or another computer.',
+              onPressed: onAdd,
+            ),
+          ]),
+        ]),
+      ]);
 
   @css
   // ignore: unused_element
-  static List<StyleRule> get styles => hermuseScreenStyles;
+  static List<StyleRule> get styles => [
+    ...hermuseScreenStyles,
+    // Centred while it fits, scrolling from the top once it does not.
+    css('.hermuse-screen.hermuse-welcome-screen').styles(
+      alignItems: .start,
+      overflow: .only(y: .auto, x: .hidden),
+    ),
+    css('.hermuse-welcome', [
+      css('&').styles(
+        width: 100.percent,
+        maxWidth: YsLayout.listWidth.px,
+        padding: .all(YsSpace.xl.px),
+        margin: .all(.auto),
+        display: .flex,
+        flexDirection: .column,
+        alignItems: .center,
+        color: .variable('--content'),
+        textAlign: .center,
+      ),
+      css('.hermuse-welcome-title').styles(
+        margin: .fromLTRB(.zero, YsSpace.xl.px, .zero, .zero),
+        fontSize: YsType.title.size.px,
+        fontWeight: .w500,
+        lineHeight: YsType.title.lineHeight.px,
+      ),
+      css('.hermuse-welcome-body').styles(
+        margin: .fromLTRB(.zero, YsSpace.sm.px, .zero, .zero),
+        color: .variable('--content-muted'),
+        fontSize: YsType.body.size.px,
+        lineHeight: YsType.body.lineHeight.px,
+      ),
+      css('.hermuse-welcome-choices').styles(
+        width: 100.percent,
+        margin: .only(top: YsSpace.xxl.px),
+        display: .flex,
+        flexDirection: .column,
+        gap: .all(YsSpace.md.px),
+      ),
+    ]),
+  ];
 }
 
 /// Registered instances: state dot, version, rename, primary, delete.
@@ -180,9 +224,9 @@ class HermuseInstances extends StatelessComponent {
       border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
     ),
     css('.hermuse-instance-dot').styles(
-      width: 8.px,
-      height: 8.px,
-      radius: .circular(4.px),
+      width: YsLayout.statusDot.px,
+      height: YsLayout.statusDot.px,
+      radius: .circular(YsRadius.pill.px),
       backgroundColor: .variable('--content-subtle'),
       raw: {'flex-shrink': '0'},
     ),
@@ -335,7 +379,11 @@ class _InstanceRowState extends State<_InstanceRow> {
       _ => 'hermuse-instance-dot',
     };
     return div(classes: 'hermuse-instance-row', [
-      div(classes: dot, []),
+      YsPing(
+        live: component.state == ConnectionState.ready,
+        color: YsTheme.success,
+        child: div(classes: dot, []),
+      ),
       div(classes: 'hermuse-instance-body', [
         if (_editing)
           div(classes: 'hermuse-instance-edit', [

@@ -503,6 +503,21 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           ),
         ]);
 
+    // The product page on screen; null on the chat.
+    final product = switch (_destination) {
+      HermuseDestination.chat => null,
+      HermuseDestination.feed => HermuseFeed(
+        instance: instance,
+        onDiscuss: (seed) => _discussSeed(controller, seed),
+      ),
+      HermuseDestination.ideas => HermuseIdeas(
+        instance: instance,
+        onStartInChat: (seed) => _discussSeed(controller, seed),
+      ),
+      HermuseDestination.goals => HermuseGoals(instance: instance),
+      HermuseDestination.library => HermuseLibrary(instance: instance),
+    };
+
     // The agent's computer takes everything right of the rail.
     if (state.computerOpen) {
       return div(classes: 'hermuse-shell', [
@@ -541,20 +556,15 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           thread(),
         ]),
       div(key: const ValueKey('thread-slot'), classes: 'hermuse-thread-slot', [
-        if (onChat) header(),
-        switch (_destination) {
-          HermuseDestination.chat => thread(),
-          HermuseDestination.feed => HermuseFeed(
-            instance: instance,
-            onDiscuss: (seed) => _discussSeed(controller, seed),
-          ),
-          HermuseDestination.ideas => HermuseIdeas(
-            instance: instance,
-            onStartInChat: (seed) => _discussSeed(controller, seed),
-          ),
-          HermuseDestination.goals => HermuseGoals(instance: instance),
-          HermuseDestination.library => HermuseLibrary(instance: instance),
-        },
+        if (product != null)
+          // A product page enters with the page motion, once per destination.
+          div(key: ValueKey(_destination), classes: 'hermuse-page ys-enter', [
+            product,
+          ])
+        else ...[
+          header(),
+          thread(),
+        ],
         if (!onChat && _splitFits)
           div(classes: 'hermuse-floating-left', [
             YsTooltip(
@@ -675,6 +685,13 @@ List<StyleRule> get hermuseShellStyles => [
       display: .flex,
       flexDirection: .column,
       position: .relative(),
+      raw: {'min-width': '0', 'min-height': '0'},
+    ),
+    // A product page takes the slot like the route it holds.
+    css('& .hermuse-page').styles(
+      display: .flex,
+      flexDirection: .column,
+      flex: Flex(grow: 1, shrink: 1, basis: .zero),
       raw: {'min-width': '0', 'min-height': '0'},
     ),
     // Side-by-side chat on product routes: the chat (header, thread,

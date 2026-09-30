@@ -8,6 +8,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'feed.dart';
+import 'route.dart';
 import 'route_styles.dart';
 import 'scope.dart';
 import 'screens.dart';
@@ -262,7 +263,7 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
     List<Artifact> all,
   ) {
     if (artifacts.isLoading && artifacts.value == null) {
-      return p(classes: 'hermuse-route-sub', [.text('Loading artifacts…')]);
+      return const HermuseRouteSkeleton(label: 'Loading artifacts…');
     }
     if (artifacts.hasError && artifacts.value == null) {
       return p(classes: 'hermuse-route-error', [
@@ -274,13 +275,11 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
         if (_kindFilter.isEmpty || artifact.kind == _kindFilter) artifact,
     ];
     if (rows.isEmpty) {
-      return div(classes: 'hermuse-route-empty', [
-        YsIconView(YsIcon.library, size: 26),
-        p(classes: 'hermuse-route-empty-title', [.text('No artifacts yet')]),
-        p(classes: 'hermuse-route-empty-body', [
-          .text('Ask your Hermes to build something for you.'),
-        ]),
-      ]);
+      return HermuseRouteEmpty(
+        art: YsArt.library,
+        title: 'No artifacts yet',
+        body: 'Ask your Hermes to build something for you.',
+      );
     }
     return div(classes: 'hermuse-route-section', [
       for (final artifact in rows)
@@ -465,15 +464,11 @@ class _Reflections extends StatelessComponent {
         ]);
       }
       if (all.isEmpty) {
-        return div(classes: 'hermuse-route-empty', [
-          YsIconView(YsIcon.upcoming, size: 26),
-          p(classes: 'hermuse-route-empty-title', [
-            .text('No reflections yet'),
-          ]),
-          p(classes: 'hermuse-route-empty-body', [
-            .text('The nightly reflection appears here each morning.'),
-          ]),
-        ]);
+        return HermuseRouteEmpty(
+          art: YsArt.reflections,
+          title: 'No reflections yet',
+          body: 'The nightly reflection lands here each morning.',
+        );
       }
       return div(classes: 'hermuse-route-section', [
         for (final reflection in all)

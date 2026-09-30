@@ -10,6 +10,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'connections.dart';
+import 'mascot.dart';
 import 'scope.dart';
 import 'screens.dart';
 
@@ -68,50 +69,134 @@ class HermuseOnboarding extends StatelessComponent {
         ]),
       ]);
     }
-    return switch (state.step) {
-      OnboardingStep.runtimeCheck => _RuntimeCheck(
-        instanceId: instance.id,
-        state: state,
-        onSkipToChat: onSkipToChat,
-      ),
-      OnboardingStep.connections => HermuseConnections(
-        instance: instance,
-        onBack: onSkipToChat,
-      ),
-      OnboardingStep.defaultModel => _DefaultModel(
-        instanceId: instance.id,
-        state: state,
-        onSkipToChat: onSkipToChat,
-      ),
-      OnboardingStep.profile => _ProfileStep(
-        instanceId: instance.id,
-        state: state,
-        onDone: onDone,
-        onSkipToChat: onSkipToChat,
-      ),
-      OnboardingStep.ready => _ReadyStep(
-        instanceId: instance.id,
-        label: instance.label,
-        state: state,
-        onDone: onDone,
-      ),
-    };
+    // Each step comes on screen with the page motion.
+    return div(key: ValueKey(state.step), classes: 'hermuse-ob-page ys-enter', [
+      switch (state.step) {
+        OnboardingStep.runtimeCheck => _RuntimeCheck(
+          instanceId: instance.id,
+          state: state,
+          onSkipToChat: onSkipToChat,
+        ),
+        OnboardingStep.connections => HermuseConnections(
+          instance: instance,
+          onBack: onSkipToChat,
+        ),
+        OnboardingStep.defaultModel => _DefaultModel(
+          instanceId: instance.id,
+          state: state,
+          onSkipToChat: onSkipToChat,
+        ),
+        OnboardingStep.profile => _ProfileStep(
+          instanceId: instance.id,
+          state: state,
+          onDone: onDone,
+          onSkipToChat: onSkipToChat,
+        ),
+        OnboardingStep.ready => _ReadyStep(
+          instanceId: instance.id,
+          label: instance.label,
+          state: state,
+          onDone: onDone,
+        ),
+      },
+    ]);
   }
 
   @css
   // ignore: unused_element
   static List<StyleRule> get styles => [
     ...hermuseScreenStyles,
-    css('.hermuse-ob-steps')
-        .styles(display: .flex, flexDirection: .row, gap: .all(6.px)),
-    css('.hermuse-ob-dot').styles(
-      width: 8.px,
-      height: 8.px,
-      radius: .circular(4.px),
-      backgroundColor: .variable('--content-subtle'),
+    // A step fills the shell like the screen it holds.
+    css('.hermuse-ob-page').styles(
+      display: .flex,
+      flex: Flex(grow: 1, shrink: 1, basis: .auto),
+      raw: {'min-width': '0', 'min-height': '0'},
     ),
-    css('.hermuse-ob-dot-done').styles(backgroundColor: .variable('--success')),
-    css('.hermuse-ob-dot-now').styles(backgroundColor: .variable('--primary')),
+    css('.hermuse-ob-art').styles(display: .inlineFlex),
+    css(
+      '.hermuse-ob-providers',
+    ).styles(display: .flex, flexDirection: .column, gap: .all(YsSpace.sm.px)),
+    css('.hermuse-ob-provider', [
+      css('&').styles(
+        width: 100.percent,
+        padding: .all(YsSpace.md.px),
+        border: .all(
+          style: .solid,
+          color: .variable('--line'),
+          width: ysHairline.px,
+        ),
+        radius: .circular(YsRadius.row.px),
+        display: .flex,
+        alignItems: .center,
+        gap: .all((YsSpace.sm + YsSpace.xxs).px),
+        color: .variable('--content'),
+        textAlign: .left,
+        backgroundColor: .variable('--neutral-ambient'),
+      ),
+      css('&.ys-lift').styles(
+        raw: {
+          'transition':
+              'background-color ${YsMotion.base}ms linear, '
+              'border-color ${YsMotion.base}ms linear, $ysLiftTransition',
+        },
+      ),
+      css('&[aria-pressed="true"]').styles(
+        backgroundColor: .variable('--primary-wash'),
+        raw: {'border-color': 'var(--primary)'},
+      ),
+      css('&:focus-visible').styles(
+        outline: Outline(
+          style: OutlineStyle.solid,
+          color: .variable('--primary'),
+          width: OutlineWidth(2.px),
+        ),
+      ),
+      css('.hermuse-ob-provider-logo').styles(
+        width: 28.px,
+        height: 28.px,
+        radius: .circular((YsRadius.row - 2).px),
+        display: .flex,
+        justifyContent: .center,
+        alignItems: .center,
+        color: .variable('--content'),
+        fontSize: YsType.monogram.size.px,
+        fontWeight: .w600,
+        lineHeight: YsType.monogram.lineHeight.px,
+        backgroundColor: .variable('--paper-clear'),
+        raw: {'flex-shrink': '0'},
+      ),
+      css('&[aria-pressed="true"] .hermuse-ob-provider-logo').styles(
+        color: .variable('--primary-content'),
+        backgroundColor: .variable('--primary'),
+      ),
+      css('.hermuse-ob-provider-text').styles(
+        display: .flex,
+        flexDirection: .column,
+        flex: Flex(grow: 1, shrink: 1, basis: .zero),
+        raw: {'min-width': '0'},
+      ),
+      css('.hermuse-ob-provider-name').styles(
+        overflow: .hidden,
+        fontSize: YsType.label.size.px,
+        fontWeight: .w500,
+        lineHeight: YsType.label.lineHeight.px,
+        textOverflow: .ellipsis,
+        whiteSpace: .noWrap,
+      ),
+      css('.hermuse-ob-provider-count').styles(
+        color: .variable('--content-muted'),
+        fontSize: YsType.caption.size.px,
+        lineHeight: YsType.caption.lineHeight.px,
+      ),
+      css('.hermuse-ob-provider-tick').styles(
+        display: .inlineFlex,
+        opacity: 0,
+        color: .variable('--primary'),
+        raw: {'transition': 'opacity ${YsMotion.base}ms linear'},
+      ),
+      css('&[aria-pressed="true"] .hermuse-ob-provider-tick')
+          .styles(opacity: 1),
+    ]),
     css('.hermuse-ob-problem').styles(
       width: 100.percent,
       padding: .symmetric(vertical: 12.px, horizontal: 14.px),
@@ -168,26 +253,67 @@ class HermuseOnboarding extends StatelessComponent {
   ];
 }
 
-/// Step dots shared by the onboarding steps.
-Component _stepDots(OnboardingStep step) {
+/// Stepper shared by the onboarding steps, then the step's illustration
+/// (pointing at it plays it again).
+Component _stepper(OnboardingStep step, {YsArt? art}) {
   const order = [
-    OnboardingStep.runtimeCheck,
-    OnboardingStep.connections,
-    OnboardingStep.defaultModel,
-    OnboardingStep.profile,
+    (OnboardingStep.runtimeCheck, YsIcon.bot, 'Check'),
+    (OnboardingStep.connections, YsIcon.keyRound, 'Accounts'),
+    (OnboardingStep.defaultModel, YsIcon.sparkles, 'Model'),
+    (OnboardingStep.profile, YsIcon.smile, 'Tour'),
   ];
-  final index = order.indexOf(step);
-  return div(classes: 'hermuse-ob-steps', [
-    for (var i = 0; i < order.length; i++)
-      div(
-        classes: [
-          'hermuse-ob-dot',
-          if (i < index) 'hermuse-ob-dot-done',
-          if (i == index) 'hermuse-ob-dot-now',
-        ].join(' '),
-        [],
+  return .fragment([
+    YsStepper(
+      steps: [for (final (_, icon, label) in order) (icon: icon, label: label)],
+      current: order.indexWhere((entry) => entry.$1 == step),
+    ),
+    if (art != null)
+      YsHover(
+        builder: (context, hovered) => span(classes: 'hermuse-ob-art', [
+          YsArtView(art, size: YsLayout.artStep, active: hovered),
+        ]),
       ),
   ]);
+}
+
+/// A provider to pick, as a card: its monogram, name and model count; the
+/// picked one wears the accent outline and a tick.
+class _ProviderCard extends StatelessComponent {
+  const _ProviderCard({
+    required this.provider,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final ModelOptionProvider provider;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Component build(BuildContext context) {
+    final name = provider.name.trim();
+    final models = provider.models?.length ?? 0;
+    return YsPressable(
+      onPressed: onPressed,
+      label: name,
+      classes: 'hermuse-ob-provider ys-lift ys-press',
+      attributes: {'aria-pressed': '$selected'},
+      builder: (context, state) => .fragment([
+        span(classes: 'hermuse-ob-provider-logo', [
+          .text(name.isEmpty ? '?' : name[0].toUpperCase()),
+        ]),
+        span(classes: 'hermuse-ob-provider-text', [
+          span(classes: 'hermuse-ob-provider-name', [.text(name)]),
+          span(classes: 'hermuse-ob-provider-count', [
+            .text(models == 1 ? '1 model' : '$models models'),
+          ]),
+        ]),
+        span(classes: 'hermuse-ob-provider-tick', [
+          YsIconView(YsIcon.check, size: 16),
+        ]),
+      ]),
+    );
+  }
 }
 
 /// `runtimeCheck`: strict probe problems with fix hints.
@@ -212,7 +338,7 @@ class _RuntimeCheckState extends State<_RuntimeCheck> {
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-screen', [
     div(classes: 'hermuse-card hermuse-card-narrow', [
-      _stepDots(OnboardingStep.runtimeCheck),
+      _stepper(OnboardingStep.runtimeCheck, art: YsArt.check),
       h1(classes: 'hermuse-card-title', [.text('Checking this Hermes')]),
       if (component.state.problems.isEmpty)
         p(classes: 'hermuse-card-body', [
@@ -312,7 +438,7 @@ class _DefaultModelState extends State<_DefaultModel> {
     final freeTier = state.freeTier;
     return div(classes: 'hermuse-screen', [
       div(classes: 'hermuse-card hermuse-card-narrow', [
-        _stepDots(OnboardingStep.defaultModel),
+        _stepper(OnboardingStep.defaultModel, art: YsArt.model),
         h1(classes: 'hermuse-card-title', [.text('Pick a default model')]),
         if (freeTier != null && freeTier.enabled && freeTier.available)
           div(classes: 'hermuse-ob-tier', [
@@ -346,14 +472,20 @@ class _DefaultModelState extends State<_DefaultModel> {
         else ...[
           YsField(
             label: 'Provider',
-            child: YsSelect(
-              value: _provider,
-              options: [for (final p in providers) (p.slug, p.name)],
-              onChanged: (v) => setState(() {
-                _provider = v;
-                _model = '';
-              }),
-              label: 'Provider',
+            child: div(
+              classes: 'hermuse-ob-providers',
+              attributes: {'role': 'group', 'aria-label': 'Provider'},
+              [
+                for (final provider in providers)
+                  _ProviderCard(
+                    provider: provider,
+                    selected: provider.slug == _provider,
+                    onPressed: () => setState(() {
+                      _provider = provider.slug;
+                      _model = '';
+                    }),
+                  ),
+              ],
             ),
           ),
           if (models.isNotEmpty)
@@ -461,7 +593,11 @@ class _ProfileStepState extends State<_ProfileStep> {
   @override
   Component build(BuildContext context) => div(classes: 'hermuse-screen', [
     div(classes: 'hermuse-card hermuse-card-narrow', [
-      _stepDots(OnboardingStep.profile),
+      _stepper(OnboardingStep.profile),
+      const HermuseMascot(
+        height: YsLayout.mascotSmallHeight,
+        stageWidth: YsLayout.mascotSmallStageWidth,
+      ),
       h1(classes: 'hermuse-card-title', [.text('Meet your Hermes')]),
       p(classes: 'hermuse-card-body', [
         .text(
@@ -529,7 +665,7 @@ class _ReadyStep extends StatelessComponent {
         context.container.read(onboardingProvider(instanceId).notifier);
     return div(classes: 'hermuse-screen', [
       div(classes: 'hermuse-card hermuse-card-narrow', [
-        div(classes: 'hermuse-card-icon', [YsIconView(YsIcon.check, size: 28)]),
+        YsArtView(YsArt.ready, size: YsLayout.artStep),
         h1(classes: 'hermuse-card-title', [.text('All set')]),
         p(classes: 'hermuse-card-body', [.text('$label is ready to chat.')]),
         div(classes: 'hermuse-card-cta', [

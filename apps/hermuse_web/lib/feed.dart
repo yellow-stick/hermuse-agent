@@ -9,6 +9,7 @@ import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'route.dart';
 import 'route_styles.dart';
 import 'scope.dart';
 import 'screens.dart';
@@ -432,24 +433,19 @@ class _HermuseFeedState extends State<HermuseFeed> {
           ],
         ]),
         if (feed.isLoading && feed.value == null)
-          p(classes: 'hermuse-route-sub', [.text('Loading feed…')])
+          const HermuseRouteSkeleton(label: 'Loading feed…')
         else if (feed.hasError && feed.value == null)
           p(classes: 'hermuse-route-error', [
             .text('Feed failed: ${feed.error}'),
           ])
         else if (posts.isEmpty)
-          div(classes: 'hermuse-route-empty', [
-            YsIconView(YsIcon.feed, size: 26),
-            p(classes: 'hermuse-route-empty-title', [
-              .text('Your feed is empty'),
-            ]),
-            p(classes: 'hermuse-route-empty-body', [
-              .text(
-                'Posts appear here as your Hermes gets to know you. Edit '
+          HermuseRouteEmpty(
+            art: YsArt.feed,
+            title: 'Your feed is empty',
+            body:
+                'Posts show up here as your Hermes gets to know you. Edit '
                 'the prompt above to steer it.',
-              ),
-            ]),
-          ])
+          )
         else
           for (final post in posts)
             _FeedCard(
@@ -508,7 +504,7 @@ class _FeedCardState extends State<_FeedCard> {
   @override
   Component build(BuildContext context) {
     final post = component.post;
-    return article(classes: 'hermuse-feed-card', [
+    return article(classes: 'hermuse-feed-card ys-lift', [
       h2(classes: 'hermuse-feed-title', [.text(post.title)]),
       if (post.createdAt.isNotEmpty || post.topic.isNotEmpty)
         p(classes: 'hermuse-feed-meta', [

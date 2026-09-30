@@ -9,6 +9,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'feed.dart';
+import 'route.dart';
 import 'route_styles.dart';
 import 'scope.dart';
 import 'screens.dart';
@@ -59,19 +60,17 @@ class HermuseIdeas extends StatelessComponent {
           ),
         ]),
         if (ideas.isLoading && ideas.value == null)
-          p(classes: 'hermuse-route-sub', [.text('Loading ideas…')])
+          const HermuseRouteSkeleton(label: 'Loading ideas…')
         else if (ideas.hasError && ideas.value == null)
           p(classes: 'hermuse-route-error', [
             .text('Ideas failed: ${ideas.error}'),
           ])
         else if (all.isEmpty)
-          div(classes: 'hermuse-route-empty', [
-            YsIconView(YsIcon.ideas, size: 26),
-            p(classes: 'hermuse-route-empty-title', [.text('No ideas yet')]),
-            p(classes: 'hermuse-route-empty-body', [
-              .text('Ideas appear here as your Hermes thinks of them.'),
-            ]),
-          ])
+          HermuseRouteEmpty(
+            art: YsArt.ideas,
+            title: 'No ideas yet',
+            body: 'Ideas land here as your Hermes thinks of them.',
+          )
         else
           for (final group in ordered)
             div(classes: 'hermuse-route-section', [
@@ -115,14 +114,43 @@ class HermuseIdeas extends StatelessComponent {
       border: .none,
       textAlign: .left,
     ),
+    css('.hermuse-idea-card.ys-lift').styles(
+      raw: {
+        'transition':
+            'background-color ${YsMotion.fast}ms linear, $ysLiftTransition',
+      },
+    ),
     css('.hermuse-idea-card:hover')
         .styles(backgroundColor: .variable('--neutral-film')),
+    css('.hermuse-idea-head').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .start,
+      gap: .all(YsSpace.md.px),
+    ),
     css('.hermuse-idea-title').styles(
       margin: .zero,
+      flex: Flex(grow: 1, shrink: 1, basis: .zero),
       fontSize: 16.px,
       lineHeight: 22.px,
       fontWeight: .w600,
     ),
+    // The spark lights up under the pointer and grows while the idea
+    // takes off.
+    css('.hermuse-idea-spark').styles(
+      display: .inlineFlex,
+      color: .variable('--content-subtle'),
+      raw: {
+        'transition':
+            'color ${YsMotion.fast}ms linear, '
+            'scale ${YsMotion.fast}ms ${YsEase.settle.css}',
+      },
+    ),
+    css(
+      '.hermuse-idea-card:hover .hermuse-idea-spark, '
+      '.hermuse-idea-spark[data-on]',
+    ).styles(color: .variable('--primary')),
+    css('.hermuse-idea-spark[data-on]').styles(raw: {'scale': '1.25'}),
     css('.hermuse-idea-pitch').styles(
       margin: .zero,
       fontSize: 15.px,
@@ -173,18 +201,55 @@ class _IdeaCardState extends State<_IdeaCard> {
   var _busy = false;
   String? _error;
 
+  /// The accepted moment: sparks fly out of the card's spark, then the idea
+  /// lands in the chat.
+  var _accepting = false;
+  Timer? _accept;
+
+  @override
+  void dispose() {
+    _accept?.cancel();
+    super.dispose();
+  }
+
+  void _start() {
+    final idea = component.idea;
+    void go() => component.onStartInChat(
+      "Let's do this: ${idea.title}\n\n${idea.pitch}",
+    );
+    if (_accepting) return;
+    if (ysReducedMotion()) {
+      go();
+      return;
+    }
+    setState(() => _accepting = true);
+    _accept = Timer(Duration(milliseconds: ysFramesMs(YsBurst.frames)), () {
+      if (!mounted) return;
+      setState(() => _accepting = false);
+      go();
+    });
+  }
+
   @override
   Component build(BuildContext context) {
     final idea = component.idea;
     return div(classes: 'hermuse-idea-wrap', [
       YsPressable(
-        onPressed: () => component.onStartInChat(
-          "Let's do this: ${idea.title}\n\n${idea.pitch}",
-        ),
+        onPressed: _start,
         label: 'Start in chat: ${idea.title}',
-        classes: 'hermuse-idea-card',
+        classes: 'hermuse-idea-card ys-lift ys-press',
         builder: (context, press) => .fragment([
-          h3(classes: 'hermuse-idea-title', [.text(idea.title)]),
+          div(classes: 'hermuse-idea-head', [
+            h3(classes: 'hermuse-idea-title', [.text(idea.title)]),
+            YsBurstView(
+              play: _accepting,
+              child: span(
+                classes: 'hermuse-idea-spark',
+                attributes: {if (_accepting) 'data-on': ''},
+                [YsIconView(YsIcon.sparkles, size: 18)],
+              ),
+            ),
+          ]),
           p(classes: 'hermuse-idea-pitch', [.text(idea.pitch)]),
         ]),
       ),
