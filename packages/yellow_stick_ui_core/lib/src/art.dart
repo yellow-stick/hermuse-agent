@@ -67,9 +67,10 @@ final class YsArt {
   static const viewBox = 64.0;
   static const stroke = 1.75;
 
-  /// Stroke of a hero drawing ([YsLayout.artHero], no soft disc): lighter,
-  /// so the big lines keep the weight of an illustration, not of an icon.
-  static const heroStroke = 1.25;
+  /// Stroke of a hero drawing ([YsLayout.artHero], no soft disc): heavier,
+  /// so the big lines survive screenshots and display scaling without
+  /// stair-stepping into single-pixel ramps.
+  static const heroStroke = 1.5;
 
   /// Identifier (CSS class names on the web).
   final String name;

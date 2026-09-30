@@ -1572,7 +1572,9 @@ Future<void> _capture(WidgetTester tester, String fileName) async {
   final boundary =
       _captureKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
-    final image = await boundary.toImage(pixelRatio: 1);
+    final image = await boundary.toImage(
+      pixelRatio: tester.view.devicePixelRatio,
+    );
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
     final out = File('${_artifactsDir.path}/$fileName')
       ..parent.createSync(recursive: true);
