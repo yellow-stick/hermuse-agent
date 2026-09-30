@@ -23,7 +23,17 @@ class YsArtView extends StatefulComponent {
     this.active = false,
     this.busy = false,
     super.key,
-  });
+  }) : hero = false;
+
+  /// The drawing heading a full-page status: [YsLayout.artHero] big, its
+  /// lines at [YsArt.heroStroke], without the soft disc.
+  const YsArtView.hero(
+    this.art, {
+    this.active = false,
+    this.busy = false,
+    super.key,
+  }) : size = YsLayout.artHero,
+       hero = true;
 
   final YsArt art;
   final double size;
@@ -35,6 +45,9 @@ class YsArtView extends StatefulComponent {
   /// plays over and over. When it turns off, the cycle under way plays to
   /// its end and the drawing rests.
   final bool busy;
+
+  /// Drawn as a hero ([YsArtView.hero]).
+  final bool hero;
 
   @override
   State<YsArtView> createState() => _YsArtViewState();
@@ -173,29 +186,33 @@ class _YsArtViewState extends State<YsArtView> {
             'viewBox': '0 0 ${ysNum(YsArt.viewBox)} ${ysNum(YsArt.viewBox)}',
             'fill': 'none',
             'stroke': 'currentColor',
-            'stroke-width': ysNum(YsArt.stroke),
+            'stroke-width': ysNum(
+              component.hero ? YsArt.heroStroke : YsArt.stroke,
+            ),
             'stroke-linecap': 'round',
             'stroke-linejoin': 'round',
           },
           children: [
             for (final (i, part) in art.parts.indexed)
-              Component.element(
-                tag: 'g',
-                classes: 'ys-a-i$i ys-ink-${part.ink.name}',
-                children: [
-                  Component.element(
-                    tag: 'g',
-                    classes: 'ys-a-h$i',
-                    children: [
-                      ysSvgElement(
-                        part.markup,
-                        classes: 'ys-a-e$i',
-                        trimmed: !part.filled,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+              // A hero leaves the soft disc out.
+              if (!component.hero || part.ink != YsArtInk.soft)
+                Component.element(
+                  tag: 'g',
+                  classes: 'ys-a-i$i ys-ink-${part.ink.name}',
+                  children: [
+                    Component.element(
+                      tag: 'g',
+                      classes: 'ys-a-h$i',
+                      children: [
+                        ysSvgElement(
+                          part.markup,
+                          classes: 'ys-a-e$i',
+                          trimmed: !part.filled,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
           ],
         ),
       ],
@@ -207,7 +224,8 @@ class _YsArtViewState extends State<YsArtView> {
 /// element, over its own frames from its start; the idle cycles on its idle
 /// group, after the draw-in and [YsArtMotion.idleDelay]; the hover motion
 /// (or one idle cycle) on its hover group while the art has `data-hover`,
-/// endlessly while it has `data-busy`.
+/// endlessly while it has `data-busy`. A busy loop of idle cycles replaces
+/// the idle motion, as on desktop, instead of adding to it.
 List<StyleRule> _motionRules() {
   final keyframes = YsKeyframeSet('ys-art-k');
   final rules = YsRuleSet();
@@ -248,6 +266,9 @@ List<StyleRule> _motionRules() {
             count: YsArtMotion.idleCycles,
           ),
         );
+      }
+      if (idle != null && art.hover.isEmpty) {
+        rules.add('$scope[data-busy] .ys-a-i$i', {'animation': 'none'});
       }
       final (hover, hoverFrames) = art.hover.isEmpty
           ? (idle, art.idleFrames)

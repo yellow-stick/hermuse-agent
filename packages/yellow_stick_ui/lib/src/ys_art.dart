@@ -21,7 +21,18 @@ final class YsArtView extends StatefulWidget {
     this.active = false,
     this.busy = false,
     this.soft,
-  });
+  }) : hero = false;
+
+  /// The drawing heading a full-page status: [YsLayout.artHero] big, its
+  /// lines at [YsArt.heroStroke], without the soft disc.
+  const YsArtView.hero(
+    this.art, {
+    super.key,
+    this.active = false,
+    this.busy = false,
+  }) : size = YsLayout.artHero,
+       soft = null,
+       hero = true;
 
   final YsArt art;
   final double size;
@@ -36,6 +47,9 @@ final class YsArtView extends StatefulWidget {
 
   /// Colour of the soft disc; `neutralAmbient` by default.
   final Color? soft;
+
+  /// Drawn as a hero ([YsArtView.hero]).
+  final bool hero;
 
   @override
   State<YsArtView> createState() => _YsArtViewState();
@@ -180,7 +194,10 @@ final class _YsArtViewState extends State<YsArtView>
               state: this,
               line: palette.contentMutedColor,
               accent: palette.primaryColor,
-              soft: widget.soft ?? palette.neutralAmbientColor,
+              soft: widget.hero
+                  ? null
+                  : widget.soft ?? palette.neutralAmbientColor,
+              stroke: widget.hero ? YsArt.heroStroke : YsArt.stroke,
             ),
           ),
         ),
@@ -196,6 +213,7 @@ final class _ArtPainter extends CustomPainter {
     required this.line,
     required this.accent,
     required this.soft,
+    required this.stroke,
   }) : super(
          repaint: Listenable.merge([
            state._entrance,
@@ -208,7 +226,10 @@ final class _ArtPainter extends CustomPainter {
   final _YsArtViewState state;
   final Color line;
   final Color accent;
-  final Color soft;
+
+  /// Null leaves the soft disc out (a hero).
+  final Color? soft;
+  final double stroke;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -235,6 +256,12 @@ final class _ArtPainter extends CustomPainter {
 
     canvas.scale(size.width / YsArt.viewBox, size.height / YsArt.viewBox);
     for (var i = 0; i < shapes.length; i++) {
+      final color = switch (art.parts[i].ink) {
+        YsArtInk.line => line,
+        YsArtInk.accent => accent,
+        YsArtInk.soft => soft,
+      };
+      if (color == null) continue;
       final layers = <(YsPartMotion, double)>[
         if (drawing) (art.entrancePart(i), entranceFrame),
         if (idleFrame != null) ?_at(art.idlePart(i), idleFrame),
@@ -258,16 +285,11 @@ final class _ArtPainter extends CustomPainter {
           break;
         }
       }
-      final color = switch (art.parts[i].ink) {
-        YsArtInk.line => line,
-        YsArtInk.accent => accent,
-        YsArtInk.soft => soft,
-      };
       shapes[i].paint(
         canvas,
         path,
         color.withValues(alpha: color.a * opacity.clamp(0, 1)),
-        YsArt.stroke,
+        stroke,
       );
       canvas.restore();
     }
@@ -282,5 +304,6 @@ final class _ArtPainter extends CustomPainter {
       old.state != state ||
       old.line != line ||
       old.accent != accent ||
-      old.soft != soft;
+      old.soft != soft ||
+      old.stroke != stroke;
 }

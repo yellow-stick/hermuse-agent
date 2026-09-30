@@ -119,6 +119,11 @@ abstract final class YsLayout {
   /// Illustration beside a dialog's title (Add a Hermes).
   static const artHeader = 64.0;
 
+  /// Illustration heading a full-page status: a blocking card (no relay,
+  /// secure storage, setup unavailable), a wait, the plugin to turn on or
+  /// the agent's computer getting ready.
+  static const artHero = 160.0;
+
   /// The mascot on the welcome screen: its height, and the width of the
   /// rounded stage behind it.
   static const mascotHeight = 200.0;
