@@ -2,6 +2,8 @@ import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'keyframes.dart';
+
 /// An icon that plays its [YsIconMotion] once each time [hovered] turns on
 /// (rail destinations). Icons without a motion render still.
 ///
@@ -104,7 +106,7 @@ class _YsMotionIconViewState extends State<YsMotionIconView> {
                       if (i >= bodyCount) 'ys-m-extra',
                     ].join(' '),
                     children: [
-                      _element(
+                      ysSvgElement(
                         elements[i],
                         trimmed:
                             motion?.part(i)?.track(YsMotionProperty.trimEnd) !=
@@ -119,21 +121,6 @@ class _YsMotionIconViewState extends State<YsMotionIconView> {
       ],
     );
   }
-
-  static final _tag = RegExp(r'^<(\w+)');
-  static final _attribute = RegExp(r'([\w-]+)="([^"]*)"');
-
-  /// DOM element for one `<path .../>`-style markup string. [trimmed] paths
-  /// get `pathLength="1"` so dash offsets are length fractions.
-  static Component _element(String markup, {required bool trimmed}) =>
-      Component.element(
-        tag: _tag.firstMatch(markup)!.group(1)!,
-        attributes: {
-          for (final m in _attribute.allMatches(markup))
-            m.group(1)!: m.group(2)!,
-          if (trimmed) 'pathLength': '1',
-        },
-      );
 }
 
 /// Base + playing rules and keyframes of [icon]'s motion.
@@ -150,15 +137,13 @@ List<StyleRule>? _motionRules(YsIcon icon) {
       if (track.property.isTrim) continue;
       final name = '$cls-${track.property.name}';
       animations.add('$name ${ms}ms linear both');
-      rules.add(
-        css.keyframes(name, _keyframes(motion.frames, track, _declare)),
-      );
+      rules.add(ysKeyframes(name, ysTrackSteps(track, frames: motion.frames)));
     }
     final trimEnd = part.track(YsMotionProperty.trimEnd);
     if (trimEnd != null) {
       final name = '$cls-trim';
       animations.add('$name ${ms}ms linear both');
-      rules.add(css.keyframes(name, _trimKeyframes(motion, part)));
+      rules.add(ysKeyframes(name, ysTrimSteps(part, frames: motion.frames)));
     }
     rules
       ..add(
@@ -175,85 +160,4 @@ List<StyleRule>? _motionRules(YsIcon icon) {
       );
   }
   return rules;
-}
-
-/// CSS declarations of [property] at [value].
-Map<String, String> _declare(YsMotionProperty property, double value) =>
-    switch (property) {
-      YsMotionProperty.translateY => {'translate': '0px ${_n(value)}px'},
-      YsMotionProperty.rotate => {'rotate': '${_n(value)}deg'},
-      YsMotionProperty.scale => {'scale': _n(value)},
-      YsMotionProperty.scaleX => {'scale': '${_n(value)} 1'},
-      YsMotionProperty.opacity => {'opacity': _n(value)},
-      YsMotionProperty.trimStart ||
-      YsMotionProperty.trimEnd => throw ArgumentError(property),
-    };
-
-/// `@keyframes` steps of [track]: one per keyframe with its segment easing,
-/// holding the first/last value at 0% / 100%.
-Map<String, Styles> _keyframes(
-  double frames,
-  YsMotionTrack track,
-  Map<String, String> Function(YsMotionProperty, double) declare,
-) {
-  final steps = <String, Styles>{};
-  final first = track.keyframes.first;
-  final last = track.keyframes.last;
-  if (first.frame > 0) {
-    steps['0%'] = Styles(raw: declare(track.property, first.value));
-  }
-  for (final k in track.keyframes) {
-    steps[_pct(k.frame, frames)] = Styles(
-      raw: {
-        ...declare(track.property, k.value),
-        'animation-timing-function': k.ease.css,
-      },
-    );
-  }
-  if (last.frame < frames) {
-    steps['100%'] = Styles(raw: declare(track.property, last.value));
-  }
-  return steps;
-}
-
-/// Trim start/end have independent keyframes; CSS draws the range with one
-/// dash (`pathLength="1"`), so both are sampled every other frame.
-Map<String, Styles> _trimKeyframes(YsIconMotion motion, YsPartMotion part) {
-  final frames = <double>{0, motion.frames};
-  for (final p in const [
-    YsMotionProperty.trimStart,
-    YsMotionProperty.trimEnd,
-  ]) {
-    final track = part.track(p);
-    if (track == null) continue;
-    final a = track.keyframes.first.frame;
-    final b = track.keyframes.last.frame;
-    for (var f = a; f < b; f += 2) {
-      frames.add(f);
-    }
-    for (final k in track.keyframes) {
-      frames.add(k.frame);
-    }
-  }
-  final sorted = frames.toList()..sort();
-  return {
-    for (final f in sorted)
-      _pct(f, motion.frames): () {
-        final start = part.valueAt(YsMotionProperty.trimStart, f);
-        final end = part.valueAt(YsMotionProperty.trimEnd, f);
-        return Styles(
-          raw: {
-            'stroke-dasharray': '${_n((end - start).clamp(0, 1))} 2',
-            'stroke-dashoffset': _n(-start),
-          },
-        );
-      }(),
-  };
-}
-
-String _pct(double frame, double frames) => '${_n(frame / frames * 100)}%';
-
-String _n(double v) {
-  final s = v.toStringAsFixed(3);
-  return s.contains('.') ? s.replaceFirst(RegExp(r'\.?0+$'), '') : s;
 }
