@@ -310,15 +310,18 @@ elif IS_MAC:
 
     def window_maximize(title: str) -> bool:
         # The visible frame (below the menu bar, above the Dock), as the
-        # green zoom button fills it.
+        # green zoom button fills it. AppKit's frames start at the bottom
+        # left of the main screen, System Events' at its top left.
         try:
             frame = _osascript("use AppleScript version \"2.4\"\nuse framework \"AppKit\"\nuse scripting additions\n"
-                               "set s to (current application's NSScreen's screens()'s objectAtIndex:0)\n"
-                               "set f to s's visibleFrame()\nset full to s's frame()\n"
-                               "return ((item 1 of item 1 of f) as integer as text) & \" \" & "
-                               "(((item 2 of item 2 of full) - (item 2 of item 1 of f) - (item 2 of item 2 of f)) "
-                               "as integer as text) & \" \" & ((item 1 of item 2 of f) as integer as text) & \" \" & "
-                               "((item 2 of item 2 of f) as integer as text)")
+                               "set mainScreen to (current application's NSScreen's screens()'s objectAtIndex:0)\n"
+                               "set visibleArea to mainScreen's visibleFrame()\n"
+                               "set screenArea to mainScreen's frame()\n"
+                               "return ((item 1 of item 1 of visibleArea) as integer as text) & \" \" & "
+                               "(((item 2 of item 2 of screenArea) - (item 2 of item 1 of visibleArea) - "
+                               "(item 2 of item 2 of visibleArea)) as integer as text) & \" \" & "
+                               "((item 1 of item 2 of visibleArea) as integer as text) & \" \" & "
+                               "((item 2 of item 2 of visibleArea) as integer as text)")
             x, y, w, h = (int(v) for v in frame.split())
             _osascript(_window_script(title, f"        set frontmost of p to true\n"
                                              f"        set position of w to {{{x}, {y}}}\n"
@@ -399,27 +402,33 @@ def _norm(word: str) -> str:
     return re.sub(r"[^a-z0-9]", "", word.lower())
 
 
-_OCR_CACHE: dict[tuple[str, bool, str], list[Word]] = {}
+_OCR_CACHE: dict[tuple[str, str, str], list[Word]] = {}
+
+# ImageMagick operators of each OCR tone. A dark UI reads reliably only
+# negated, through its brightness channel (a red warning stays as light as
+# white text); a light one as plain gray. Muted text (a placeholder, a hint)
+# reads once its contrast is stretched from the background to the text.
+_TONES = {
+    "negated": ["-colorspace", "HSB", "-channel", "B", "-separate", "+channel", "-negate"],
+    "gray": ["-colorspace", "Gray"],
+    "muted-dark": ["-colorspace", "HSB", "-channel", "B", "-separate", "+channel", "-level", "20%,60%", "-negate"],
+    "muted-light": ["-colorspace", "Gray", "-level", "40%,80%"],
+}
 
 
-def ocr_words(png: Path, negate: bool, crop: str = "") -> list[Word]:
-    """Tesseract TSV words of a 2x upscaled grayscale copy, in screenshot pixels.
-
-    A dark UI reads reliably only negated, through its brightness channel (a
-    red warning stays as light as white text); a light one as plain gray. The
-    alpha channel of a screenshot is dropped first (it would be separated as a
-    fourth channel and read as white). Cached per screenshot, tone and crop.
-    """
-    key = (str(png), negate, crop)
+def ocr_words(png: Path, tone: str, crop: str = "") -> list[Word]:
+    """Tesseract TSV words of a 2x upscaled grayscale copy in one of the
+    [_TONES], in screenshot pixels. The alpha channel of a screenshot is
+    dropped first (it would be separated as a fourth channel and read as
+    white). Cached per screenshot, tone and crop."""
+    key = (str(png), tone, crop)
     if key in _OCR_CACHE:
         return _OCR_CACHE[key]
     region = ["-crop", crop, "+repage"] if crop else []
     offset = [int(v) for v in re.split(r"[x+]", crop)[2:]] if crop else [0, 0]
-    tone = (["-colorspace", "HSB", "-channel", "B", "-separate", "+channel", "-negate"] if negate
-            else ["-colorspace", "Gray"])
     base = TMP / f"ocr-{len(_OCR_CACHE)}"
     words: list[Word] = []
-    if run([MAGICK, str(png), "-alpha", "off", *region, *tone, "-resize", "200%", f"{base}.png"]).returncode == 0 \
+    if run([MAGICK, str(png), "-alpha", "off", *region, *_TONES[tone], "-resize", "200%", f"{base}.png"]).returncode == 0 \
             and run([TESSERACT, f"{base}.png", str(base), "--psm", "11", "tsv"]).returncode == 0:
         for row in Path(f"{base}.tsv").read_text(errors="replace").splitlines()[1:]:
             fields = row.split("\t")
@@ -434,6 +443,12 @@ def ocr_words(png: Path, negate: bool, crop: str = "") -> list[Word]:
 def is_dark(png: Path) -> bool:
     proc = run([MAGICK, str(png), "-alpha", "off", "-colorspace", "Gray", "-format", "%[fx:mean<0.5?1:0]", "info:"])
     return proc.stdout.strip() == "1"
+
+
+def tones(png: Path) -> tuple[str, str, str]:
+    """The screenshot's own tone, the other one (a light title bar over a dark
+    app), then its muted text."""
+    return ("negated", "gray", "muted-dark") if is_dark(png) else ("gray", "negated", "muted-light")
 
 
 def find_phrase(words: list[Word], phrase: str, mode: str) -> Optional[tuple[int, int]]:
@@ -500,14 +515,12 @@ def locate_filled(png: Path, phrase: str) -> Optional[tuple[int, int]]:
 
 
 def locate(png: Path, phrase: str, mode: str = "line") -> Optional[tuple[int, int]]:
-    """Screen point of the phrase: OCR in the screenshot's own tone first, then
-    the other one (a light title bar over a dark app); `filled` only reads the
-    filled buttons, `line`/`any` fall back to them."""
+    """Screen point of the phrase, read in each of the screenshot's [tones];
+    `filled` only reads the filled buttons, `line`/`any` fall back to them."""
     found = None
     if mode != "filled":
-        dark = is_dark(png)
-        for negate in (dark, not dark):
-            found = find_phrase(ocr_words(png, negate), phrase, mode)
+        for tone in tones(png):
+            found = find_phrase(ocr_words(png, tone), phrase, mode)
             if found:
                 break
     if found is None:
@@ -519,12 +532,11 @@ def locate(png: Path, phrase: str, mode: str = "line") -> Optional[tuple[int, in
 
 
 def screen_text(png: Path, crop: str = "") -> str:
-    """Every OCR line of a screenshot or of a crop of it (both tones)."""
-    dark = is_dark(png)
+    """Every OCR line of a screenshot or of a crop of it, in each of its [tones]."""
     lines: list[str] = []
-    for negate in (dark, not dark):
+    for tone in tones(png):
         current: dict[str, list[str]] = {}
-        for word in ocr_words(png, negate, crop):
+        for word in ocr_words(png, tone, crop):
             current.setdefault(word.line, []).append(word.text)
         lines += [" ".join(words) for words in current.values()]
     return "\n".join(dict.fromkeys(lines))
@@ -641,7 +653,8 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
     """Screen centres of the icon rail items, top to bottom (icon-only: their
     labels are tooltips, out of reach of OCR). The rail is the first <rail>
     points of the window below its title bar; each item is a band of rows
-    holding bright icon pixels."""
+    holding bright icon pixels, whose own gaps (a bulb and its base, stacked
+    shapes, the lines of a menu icon) are narrower than 12 points."""
     client = client_rect(title)
     if client is None:
         return []
@@ -649,6 +662,7 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
     png = TMP / "rail-screen.png"
     screenshot(png)
     scale = point_scale(png)
+    gap = 12 * scale
     crop = f"{int(rail * scale)}x{int(height * scale)}+{int(x * scale)}+{int(top * scale)}"
     proc = run([MAGICK, str(png), "-alpha", "off", "-crop", crop, "+repage", "-colorspace", "Gray", "-threshold", "55%",
                 "-scale", f"1x{int(height * scale)}!", "-depth", "8", "txt:-"])
@@ -662,7 +676,7 @@ def rail_items(title: str, rail: int = 72) -> list[tuple[int, int]]:
             start = row
         if on:
             last = row
-        if not on and start >= 0 and row - last > 3:
+        if not on and start >= 0 and row - last > gap:
             items.append((x + rail // 2, int(top + (start + last) / 2 / scale)))
             start = -1
     if start >= 0:
@@ -962,8 +976,9 @@ def cmd_rest(args: argparse.Namespace) -> None:
     body = json.loads(args.body) if args.body else None
     status, response = http_call(backend.port, args.method.upper(), args.path, token=backend.token, body=body,
                                  timeout=args.timeout)
-    emit({"method": args.method.upper(), "path": args.path, "status": status, "body": response},
-         200 <= status < 300)
+    # backend_pid: which supervised process answered (a restart changes it).
+    emit({"method": args.method.upper(), "path": args.path, "status": status, "body": response,
+          "backend_pid": backend.proc.pid}, 200 <= status < 300)
 
 
 def cmd_plaintext(args: argparse.Namespace) -> None:

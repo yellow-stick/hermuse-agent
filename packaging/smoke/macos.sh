@@ -48,6 +48,10 @@ UI_CONNECT_TITLE='Connect to a Hermes'
 UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_KEYSTORE_ERROR='Secure storage unavailable'
 UI_RETRY_STAGE='Retry this stage'
+# A failed stage's hint ('Stage "<name>" failed; fix the cause, then retry
+# just this stage.') and the progress line of running stages.
+UI_RETRY_HINT='fix the cause'
+UI_STAGE_PROGRESS='step [0-9]+ of [0-9]+'
 UI_ENABLE_PLUGIN='Enable the Hermuse plugin'
 UI_INSTALL_PLUGIN='Install the plugin'
 UI_BACK_TO_CHAT='Back to chat'
@@ -58,10 +62,12 @@ UI_CONNECT='Connect'
 UI_CANCEL='Cancel'
 UI_FEED='Feed'
 UI_GOALS='Goals'
-UI_DOCKER_NOTICE='Install Docker'
+UI_OPEN_COMPUTER='Open computer'
+UI_DOCKER_MISSING='Docker is not installed'
 # macOS's own prompt when a process of the app first reaches for the local
-# network (not the app's copy).
-UI_LOCAL_NETWORK='find devices on local networks'
+# network (not the app's copy): the second line of its title ('Allow
+# "Hermuse Agent" to find' / 'devices on local networks?'), OCR reads lines.
+UI_LOCAL_NETWORK='devices on local networks'
 UI_DONT_ALLOW="Don't Allow"
 
 # --- arguments -----------------------------------------------------------------
@@ -224,20 +230,25 @@ app_close() { # [timeout-s]
 }
 
 # A failure the app reports on its install screen (a stage that lost the
-# network, say): a user reads the error and tries again, with its retry
-# button when the app offers one, else (a failure before the first stage)
-# with Cancel and the local choice again. The screen is read at most every
-# minute; at most USER_RETRIES tries, 3 minutes apart, each kept as evidence.
-# An error still shown after them ends the wait: RETRY_GAVE_UP names its
-# screenshot.
+# network, say): a user reads the error and tries again, with the stage's
+# retry button (under the stage list: the click scrolls to it), else (a
+# failure before the first stage) with Cancel and the local choice again. An
+# error word in the log of running stages is no failure. The screen is read
+# at most every minute; at most USER_RETRIES tries, 3 minutes apart, each
+# clicked one kept as evidence (a failure the automation could not act on
+# counts too). An error still shown after them ends the wait: RETRY_GAVE_UP
+# names its screenshot.
 USER_RETRIES=3
 RETRY_LOOKED=-1000 RETRY_CLICKED=-1000 RETRIES=0 RETRY_GAVE_UP=''
 retry_when_offered() { # <id>
   [ $((SECONDS - RETRY_LOOKED)) -ge 60 ] && [ $((SECONDS - RETRY_CLICKED)) -ge 180 ] || return 0
   RETRY_LOOKED=$SECONDS
-  local png xy how
+  local png text stage_failed='' how=''
   png=$(shot retry-offered) || return 0
-  if ! D text "$png" | grep -qiwE 'cannot|failed|error|unable'; then
+  text=$(D text "$png")
+  if grep -qi "$UI_RETRY_HINT" <<<"$text"; then
+    stage_failed=1
+  elif ! grep -qiwE 'cannot|failed|error|unable' <<<"$text" || grep -qiE "$UI_STAGE_PROGRESS" <<<"$text"; then
     rm -f "$png"
     return 0
   fi
@@ -245,16 +256,14 @@ retry_when_offered() { # <id>
     RETRY_GAVE_UP=$png
     return 0
   fi
-  # shellcheck disable=SC2086 # "x y"
-  if xy=$(D locate "$png" "$UI_RETRY_STAGE"); then
-    D pointer $xy
-    how="clicked '$UI_RETRY_STAGE'"
-  elif xy=$(D locate "$png" "$UI_CANCEL") && D pointer $xy && ui_click "$UI_LOCAL_CHOICE" 60 >/dev/null; then
-    how="no stage had started: clicked '$UI_CANCEL', then '$UI_LOCAL_CHOICE' again"
-  else
-    return 0
-  fi
   RETRIES=$((RETRIES + 1))
+  if [ -n "$stage_failed" ]; then
+    ui_click "$UI_RETRY_STAGE" 60 >/dev/null && how="clicked '$UI_RETRY_STAGE'"
+  else
+    ui_click "$UI_CANCEL" 30 >/dev/null && ui_click "$UI_LOCAL_CHOICE" 60 >/dev/null &&
+      how="no stage had started: clicked '$UI_CANCEL', then '$UI_LOCAL_CHOICE' again"
+  fi
+  [ -n "$how" ] || return 0
   RETRY_CLICKED=$SECONDS
   check "$1" "user-retry-$RETRIES" pass "the app reported an error; $how, as a user does" "$png"
 }
@@ -272,38 +281,47 @@ ready_or_retry() { # <id> <predicate...>
 # macOS asks once whether the app may find devices on the local network, when
 # a process it started first reaches for it. A user answers; the smoke says
 # Don't Allow (the least a user may grant: the checks after it prove the app
-# works without it), with a pointer click, else through Accessibility, and
-# keeps the prompt as evidence. A prompt that stays covers the app: fail.
+# works without it) with a pointer click, else through Accessibility, else
+# with the Escape key, and keeps the prompt as evidence. A prompt that stays
+# covers the app: fail.
 LOCAL_NETWORK_SEEN=''
+local_network_shown() { D text "$1" | grep -qi "$UI_LOCAL_NETWORK"; } # <png>
 local_network_prompt() { # <id>
   [ -z "$LOCAL_NETWORK_SEEN" ] || return 0
   local png after xy how owner
   png=$(shot local-network-prompt) || return 0
-  if ! D text "$png" | grep -qi "$UI_LOCAL_NETWORK"; then
+  if ! local_network_shown "$png"; then
     rm -f "$png"
     return 0
   fi
   LOCAL_NETWORK_SEEN=1
+  after=$png
   # shellcheck disable=SC2086 # "x y"
   if xy=$(D locate "$png" "$UI_DONT_ALLOW" --mode any); then
     D pointer $xy
     how='a pointer click'
     sleep 2
+    after=$(shot local-network-answered)
   fi
-  after=$(shot local-network-answered)
-  if D text "$after" | grep -qi "$UI_LOCAL_NETWORK" && owner=$(D alert "$UI_DONT_ALLOW" 2>>"$EVID/logs/alert.log"); then
+  if local_network_shown "$after" && owner=$(D alert "$UI_DONT_ALLOW" 2>>"$EVID/logs/alert.log"); then
     how="Accessibility (button of $owner)"
     sleep 2
     after=$(shot local-network-answered)
   fi
-  if D text "$after" | grep -qi "$UI_LOCAL_NETWORK"; then
+  if local_network_shown "$after"; then
+    D key escape
+    how='the Escape key'
+    sleep 2
+    after=$(shot local-network-answered)
+  fi
+  if local_network_shown "$after"; then
     check "$1" local-network-prompt fail \
       "macOS asked to let 'Hermuse Agent' find devices on local networks; '$UI_DONT_ALLOW' could not be clicked" \
       "$png" "$after" "$EVID/logs/alert.log"
     return 1
   fi
   check "$1" local-network-prompt pass \
-    "macOS asked to let 'Hermuse Agent' find devices on local networks; answered '$UI_DONT_ALLOW' (${how:-no click needed})" \
+    "macOS asked to let 'Hermuse Agent' find devices on local networks; answered '$UI_DONT_ALLOW' ($how)" \
     "$png" "$after"
 }
 
@@ -546,12 +564,17 @@ c3_keyring() {
 
 cron_ids() { jq -r '.body.jobs[] | select(.registered) | .job_id' "$1" 2>/dev/null | sort; }
 
-plugin_ready() {
-  [ -f "$HERMES_HOME/plugins/hermuse/plugin.yaml" ] && rest GET /api/plugins/hermuse/feed "$EVID/probe/feed.json"
+# The install restarts the backend (copy, enable, jobs, then stop and start):
+# the old one may already answer the plugin routes before it is stopped, so
+# only a new backend process serving them marks the end of the install.
+plugin_ready() { # <pre-install backend pid>
+  [ -n "$1" ] && [ -f "$HERMES_HOME/plugins/hermuse/plugin.yaml" ] &&
+    rest GET /api/plugins/hermuse/feed "$EVID/probe/feed.json" &&
+    [ "$(jq -r '.backend_pid' "$EVID/probe/feed.json")" != "$1" ]
 }
 
 c5_plugin() {
-  local id=c5-plugin ok png
+  local id=c5-plugin ok png old_pid
   local_network_prompt "$id" || true
   ui_click "$UI_BACK_TO_CHAT" 10 >/dev/null || true
   # The plugin gate sits on every product route: Feed, second in the rail.
@@ -560,16 +583,20 @@ c5_plugin() {
     return 1
   fi
   check "$id" plugin-gate pass "Feed shows '$UI_ENABLE_PLUGIN' for the local instance" "$png"
+  D backend >"$EVID/probe/backend-pre-plugin.json" 2>&1
+  old_pid=$(jq -r '.backend.pid // empty' "$EVID/probe/backend-pre-plugin.json" 2>/dev/null)
   if ! png=$(ui_click "$UI_INSTALL_PLUGIN" "$(T 30)"); then
     check "$id" plugin-install fail "no '$UI_INSTALL_PLUGIN' button" "$(shot install-plugin-missing)"
     return 1
   fi
-  if ! wait_until "$(T 900)" 5 plugin_ready; then
-    check "$id" plugin-install fail "the plugin never served /api/plugins/hermuse/feed" "$(shot plugin-stuck)" \
-      "$EVID/probe/feed.json"
+  if ! wait_until "$(T 900)" 5 plugin_ready "$old_pid"; then
+    check "$id" plugin-install fail "no restarted backend (new process) served /api/plugins/hermuse/feed" \
+      "$(shot plugin-stuck)" "$EVID/probe/feed.json" "$EVID/probe/backend-pre-plugin.json"
     return 1
   fi
-  check "$id" plugin-install pass "clicked '$UI_INSTALL_PLUGIN': the restarted backend serves the plugin" "$png"
+  check "$id" plugin-install pass \
+    "clicked '$UI_INSTALL_PLUGIN': the restarted backend (pid $old_pid -> $(jq -r '.backend_pid' "$EVID/probe/feed.json")) serves the plugin" \
+    "$png" "$EVID/probe/backend-pre-plugin.json" "$EVID/probe/feed.json"
   local assets=$APP/Contents/Frameworks/App.framework/Resources/flutter_assets/assets/hermes-plugin/hermuse
   diff -r -x __pycache__ "$assets" "$HERMES_HOME/plugins/hermuse" >"$EVID/logs/plugin-diff.txt" 2>&1
   pass_or_fail "$id" plugin-copied $? "HERMES_HOME/plugins/hermuse equals the plugin assets of the app bundle" \
@@ -596,6 +623,7 @@ c5_plugin() {
   if app_launch plugin-restart && wait_until "$(T 600)" 5 backend_up; then
     rest GET /api/plugins/hermuse/cron "$EVID/probe/cron-2.json"
     ok=0
+    [ "$(cron_ids "$EVID/probe/cron-2.json" | grep -c .)" = 4 ] || ok=1
     [ "$(cron_ids "$EVID/probe/cron-1.json")" = "$(cron_ids "$EVID/probe/cron-2.json")" ] || ok=1
     [ "$(jq '.jobs | length' "$jobs" 2>/dev/null || echo 0)" = "$total_before" ] || ok=1
     pass_or_fail "$id" enable-idempotent "$ok" "same 4 job ids and no new job after a restart" "$EVID/probe/cron-2.json"
@@ -655,19 +683,20 @@ c6_bridge() {
     "$EVID/logs/cliproxy-auth-files.txt"
 }
 
+# The agent's computer needs Docker, which the runner lacks: the plugin reports
+# it, and so does the computer viewer the chat's profile panel opens.
 c7_computer() {
-  local id=c7-computer png
+  local id=c7-computer png=''
   rest GET /api/plugins/hermuse/computer/status "$EVID/probe/computer-status.json"
   pass_or_fail "$id" docker-missing-reported \
     "$(jq -e '.body.state == "docker_missing"' "$EVID/probe/computer-status.json" >/dev/null 2>&1 && echo 0 || echo 1)" \
     "no Docker on the runner: the plugin reports '$(jq -r '.body.state // "?"' "$EVID/probe/computer-status.json")'" \
     "$EVID/probe/computer-status.json"
-  ui_click "$UI_BACK_TO_CHAT" 10 >/dev/null || true
-  D rail 2 "$WINDOW_TITLE" >/dev/null 2>&1
-  png=$(ui_wait "$UI_DOCKER_NOTICE" 30) || png=$(shot docker-notice-missing)
+  D rail 1 "$WINDOW_TITLE" >/dev/null 2>&1
+  ui_click "$UI_OPEN_COMPUTER" 30 >/dev/null && png=$(ui_wait "$UI_DOCKER_MISSING" 60)
   check "$id" computer manual-gate \
-    "the hosted macOS arm64 runner has no nested virtualization, so no Docker: confirm the Docker notice here, then attest the agent's computer (image pull, doctor, frames, take control) on a real Mac" \
-    "$png" "$EVID/probe/computer-status.json"
+    "the hosted macOS arm64 runner has no nested virtualization, so no Docker: confirm the agent's computer reports Docker missing here, then attest it (image pull, doctor, frames, take control) on a real Mac" \
+    "${png:-$(shot computer-viewer-missing)}" "$EVID/probe/computer-status.json"
 }
 
 scenario_fresh() {
@@ -679,8 +708,8 @@ scenario_fresh() {
   c4_hermes || return 1
   c3_keyring
   c5_plugin || return 1
-  c6_bridge
   c7_computer
+  c6_bridge
 }
 
 main() {

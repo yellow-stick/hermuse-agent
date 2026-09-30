@@ -114,4 +114,26 @@ void main() {
       });
     });
   });
+
+  test('Windows children get no PowerShell 7 module path to load', () {
+    // The app started from PowerShell 7 (a terminal, winget), which put its
+    // own module directories first.
+    final host = withoutPowerShellModulePath({
+      'Path': r'C:\Windows\system32;C:\Windows',
+      'PSModulePath':
+          r'C:\Users\u\Documents\PowerShell\Modules;'
+          r'C:\Program Files\PowerShell\Modules;'
+          r'c:\program files\powershell\7\Modules;'
+          r'C:\Program Files\WindowsPowerShell\Modules;'
+          r'C:\Windows\system32\WindowsPowerShell\v1.0\Modules',
+      'USERPROFILE': r'C:\Users\u',
+    });
+    expect(host, {
+      'Path': r'C:\Windows\system32;C:\Windows',
+      'USERPROFILE': r'C:\Users\u',
+    });
+    // Windows names stay case-insensitive, whatever their spelling.
+    expect(host['PATH'], r'C:\Windows\system32;C:\Windows');
+    expect(withoutPowerShellModulePath({'PSMODULEPATH': r'C:\m'}), isEmpty);
+  });
 }

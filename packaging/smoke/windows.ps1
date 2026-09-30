@@ -70,6 +70,10 @@ $UiConnectTitle = 'Connect to a Hermes'
 $UiLocalChoice = 'Install Hermes on this computer'
 $UiKeystoreError = 'Secure storage unavailable'
 $UiRetryStage = 'Retry this stage'
+# A failed stage's hint ('Stage "<name>" failed; fix the cause, then retry
+# just this stage.') and the progress line of running stages (a regex).
+$UiRetryHint = 'fix the cause'
+$UiStageProgress = 'step [0-9]+ of [0-9]+'
 $UiEnablePlugin = 'Enable the Hermuse plugin'
 $UiInstallPlugin = 'Install the plugin'
 $UiBackToChat = 'Back to chat'
@@ -80,7 +84,8 @@ $UiConnect = 'Connect'
 $UiCancel = 'Cancel'
 $UiFeed = 'Feed'
 $UiGoals = 'Goals'
-$UiDockerNotice = 'Install Docker'
+$UiOpenComputer = 'Open computer'
+$UiDockerMissing = 'Docker is not installed'
 
 # --- setup ----------------------------------------------------------------------
 
@@ -180,7 +185,9 @@ function Read-Json([string]$File) {
 # Starts the app through its Start menu shortcut (ShellExecute, as the Start
 # menu does) with a new user's PATH and without the runner's own variables
 # (CI, GITHUB_*, RUNNER_*: a user session has none), and waits for its
-# window, then maximized.
+# window, then maximized. It keeps this PowerShell 7's PSModulePath, as when
+# a terminal or `winget install` starts the app: PowerShell 7's modules must
+# not reach the app's Windows PowerShell children (install.ps1).
 function Start-App([string]$Label) {
   $saved = @{}
   foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI|GITHUB_.*|RUNNER_.*|ACTIONS_.*|ImageOS|ImageVersion)$' } |
@@ -210,12 +217,14 @@ function Stop-App([int]$TimeoutSec = (T 300)) {
 }
 
 # A failure the app reports on its install screen (a stage that lost the
-# network, say): a user reads the error and tries again, with its retry
-# button when the app offers one, else (a failure before the first stage)
-# with Cancel and the local choice again. The screen is read at most every
-# minute; at most $UserRetries tries, 3 minutes apart, each kept as evidence.
-# An error still shown after them ends the wait: $script:RetryGaveUp names
-# its screenshot.
+# network, say): a user reads the error and tries again, with the stage's
+# retry button (under the stage list: the click scrolls to it), else (a
+# failure before the first stage) with Cancel and the local choice again. An
+# error word in the log of running stages is no failure. The screen is read
+# at most every minute; at most $UserRetries tries, 3 minutes apart, each
+# clicked one kept as evidence (a failure the automation could not act on
+# counts too). An error still shown after them ends the wait:
+# $script:RetryGaveUp names its screenshot.
 $UserRetries = 3
 $script:RetryLooked = -1000
 $script:RetryClicked = -1000
@@ -228,7 +237,8 @@ function Invoke-RetryWhenOffered([string]$Id) {
   $png = Save-Shot 'retry-offered'
   if (-not $png) { return }
   $text = (D text $png) -join "`n"
-  if ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b') {
+  $stageFailed = $text -match "(?i)$([regex]::Escape($UiRetryHint))"
+  if (-not $stageFailed -and ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b' -or $text -match "(?i)$UiStageProgress")) {
     Remove-Item $png -ErrorAction SilentlyContinue
     return
   }
@@ -236,21 +246,15 @@ function Invoke-RetryWhenOffered([string]$Id) {
     $script:RetryGaveUp = $png
     return
   }
-  $xy = D locate $png $UiRetryStage
-  if ($LASTEXITCODE -eq 0 -and $xy) {
-    $parts = "$xy".Trim() -split ' '
-    D pointer $parts[0] $parts[1] | Out-Null
-    $how = "clicked '$UiRetryStage'"
-  } else {
-    $xy = D locate $png $UiCancel
-    if ($LASTEXITCODE -ne 0 -or -not $xy) { return }
-    $parts = "$xy".Trim() -split ' '
-    D pointer $parts[0] $parts[1] | Out-Null
-    if (-not (Invoke-UiClick $UiLocalChoice 60)) { return }
+  $script:Retries++
+  $how = $null
+  if ($stageFailed) {
+    if (Invoke-UiClick $UiRetryStage 60) { $how = "clicked '$UiRetryStage'" }
+  } elseif ((Invoke-UiClick $UiCancel 30) -and (Invoke-UiClick $UiLocalChoice 60)) {
     $how = "no stage had started: clicked '$UiCancel', then '$UiLocalChoice' again"
   }
-  $script:Retries++
-  $script:RetryClicked = $now
+  if (-not $how) { return }
+  $script:RetryClicked = [int]$Started.Elapsed.TotalSeconds
   Add-Check $Id "user-retry-$($script:Retries)" 'pass' "the app reported an error; $how, as a user does" @($png)
 }
 
@@ -302,6 +306,22 @@ function Test-Base {
   Add-Check $id 'runner-image' 'pass' `
     "hosted image tools on the runner PATH: $($extras -join ', ') (the app starts with a new user's PATH, without them)" `
     @((Join-Path $Logs 'tools.txt'))
+  # The image's Docker (Windows containers) puts docker.exe in System32, on
+  # every PATH. A new Windows 11 user has no Docker (phase 1 reports it
+  # missing): the smoke stops its service and renames its CLI.
+  & {
+    Get-Service docker -ErrorAction SilentlyContinue | Stop-Service -Force
+    foreach ($cli in @(Get-Command docker -All -CommandType Application -ErrorAction SilentlyContinue)) {
+      "hiding $($cli.Source)"
+      Rename-Item -LiteralPath $cli.Source -NewName 'docker.exe.hidden-by-smoke'
+    }
+    Get-Service docker -ErrorAction SilentlyContinue | Format-List Name, Status
+  } *> (Join-Path $Logs 'docker-hidden.txt')
+  $visible = @(@($UserPath -split ';' | Where-Object { $_ -and (Test-Path (Join-Path $_ 'docker.exe')) }) +
+    @(Get-Command docker -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object Source))
+  Add-Verdict $id 'no-docker' ($visible.Count -eq 0) `
+    "the image's Docker (Windows containers, System32\docker.exe) hidden from the app$(if ($visible) { '; still found: ' + ($visible -join ', ') })" `
+    @((Join-Path $Logs 'docker-hidden.txt'))
 }
 
 function Test-Launch {
@@ -457,17 +477,28 @@ function Test-Plugin {
     return $false
   }
   Add-Check $id 'plugin-gate' 'pass' "Feed shows '$UiEnablePlugin' for the local instance" @($png)
+  # The install restarts the backend (copy, enable, jobs, then stop and start):
+  # the old one may already answer the plugin routes before it is stopped, so
+  # only a new backend process serving them marks the end of the install.
+  $preInstall = Join-Path $Probe 'backend-pre-plugin.json'
+  D backend *> $preInstall
+  $oldPid = (Read-Json $preInstall).backend.pid
   $png = Invoke-UiClick $UiInstallPlugin (T 30)
   if (-not $png) {
     Add-Check $id 'plugin-install' 'fail' "no '$UiInstallPlugin' button" @((Save-Shot 'install-plugin-missing'))
     return $false
   }
   $feedJson = Join-Path $Probe 'feed.json'
-  if (-not (Wait-Until (T 900) 5 { (Test-Path (Join-Path $HermesHome 'plugins\hermuse\plugin.yaml')) -and (Invoke-Rest GET /api/plugins/hermuse/feed $feedJson) })) {
-    Add-Check $id 'plugin-install' 'fail' 'the plugin never served /api/plugins/hermuse/feed' @((Save-Shot 'plugin-stuck'), $feedJson)
+  if (-not (Wait-Until (T 900) 5 {
+        (Test-Path (Join-Path $HermesHome 'plugins\hermuse\plugin.yaml')) -and (Invoke-Rest GET /api/plugins/hermuse/feed $feedJson) -and
+        $null -ne $oldPid -and (Read-Json $feedJson).backend_pid -ne $oldPid
+      })) {
+    Add-Check $id 'plugin-install' 'fail' 'no restarted backend (new process) served /api/plugins/hermuse/feed' `
+      @((Save-Shot 'plugin-stuck'), $feedJson, $preInstall)
     return $false
   }
-  Add-Check $id 'plugin-install' 'pass' "clicked '$UiInstallPlugin': the restarted backend serves the plugin" @($png)
+  Add-Check $id 'plugin-install' 'pass' "clicked '$UiInstallPlugin': the restarted backend (pid $oldPid -> $((Read-Json $feedJson).backend_pid)) serves the plugin" `
+    @($png, $preInstall, $feedJson)
   $assets = Join-Path $InstallDir 'data\flutter_assets\assets\hermes-plugin\hermuse'
   Add-Verdict $id 'plugin-copied' (Compare-Tree $assets (Join-Path $HermesHome 'plugins\hermuse') (Join-Path $Logs 'plugin-diff.txt')) `
     "HERMES_HOME\plugins\hermuse equals the plugin assets of the installed app" @((Join-Path $Logs 'plugin-diff.txt'))
@@ -495,7 +526,9 @@ function Test-Plugin {
     $cron2 = Join-Path $Probe 'cron-2.json'
     Invoke-Rest GET /api/plugins/hermuse/cron $cron2 | Out-Null
     $after = Read-Json $jobsFile
-    $same = ((Get-CronIds $cron1) -join ',') -eq ((Get-CronIds $cron2) -join ',') -and (@($after.jobs).Count -eq $totalBefore)
+    $totalAfter = if ($after) { @($after.jobs).Count } else { 0 }
+    $same = @(Get-CronIds $cron2).Count -eq 4 -and ((Get-CronIds $cron1) -join ',') -eq ((Get-CronIds $cron2) -join ',') -and
+      $totalAfter -eq $totalBefore
     Add-Verdict $id 'enable-idempotent' $same 'same 4 job ids and no new job after a restart' @($cron2)
   } else {
     Add-Check $id 'enable-idempotent' 'fail' 'no backend after a restart' @((Save-Shot 'restart-no-backend'))
@@ -554,19 +587,20 @@ function Test-Bridge {
     @((Join-Path $Logs 'cliproxy-auth-files.txt'))
 }
 
+# The agent's computer needs Docker, which the runner lacks: the plugin reports
+# it, and so does the computer viewer the chat's profile panel opens.
 function Test-Computer {
   $id = 'c7-computer'
   $status = Join-Path $Probe 'computer-status.json'
   Invoke-Rest GET /api/plugins/hermuse/computer/status $status | Out-Null
   $state = (Read-Json $status).body.state
   Add-Verdict $id 'docker-missing-reported' ($state -eq 'docker_missing') "no Docker on the runner: the plugin reports '$state'" @($status)
-  Invoke-UiClick $UiBackToChat 10 | Out-Null
-  D rail 2 $WindowTitle *> $null
-  $png = Wait-UiText $UiDockerNotice 30
-  if (-not $png) { $png = Save-Shot 'docker-notice-missing' }
+  D rail 1 $WindowTitle *> $null
+  $png = if (Invoke-UiClick $UiOpenComputer 30) { Wait-UiText $UiDockerMissing 60 }
+  if (-not $png) { $png = Save-Shot 'computer-viewer-missing' }
   Add-Check $id 'computer' 'manual-gate' `
-    ("the hosted Windows runner has no nested virtualization for a Docker engine (phase 2: WSL2 + docker.io): confirm the Docker " +
-    "notice here, then attest the agent's computer (image pull, doctor, frames, take control) on a real Windows 11 machine") @($png, $status)
+    ("the hosted Windows runner has no nested virtualization for a Docker engine (phase 2: WSL2 + docker.io): confirm the agent's " +
+    "computer reports Docker missing here, then attest it (image pull, doctor, frames, take control) on a real Windows 11 machine") @($png, $status)
 }
 
 function Test-Lifecycle {
@@ -625,8 +659,8 @@ function Invoke-Fresh {
   if (-not (Test-Hermes)) { return }
   Test-Keyring
   if (-not (Test-Plugin)) { return }
-  Test-Bridge
   Test-Computer
+  Test-Bridge
   Test-Lifecycle
 }
 

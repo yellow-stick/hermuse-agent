@@ -49,17 +49,18 @@ final class HermusePluginInstall {
 /// `$HERMES_HOME/plugins/hermuse` and enables it.
 ///
 /// Steps mirror the plugin README: recursive copy of the `hermes-plugin/hermuse`
-/// source tree (excluding `tests/`), then `hermes plugins enable hermuse`
-/// and `hermes hermuse computer setup` with `HERMES_HOME` pointed at the
-/// instance home; the computer setup also gets `HERMES_DESKTOP=1`, which
-/// keeps the plugin from bootstrapping Docker with sudo on its own. Both run
-/// with [hostEnvironment], never the app's own environment. The computer
-/// setup is skipped with `setupComputer: false`, when the caller sets the
-/// computer up through the restarted backend instead (the Linux setup
-/// assistant, whose backend alone targets the Docker engine it chose). The
-/// dashboard/gateway must restart afterwards for the new routes to load
-/// (owned by the caller: [HermesSupervisor.restart] on a supervised
-/// instance).
+/// source tree (excluding `tests/`), then `hermes plugins enable hermuse`,
+/// `hermes hermuse enable` (registers the background jobs, refreshes them
+/// when present) and `hermes hermuse computer setup`, with `HERMES_HOME`
+/// pointed at the instance home; the computer setup also gets
+/// `HERMES_DESKTOP=1`, which keeps the plugin from bootstrapping Docker with
+/// sudo on its own. All run with [hostEnvironment], never the app's own
+/// environment. The computer setup is skipped with `setupComputer: false`,
+/// when the caller sets the computer up through the restarted backend
+/// instead (the Linux setup assistant, whose backend alone targets the
+/// Docker engine it chose). The dashboard/gateway must restart afterwards
+/// for the new routes to load (owned by the caller:
+/// [HermesSupervisor.restart] on a supervised instance).
 ///
 /// Safety: an existing `plugins/hermuse` dir whose `plugin.yaml` does NOT
 /// describe the Hermuse plugin is never touched unless [overwrite] is true;
@@ -149,6 +150,18 @@ final class HermusePluginInstaller {
         'plugins-enable',
         'hermes plugins enable $pluginName failed '
             '(exit ${enable.exitCode}): ${enable.stdout}${enable.stderr}',
+      );
+    }
+    final schedule = await _runProcess(
+      hermesExecutable,
+      const ['hermuse', 'enable'],
+      environment: {...environment, 'HERMES_HOME': hermesHome},
+    );
+    if (schedule.exitCode != 0) {
+      throw InstallFailed(
+        'plugin-schedule',
+        'hermes hermuse enable failed (exit ${schedule.exitCode}): '
+            '${schedule.stdout}${schedule.stderr}',
       );
     }
     return HermusePluginInstall(

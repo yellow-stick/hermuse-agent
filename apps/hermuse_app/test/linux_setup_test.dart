@@ -700,7 +700,6 @@ final class _Setup {
   /// Plugin REST answers, keyed `'METHOD /path'`; others answer 404.
   final rest = <String, Object? Function(http.Request)>{
     'GET /api/plugins/hermuse/files': (_) => {'files': <String>[]},
-    'POST /api/plugins/hermuse/cron/enable': (_) => {'jobs': <Object>[]},
   };
 
   /// The computer sets up, runs and shows a screen.
