@@ -6,6 +6,28 @@ import 'package:hermuse_host/src/installer.dart';
 import 'package:hermuse_host/src/remote_scripts.dart';
 import 'package:test/test.dart';
 
+/// A host interpreter in the range Hermes runs on (3.11–3.13), standing in
+/// for the server venv's Python; null when the host has none (the Ubuntu
+/// 22.04 release builder ships 3.10).
+final String? _hermesPython = _supportedPython();
+
+String? _supportedPython() {
+  for (final path in [
+    '/usr/bin/python3',
+    '/usr/bin/python3.13',
+    '/usr/bin/python3.12',
+    '/usr/bin/python3.11',
+  ]) {
+    if (!File(path).existsSync()) continue;
+    final probe = Process.runSync(path, [
+      '-c',
+      'import sys; print((3, 11) <= sys.version_info[:2] < (3, 14))',
+    ]);
+    if ('${probe.stdout}'.trim() == 'True') return path;
+  }
+  return null;
+}
+
 void main() {
   group('Read-only remote inventory recipes', () {
     late _Fixture fixture;
@@ -117,7 +139,7 @@ exec /usr/bin/install "${args[@]}"
         'HERMUSE_HEALTH_V1:repair',
       );
       expect(await fixture.snapshot(), drifted);
-    });
+    }, skip: _hermesPython == null ? 'needs Python 3.11–3.13' : false);
 
     test(
       'a plugin marker cannot hide a stale bundle or stale registered job',
@@ -294,7 +316,8 @@ final class _Fixture {
     );
     await fixture.executable(
       'home/hermes/.hermes/hermes-agent/venv/bin/python',
-      'PYTHONPATH=${fixture.root.path}/python exec /usr/bin/python3 "\$@"',
+      'PYTHONPATH=${fixture.root.path}/python '
+          'exec ${_hermesPython ?? '/usr/bin/python3'} "\$@"',
     );
     await fixture.executable('bin/git', '''
 if [ "\$3" = show ]; then
