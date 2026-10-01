@@ -345,8 +345,20 @@ dashboard restart needed.
 When only the server can do a step, the row shows the command with a **Copy**
 button, then **Check again** once you ran it: installing Docker when the Hermes
 user has no `sudo` without a password (step 5), or restarting the dashboard
-(`systemctl --user restart hermes-dashboard`) when the plugin does not answer
-yet. A failed install says why and offers **Try again**.
+when the plugin does not answer yet. The command is the one that works on that
+server: Hermuse reads which systemd service runs the dashboard through its
+own (signed-in) file API, so a server set up by the desktop app gets
+`sudo systemctl restart hermuse-dashboard` and the user service of step 1
+`systemctl --user restart hermes-dashboard`. When the server does not tell,
+both are shown, each labelled. A failed install says why and offers **Try
+again**.
+
+**Update** replaces an older plugin. The dashboard runs the plugin it loaded
+until it restarts, so Hermuse then restarts it through the running plugin
+(plugin 0.3.0 and later; the dashboard keeps its process ID, so systemd and a
+dashboard started by hand keep it), shows **Restarting the Hermes
+dashboard…** and checks again once it answers. A plugin older than 0.3.0
+cannot restart it: the row gives the restart command instead.
 
 **Continue** opens the chat once a model provider answers, the model setup
 before that.
@@ -395,7 +407,18 @@ you can do with it.
 
 ## Without the one-click install
 
-On the server, from a checkout of this repository:
+**Server set up by the desktop app**: run **Connect to a machine** again. It
+uploads the plugin bundled with the app, restarts `hermuse-dashboard` and
+checks everything. Hermes runs there as the `hermes` user; to check it by
+hand, sign in with your administrator account:
+
+```bash
+sudo -iu hermes hermes hermuse doctor
+sudo systemctl restart hermuse-dashboard
+```
+
+**Hermes installed by hand** (step 1): as the user that runs Hermes, on the
+server, from a checkout of this repository:
 
 ```bash
 cp -r hermes-plugin/hermuse ~/.hermes/plugins/hermuse
@@ -436,9 +459,15 @@ official clients may breach the vendor's terms: personal use only.
 - **The install button answers `Security scan blocked plugin install`**: that
   is the confirmation step; click **Allow and install**.
 - **`Docker is installed but not running`**: `sudo systemctl enable --now docker`.
+- **`Hermes may not use it`** (Docker): add the user that runs Hermes to the
+  `docker` group, `sudo usermod -aG docker hermes` on a server set up by the
+  desktop app; the plugin reaches Docker through `sg docker` until Hermes
+  restarts.
 - **The agent answers "Retrying in 10 min"**: your model provider refused the
   request (quota or rate limit). Switch model for this chat with
   `/model <name>`, or wait.
 - **Logs**: `~/.hermes/hermuse/computer/build.log` for the image,
   `~/.hermes/hermuse/bridge/cliproxy.log` for the subscription bridge,
-  `journalctl --user -u hermes-dashboard` for the dashboard.
+  `journalctl --user -u hermes-dashboard` for the dashboard of step 1
+  (`sudo journalctl -u hermuse-dashboard` on a server set up by the desktop
+  app).

@@ -11,6 +11,29 @@ import 'package:http/testing.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:test/test.dart';
 
+/// What Hermes' file API reads on a server the Hermuse desktop app set up:
+/// the dashboard runs as `hermes` in the system unit `hermuse-dashboard`.
+const _hermuseServer = {
+  '/proc/self/cgroup': '0::/system.slice/hermuse-dashboard.service\n',
+  '/proc/self/status': 'Name:\tpython\nUid:\t999\t999\t999\t999\n',
+  '/etc/passwd':
+      'root:x:0:0:root:/root:/bin/bash\n'
+      'hermes:x:999:999::/home/hermes:/bin/bash\n',
+};
+
+/// … on a server set up by hand with the server guide: the user service
+/// `hermes-dashboard` of `alice`, on a cgroup v1 hierarchy.
+const _guideServer = {
+  '/proc/self/cgroup':
+      '4:pids:/user.slice/user-1000.slice/user@1000.service\n'
+      '1:name=systemd:/user.slice/user-1000.slice/user@1000.service/'
+      'app.slice/hermes-dashboard.service\n'
+      '0::/user.slice/user-1000.slice/user@1000.service/app.slice/'
+      'hermes-dashboard.service\n',
+  '/proc/self/status': 'Uid:\t1000\t1000\t1000\t1000\n',
+  '/etc/passwd': 'alice:x:1000:1000::/home/alice:/bin/bash\n',
+};
+
 /// A Hermes dashboard with or without the Hermuse plugin, answering the way
 /// Hermes 0.21.5 and the plugin do.
 final class _Server {
@@ -44,6 +67,20 @@ final class _Server {
   /// What `POST /computer/setup` does to [computer].
   List<Map<String, Object?>>? afterSetup;
 
+  /// The running plugin serves `/dashboard` and restarts the dashboard
+  /// (0.3.0 and later); [boot] numbers its starts.
+  var restartable = false;
+  var boot = 1;
+
+  /// Requests a restart leaves unanswered before the next start answers;
+  /// null: it never restarts.
+  int? restartDowntime = 2;
+  var _down = 0;
+
+  /// Files Hermes' file API reads on the server (`/proc/self` is the
+  /// dashboard process).
+  var files = <String, String>{};
+
   final calls = <String>[];
   final bodies = <String, Object?>{};
 
@@ -61,6 +98,10 @@ final class _Server {
 
   Future<http.Response> handle(http.Request request) async {
     if (down) throw http.ClientException('Connection refused');
+    if (_down > 0) {
+      if (--_down == 0) boot++;
+      throw http.ClientException('Connection refused');
+    }
     // Relay-style base: every route keeps the `/hermes/<id>` prefix.
     final path = request.url.path.replaceFirst(RegExp('^/hermes/[^/]+'), '');
     final key = '${request.method} $path';
@@ -71,6 +112,14 @@ final class _Server {
     switch (key) {
       case 'GET /api/status':
         return _json({'version': version, 'auth_required': false});
+      case 'GET /api/fs/read-data-url':
+        final file = files[request.url.queryParameters['path']];
+        if (file == null) return _json({'detail': 'File not found'}, 404);
+        return _json({
+          'dataUrl':
+              'data:application/octet-stream;base64,'
+              '${base64.encode(utf8.encode(file))}',
+        });
       case 'GET /api/dashboard/plugins/hub':
         return _json({
           'plugins': [
@@ -136,6 +185,11 @@ final class _Server {
         pointed = true;
         if (afterSetup case final next?) computer = [...next];
         return _json(_computerNow());
+      case 'GET $routes/dashboard' when restartable:
+        return _json({'boot': '$boot'});
+      case 'POST $routes/dashboard/restart' when restartable:
+        _down = restartDowntime ?? 0;
+        return _json({'boot': '$boot'}, 202);
     }
     return _notFound();
   }
@@ -168,6 +222,7 @@ void main() {
             poll: Duration(milliseconds: 5),
             mountTimeout: Duration(milliseconds: 40),
             mountPoll: Duration(milliseconds: 5),
+            restartTimeout: Duration(milliseconds: 60),
           ),
         ),
       ],
@@ -375,6 +430,100 @@ void main() {
     expect(s[RemotePart.plugin].command, isNotNull);
   });
 
+  test('an update restarts the dashboard through the running plugin and '
+      'shows the new version once another start answers', () async {
+    server
+      ..plugin = '0.2.0'
+      ..mounted = true
+      ..restartable = true;
+    await looked();
+    final work = <String>[];
+    container.listen(remoteSetupProvider(id), (_, next) {
+      final row = next[RemotePart.plugin];
+      if (row.status == RemotePartStatus.installing &&
+          !work.contains(row.summary)) {
+        work.add(row.summary);
+      }
+    });
+
+    await notifier().run(RemotePart.plugin);
+
+    expect(work, ['Updating…', 'Restarting the Hermes dashboard…']);
+    expect(
+      server.calls,
+      contains('POST /api/plugins/hermuse/dashboard/restart'),
+    );
+    final row = container.read(remoteSetupProvider(id))[RemotePart.plugin];
+    expect(row.status, RemotePartStatus.installed);
+    expect(row.summary, 'Installed now · Version $hermusePluginVersion');
+    expect(row.command, isNull);
+  });
+
+  for (final (kind, files, command) in [
+    (
+      'set up by Hermuse',
+      _hermuseServer,
+      equals('sudo systemctl restart hermuse-dashboard'),
+    ),
+    (
+      'set up with the server guide',
+      _guideServer,
+      equals('systemctl --user restart hermes-dashboard'),
+    ),
+    (
+      'that does not tell how it runs it',
+      const <String, String>{},
+      // Both, each under a comment that says which server it fits.
+      predicate<String>((command) {
+        final lines = command.split('\n');
+        return lines.length == 4 &&
+            lines[0].startsWith('# ') &&
+            lines[1] == 'sudo systemctl restart hermuse-dashboard' &&
+            lines[2].startsWith('# ') &&
+            lines[3] == 'systemctl --user restart hermes-dashboard';
+      }, 'both commands, labelled'),
+    ),
+  ]) {
+    test('an update the running plugin cannot restart, on a server $kind, '
+        'gives the command that restarts its dashboard', () async {
+      server
+        ..plugin = '0.2.0'
+        ..mounted = true
+        ..files = files;
+      await looked();
+
+      await notifier().run(RemotePart.plugin);
+
+      final row = container.read(remoteSetupProvider(id))[RemotePart.plugin];
+      expect(row.status, RemotePartStatus.needsUser);
+      expect(row.command, command);
+      expect(row.action, RemoteAction.checkAgain);
+      if (files == _guideServer) expect(row.notes.single, contains('alice'));
+    });
+  }
+
+  test('a restart that does not come back in time says so and gives the '
+      'command', () async {
+    server
+      ..plugin = '0.2.0'
+      ..mounted = true
+      ..restartable = true
+      ..restartDowntime = null
+      ..files = _hermuseServer;
+    await looked();
+
+    await notifier().run(RemotePart.plugin);
+
+    expect(
+      server.calls,
+      contains('POST /api/plugins/hermuse/dashboard/restart'),
+    );
+    final row = container.read(remoteSetupProvider(id))[RemotePart.plugin];
+    expect(row.status, RemotePartStatus.needsUser);
+    expect(row.notes.first, contains('did not come back'));
+    expect(row.command, 'sudo systemctl restart hermuse-dashboard');
+  });
+
   test('a failed install says why and its retry installs', () async {
     server
       ..plugin = hermusePluginVersion
@@ -468,6 +617,7 @@ void main() {
       server
         ..plugin = hermusePluginVersion
         ..mounted = true
+        ..files = _hermuseServer
         ..computer = [
           {
             'state': 'daemon_down',
@@ -478,7 +628,8 @@ void main() {
         ];
       var s = await looked();
       expect(status(s, RemotePart.docker), RemotePartStatus.needsUser);
-      expect(s[RemotePart.docker].command, contains('usermod -aG docker'));
+      // Hermes runs as `hermes` there, not as whoever signs in to the server.
+      expect(s[RemotePart.docker].command, 'sudo usermod -aG docker hermes');
 
       server.computer = [
         {
@@ -489,7 +640,10 @@ void main() {
       s = await notifier().checkAgain().then(
         (_) => container.read(remoteSetupProvider(id)),
       );
-      expect(s[RemotePart.docker].command, 'sudo systemctl start docker');
+      expect(
+        s[RemotePart.docker].command,
+        'sudo systemctl enable --now docker',
+      );
       expect(status(s, RemotePart.computer), RemotePartStatus.blocked);
     },
   );

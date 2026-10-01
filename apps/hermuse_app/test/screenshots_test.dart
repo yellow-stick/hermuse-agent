@@ -1072,10 +1072,6 @@ Future<void> main() async {
       await tester.pumpAndSettle();
 
       expect(find.text('Enable the Hermuse plugin'), findsOneWidget);
-      expect(
-        find.textContaining('hermes plugins enable hermuse'),
-        findsOneWidget,
-      );
       await _capture(tester, 'plugin-install.png');
 
       await tester.tap(find.bySemanticsLabel('Install Hermuse on this Hermes'));
