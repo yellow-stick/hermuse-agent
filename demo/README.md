@@ -3,16 +3,25 @@
 A read-only build of the web app (`apps/hermuse_web`) that runs on any static
 host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
 
-- Two instances, **Ava** (personal) and **Otto** (work), each with a main chat
-  and side chats (one pinned, one archived), reasoning and tool-call rows.
-- Feed, Ideas, Goals and Library (artifacts, system files, reflections) filled
-  from the same fictional content.
+- Two instances: **Ava** (personal) and **Otto** (work), each with a main
+  chat and side chats (one pinned), reasoning and tool-call rows.
+- Four everyday stories, backed by matching Feed, Goals, Ideas and Library
+  entries so every panel tells the same story:
+  - Ava's main chat: the agent compares her electricity renewal and switches
+    her (€0.24 → €0.18/kWh, ~€22/month saved), then shows the morning Feed
+    it wrote while she slept.
+  - `Weekend in Annecy`: a trip for two under €400, priced line by line
+    (trains, hotel, swim), hotel booked with free cancellation.
+  - `Autumn half-marathon`: a 12-week plan with Sunday check-ins and a
+    knee-aware week, tracked in Goals.
+  - Otto's main chat: customer-interview synthesis → one-pager in the
+    Library, plus which AI subscription the chat runs on.
 - Nothing can be written: the composer is replaced by a note, and adding
   instances, new side chats, rename/archive/delete, reply and the agent's
   computer are hidden. Anything that still reaches the backend (feed reactions,
   idea feedback, goal edits, file saves) is refused with "This demo is
   read-only". Pins, reactions and panel options stay: they are local to the
-  browser.
+  browser. No journey shows approvals or confirmations as a selling point.
 
 ## How it works
 

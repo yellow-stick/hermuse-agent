@@ -105,7 +105,7 @@ void main() {
     expect(posts.first.createdAt, '2026-09-30 07:30');
     expect(
       (await container.read(goalsProvider(ava.id).future)).first.timeline,
-      hasLength(2),
+      hasLength(3),
     );
     expect(
       await container.read(

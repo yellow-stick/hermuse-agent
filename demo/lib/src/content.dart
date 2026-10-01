@@ -1,5 +1,15 @@
 /// Fictional content of the demo: two Hermes instances, their chats and
 /// their Hermuse plugin data. Every person, place and figure is made up.
+///
+/// The chats tell four everyday stories, backed by matching Feed, Goals,
+/// Ideas and Library entries so every panel tells the same story:
+///
+/// - Ava's main chat: sorting out an electricity renewal (the agent compares
+///   and switches), plus the morning feed it wrote while she slept.
+/// - `Weekend in Annecy`: a weekend trip under €400, compared and priced.
+/// - `Autumn half-marathon`: a training plan with weekly check-ins.
+/// - Otto's main chat: customer interview synthesis, plus which AI
+///   subscription it runs on.
 library;
 
 /// One transcript row of a demo chat.
@@ -9,7 +19,6 @@ final class DemoRow {
   const DemoRow.agent(this.text, {this.reasoning})
     : role = 'assistant',
       tool = null;
-
   /// A finished tool call; [text] is the summary its row shows.
   const DemoRow.tool(String this.tool, this.text)
     : role = 'tool',
@@ -98,108 +107,92 @@ const _ava = DemoInstance(
     title: '',
     age: Duration(minutes: 12),
     rows: [
-      DemoRow.user("Morning! What's on my plate today?"),
-      DemoRow.tool('memory', 'Read 4 entries: calendar, errands, habits'),
-      DemoRow.agent(
-        'Good morning, Léa. A calm Wednesday:\n\n'
-        '- **09:30** — Design review with Marco (45 min, video)\n'
-        '- **12:30** — Lunch with Inès at *Le Comptoir*\n'
-        '- **16:00** — Dentist, Dr. Varga\n'
-        '- **Tonight** — the Lisbon flights you watched drop under €120 '
-        'expire at midnight\n\n'
-        'You also said you wanted a 5 km easy run this week: '
-        'the only free slot left is **07:00–08:00 tomorrow**.',
-        reasoning:
-            'Calendar has three events. The run goal from the training plan '
-            'needs one easy session; Thursday morning is the only gap.',
-      ),
       DemoRow.user(
-        'Move the dentist to next week and remind me to call Mom tonight.',
+        'Can you sort out our electricity contract? The renewal came in '
+        'and it looks expensive.',
       ),
-      DemoRow.tool('send_message', 'Email to Dr. Varga’s office: reschedule'),
-      DemoRow.tool('cronjob', 'Reminder at 20:30: call Mom'),
+      DemoRow.tool('read_file', 'Read renewal email from Voltia (PDF)'),
+      DemoRow.tool('web_search', 'Voltia renewal rates October 2026'),
+      DemoRow.tool('web_search', 'Cheapest green electricity Lyon October'),
       DemoRow.agent(
-        'Done:\n\n'
-        '1. I asked Dr. Varga’s office to move you to **Tuesday or Wednesday '
-        'next week, after 15:00**. I will tell you when they answer.\n'
-        '2. You will get a reminder at **20:30** to call your mom.',
+        'Your renewal jumps to **€0.24/kWh** — about €98 a month for us. '
+        'I compared it with the two cheapest green offers in Lyon:\n\n'
+        '- **Voltia renewal:** €0.24/kWh, about €98 a month.\n'
+        '- **Voltia Verte:** €0.19/kWh, about €79 a month, no exit fee.\n'
+        '- **Lumen Pure:** €0.18/kWh, about **€76 a month**, no exit fee.\n\n'
+        '**Lumen Pure saves about €22 a month.** I switched us over from my '
+        'computer, the one that runs on your machine — same meter, no cut, '
+        'it starts Friday. The comparison is in your Library.',
+        reasoning:
+            'Renewal up 29 %. Lumen Pure is the cheapest green offer with '
+            'no exit fee, so switching beats negotiating.',
       ),
-      DemoRow.user('Anything interesting in the topics I follow?'),
-      DemoRow.tool('web_search', 'solid-state batteries news this week'),
-      DemoRow.tool('web_search', 'urban rewilding Lyon 2026'),
+      DemoRow.user('What did you put in my Feed this morning?'),
+      DemoRow.tool('memory', "Read this morning's feed (3 posts)"),
       DemoRow.agent(
-        'Two things worth your coffee:\n\n'
-        '### Solid-state batteries\n'
-        'A pilot line in Grenoble reported cells keeping **91 % capacity '
-        'after 1,000 cycles**. Still lab scale, but it is the first public '
-        'number from that team.\n\n'
-        '### Rewilding the Rhône banks\n'
-        'Lyon approved the second phase of the riverbank project: '
-        '4 km of concrete quays become meadows by 2028. There is a public '
-        'walk-through on **Saturday at 10:00** if you want to go.\n\n'
-        'I saved both to your Feed with sources.',
+        'Three things, written before you woke up:\n\n'
+        '- **The electricity switch** is confirmed, with the new rate.\n'
+        '- **Annecy this weekend: sun, 19 °C** — good news for the trip.\n'
+        '- **Week 3 of your running plan** starts with an easy 6 km.\n\n'
+        'Say the word and I change what I follow.',
       ),
     ],
   ),
   sideChats: [
     DemoChat(
       id: '20260929_183002_ava001',
-      title: 'Lisbon trip in May',
+      title: 'Weekend in Annecy',
       age: Duration(hours: 20),
       pinned: true,
       rows: [
         DemoRow.user(
-          'Plan 4 days in Lisbon for two in May. We like food, walking and '
-          'no museums marathon.',
+          'Find us a weekend trip for two next month. Under €400, no plane, '
+          'somewhere we can still swim.',
         ),
-        DemoRow.tool('web_search', 'Lisbon May weather crowds'),
-        DemoRow.tool('web_search', 'Lisbon neighbourhood food walks'),
+        DemoRow.tool('web_search', 'Lake Annecy swimming mid-October'),
+        DemoRow.tool('web_search', 'Lyon Annecy train fares weekends'),
+        DemoRow.tool('web_search', 'Annecy lakeside hotels under €150 night'),
         DemoRow.agent(
-          'Here is a relaxed plan, one neighbourhood per day:\n\n'
-          '**Day 1 — Alfama & Graça**\n'
-          'Arrive, walk up to the Miradouro da Senhora do Monte for sunset, '
-          'dinner at a small *tasca* near Largo do Chafariz de Dentro.\n\n'
-          '**Day 2 — Baixa & Chiado**\n'
-          'Morning pastries, the Santa Justa lift views without the queue '
-          '(take the stairs from Largo do Carmo), afternoon at the '
-          'Time Out Market only if you go before 12:00.\n\n'
-          '**Day 3 — Belém by bike**\n'
-          'Ride along the river, one museum at most (MAAT is outdoors-friendly), '
-          'pastéis de Belém on the way back.\n\n'
-          '**Day 4 — Day trip to Sintra or the beach at Cascais**\n'
-          'Sintra if the forecast is clear, Cascais if it is hot.\n\n'
-          '> May is warm (22–25 °C) and busy from the 20th on: '
-          'go early in the month if you can.',
+          'Annecy fits: the lake is still 19 °C and the town is quiet after '
+          'summer. One plan, all priced:\n\n'
+          '- **Train:** Lyon → Annecy direct, **€29 each way** per person, '
+          '1 h 50.\n'
+          '- **Hotel:** two nights by the lake, **€135 a night**, breakfast '
+          'included.\n'
+          '- **Swims:** plage d’Albigny (free) and a morning kayak, €18.\n\n'
+          '**Total: about €360 for two.** I keep an eye on the train fares '
+          'and I tell you if they drop below €25.',
         ),
-        DemoRow.user('Keep an eye on flights from Lyon under €120.'),
-        DemoRow.tool('cronjob', 'Daily at 08:00: check LYS → LIS fares'),
+        DemoRow.user('Book the hotel side of it, with free cancellation.'),
+        DemoRow.tool('web_search', 'Hotel du Lac Annecy free cancellation'),
         DemoRow.agent(
-          'I check every morning at 08:00. Current best: **€114 return** '
-          '(May 7–11, direct). I will ping you if it goes below €100 or '
-          'before it disappears.',
+          'Found it: two nights at the Hôtel du Lac, **€270 with breakfast**, '
+          'free cancellation until Thursday. I filled in the booking on my '
+          'computer, the one that runs on your machine — the confirmation '
+          'is in your inbox, and the trains are still being watched.',
         ),
       ],
     ),
     DemoChat(
       id: '20260928_064418_ava002',
-      title: 'Half-marathon training',
+      title: 'Autumn half-marathon',
       age: Duration(days: 2),
       rows: [
         DemoRow.user(
           'I want to run the Lyon half-marathon in 12 weeks. I run 15 km a '
           'week now.',
         ),
+        DemoRow.tool('cronjob', 'Sundays at 19:00: training check-in'),
         DemoRow.agent(
-          'Twelve weeks from 15 km/week is realistic. The plan grows about '
-          '10 % a week with a lighter week every fourth:\n\n'
-          '- **Weeks 1–4:** 3 runs, 16 → 22 km. One of them with 6 × 1 min '
-          'faster strides.\n'
-          '- **Weeks 5–8:** long run grows to 15 km; add one tempo run '
-          '(20 min at half-marathon pace).\n'
-          '- **Weeks 9–11:** peak at 35 km/week, long run 18 km.\n'
-          '- **Week 12:** taper to 15 km, race on Sunday.\n\n'
-          'I added it to your Goals and I will adjust each week from how '
-          'your runs felt.',
+          'Twelve weeks from 15 km a week is realistic. Three runs a week, '
+          'growing about 10 % with a lighter week every fourth:\n\n'
+          '- **Weeks 1–4:** 16 → 22 km, one session with 6 × 1 min faster '
+          'strides.\n'
+          '- **Weeks 5–8:** long run grows to 15 km, plus one 20 min tempo.\n'
+          '- **Weeks 9–11:** peak at 35 km, long run 18 km.\n'
+          '- **Week 12:** taper, race on Sunday.\n\n'
+          'I added it to your Goals and I check in every Sunday evening to '
+          'adjust the next week from how your runs felt.',
           reasoning:
               'Current base 15 km. Peak around 35 km keeps weekly growth '
               'near 10 %, with deload weeks 4 and 8.',
@@ -207,46 +200,10 @@ const _ava = DemoInstance(
         DemoRow.user('My left knee felt tight after the long run.'),
         DemoRow.agent(
           'Let’s be careful: this week the long run drops from 12 to **9 km** '
-          'on flat ground, and add 10 minutes of hip and glute strength after '
-          'two runs. If the tightness is still there next Sunday or it hurts '
-          'going down stairs, see a physio before we build again.',
-        ),
-      ],
-    ),
-    DemoChat(
-      id: '20260925_201534_ava003',
-      title: 'Sourdough troubleshooting',
-      age: Duration(days: 5),
-      rows: [
-        DemoRow.user(
-          'My sourdough comes out flat and dense. Starter is 2 weeks old.',
-        ),
-        DemoRow.agent(
-          'A 2-week-old starter is often not strong enough yet. Three checks:\n\n'
-          '1. **Does it double within 6 hours** after feeding at room '
-          'temperature? If not, feed it twice a day for another week.\n'
-          '2. **Bulk fermentation:** the dough should grow by about 50 % and '
-          'show bubbles on the sides. In a 20 °C kitchen that is 6–8 hours, '
-          'not 4.\n'
-          '3. **Hydration:** drop to 68 % water until the shaping feels '
-          'easier.\n\n'
-          'Send me a photo of the crumb next time and I will tell you which '
-          'one it was.',
-        ),
-      ],
-    ),
-    DemoChat(
-      id: '20260918_121207_ava004',
-      title: 'Apartment insurance quotes',
-      age: Duration(days: 12),
-      archived: true,
-      rows: [
-        DemoRow.user('Compare the three home insurance quotes I forwarded.'),
-        DemoRow.tool('read_file', 'Read 3 PDF quotes'),
-        DemoRow.agent(
-          'The middle one is the best fit: same coverage as the most '
-          'expensive, a €150 deductible instead of €300, and €9 a month '
-          'cheaper than your current contract.',
+          'on flat ground, plus 10 minutes of hip and glute strength after '
+          'two runs. If it still feels tight next Sunday, or it hurts going '
+          'down stairs, see a physio before we build again. I updated your '
+          'goal’s progress note.',
         ),
       ],
     ),
@@ -254,61 +211,62 @@ const _ava = DemoInstance(
   feed: [
     {
       'id': 'feed-ava-1',
-      'title': 'Solid-state cells pass 1,000 cycles in Grenoble',
-      'topic': 'Energy',
+      'title': 'Your electricity switch is confirmed',
+      'topic': 'Home',
       'body':
-          'A pilot line reported 91 % capacity retention after 1,000 '
-          'cycles on its sulfide-electrolyte cells. The team plans larger '
-          'pouch cells next spring. Still far from cars, but the first public '
-          'cycle-life number from that group.',
-      'sources': ['https://example.com/energy/solid-state-grenoble'],
+          'Lumen Pure confirmed the switch overnight: €0.18/kWh from Friday, '
+          'about €22 a month less than the Voltia renewal. Same meter, no '
+          'visit, no cut. The comparison is in your Library.',
+      'sources': ['https://example.com/lumen/switch-confirmation'],
       'age': Duration(hours: 2),
-      'reactions': <String, Object?>{},
-    },
-    {
-      'id': 'feed-ava-2',
-      'title': 'Lyon turns 4 km of quays into meadows',
-      'topic': 'Cities',
-      'body':
-          'The second phase of the Rhône riverbank project was approved. '
-          'A public walk-through takes place Saturday at 10:00 from '
-          'Pont de la Guillotière.',
-      'sources': ['https://example.com/lyon/rewilding-phase-2'],
-      'age': Duration(hours: 3),
       'reactions': {'love': ''},
     },
     {
-      'id': 'feed-ava-3',
-      'title': 'Why your sourdough needs a warmer spot',
-      'topic': 'Cooking',
+      'id': 'feed-ava-2',
+      'title': 'Annecy this weekend: sun, 19 °C',
+      'topic': 'Weekend',
       'body':
-          'Wild yeast activity roughly doubles between 20 °C and 26 °C. '
-          'An oven with only the light on is a common home proofing box.',
-      'sources': ['https://example.com/cooking/sourdough-temperature'],
-      'age': Duration(days: 2),
+          'Clear skies over the lake Saturday and Sunday, water still 19 °C. '
+          'Your hotel is booked and the trains are holding at €29 — I tell '
+          'you if they drop below €25.',
+      'sources': ['https://example.com/meteo/annecy-weekend'],
+      'age': Duration(hours: 3),
+      'reactions': <String, Object?>{},
+    },
+    {
+      'id': 'feed-ava-3',
+      'title': 'Week 3 of your half-marathon plan',
+      'topic': 'Running',
+      'body':
+          'Two weeks done, 15 % of the way there. This week: an easy 6 km, '
+          'strides on Thursday, 9 km flat on Sunday while the knee settles. '
+          'Check-in Sunday evening as usual.',
+      'sources': <String>[],
+      'age': Duration(hours: 4),
       'reactions': <String, Object?>{},
     },
   ],
   ideas: [
     {
       'id': 'idea-ava-1',
-      'title': 'Neighbourhood tool library',
+      'title': 'Annecy photo weekend album',
       'pitch':
-          'Your building has 40 flats and most drills are used 15 minutes a '
-          'year. A shared shelf in the bike room with a simple sign-out sheet.',
-      'group': 'Community',
-      'first_step': 'Ask the building WhatsApp group who would lend a tool.',
+          'After the trip, drop me your photos and I lay out a small album '
+          'by day, with the lake spots from the itinerary.',
+      'group': 'Travel',
+      'first_step': 'Create a shared album before you leave.',
       'age': Duration(days: 1),
       'feedback': <Object?>[],
     },
     {
       'id': 'idea-ava-2',
-      'title': 'Photo book of the Lisbon trip',
+      'title': 'Yearly electricity check',
       'pitch':
-          'Pick 40 photos after the trip and I lay them out by day with the '
-          'places from the itinerary.',
-      'group': 'Travel',
-      'first_step': 'Create a shared album before you leave.',
+          'Contracts creep up every autumn. Every September I compare ours '
+          'against the cheapest green offer and switch us if we overpay by '
+          'more than €10 a month.',
+      'group': 'Home',
+      'first_step': 'Let me schedule it for next September.',
       'age': Duration(days: 3),
       'feedback': <Object?>[],
     },
@@ -325,6 +283,11 @@ const _ava = DemoInstance(
       'timeline': [
         {'age': Duration(days: 9), 'note': 'Plan started', 'progress': '0 %'},
         {
+          'age': Duration(days: 4),
+          'note': 'Week 1 done, all three runs easy',
+          'progress': '8 %',
+        },
+        {
           'age': Duration(days: 2),
           'note': 'Week 2 done, knee tight after long run',
           'progress': '15 %',
@@ -333,17 +296,22 @@ const _ava = DemoInstance(
     },
     {
       'id': 'goal-ava-2',
-      'title': 'Save €3,000 for the summer',
+      'title': 'Lower the electricity bill',
       'category': 'finance',
-      'why': 'Travel without touching the emergency fund.',
-      'target_date': '2027-06-01',
+      'why': 'Stop overpaying a renewal that crept up 29 %.',
+      'target_date': '2026-10-10',
       'status': 'tracking',
-      'age': Duration(days: 30),
+      'age': Duration(days: 6),
       'timeline': [
         {
-          'age': Duration(days: 1),
-          'note': 'September transfer made',
-          'progress': '€900 / €3,000',
+          'age': Duration(days: 6),
+          'note': 'Renewal opened: €0.24/kWh',
+          'progress': '€98 / month',
+        },
+        {
+          'age': Duration(hours: 12),
+          'note': 'Switched to Lumen Pure at €0.18/kWh',
+          'progress': '€76 / month',
         },
       ],
     },
@@ -351,15 +319,24 @@ const _ava = DemoInstance(
   artifacts: [
     {
       'id': 'art-ava-1',
-      'title': 'Lisbon — 4-day itinerary',
+      'title': 'Electricity — comparison and switch',
       'kind': 'document',
-      'file': 'artifacts/lisbon-itinerary.md',
-      'size': 4812,
-      'tags': ['travel', 'lisbon'],
-      'age': Duration(hours: 20),
+      'file': 'comparisons/electricity-switch.md',
+      'size': 3280,
+      'tags': ['home', 'electricity'],
+      'age': Duration(hours: 12),
     },
     {
       'id': 'art-ava-2',
+      'title': 'Annecy — weekend plan',
+      'kind': 'document',
+      'file': 'trips/annecy-weekend.md',
+      'size': 4150,
+      'tags': ['travel', 'annecy'],
+      'age': Duration(hours: 20),
+    },
+    {
+      'id': 'art-ava-3',
       'title': 'Half-marathon training plan',
       'kind': 'document',
       'file': 'artifacts/half-marathon-plan.md',
@@ -372,9 +349,11 @@ const _ava = DemoInstance(
     {
       'age': Duration(days: 1),
       'body':
-          'Léa got through a dense Tuesday without skipping the run. The trip '
-          'planning is where she lights up: more of that, less inbox triage '
-          'in the evening.',
+          'Léa hands over boring admin without a second thought when the '
+          'result is concrete — the electricity switch took one message. '
+          'Trips are where she lights up; the Annecy weekend is the third '
+          'one this year. Keep Sunday check-ins short: she answers faster '
+          'when there is one question, not three.',
     },
   ],
   files: {
@@ -382,14 +361,14 @@ const _ava = DemoInstance(
         '# Ava\n\nPersonal assistant of Léa. Warm, brief, never pushy. '
         'Answers in the language of the question.',
     'FEED_PROMPT.md':
-        'Follow: energy storage, urban nature, running, cooking. '
-        'At most three posts a day.',
+        'Follow: household admin and prices, weekend trips from Lyon, '
+        'running. At most three posts a day, concrete news only.',
     'HEARTBEAT.md':
         '# Heartbeat\n\nEvery morning at 07:30: calendar check, weather, '
         'one suggestion for the day.',
     'PREFERENCES.md':
         '# Preferences\n\n- No messages after 22:00\n- Prefer trains under '
-        '4 hours\n- Vegetarian most days',
+        '4 hours\n- Vegetarian most days\n- Reads French and English bills',
   },
 );
 
@@ -430,6 +409,12 @@ const _otto = DemoInstance(
         'Draft saved to your Library as **Slack alerts — one-pager**: '
         'problem, the three alerts customers asked for, a two-sprint scope '
         'and the open question on per-channel permissions.',
+      ),
+      DemoRow.user('Which AI am I talking to right now, actually?'),
+      DemoRow.agent(
+        'This chat runs on **the ChatGPT subscription your team already '
+        'has** — same login as your other tools, nothing new to pay for. '
+        'You can switch it to another subscription any time, per chat.',
       ),
     ],
   ),
