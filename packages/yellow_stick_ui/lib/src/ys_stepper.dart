@@ -5,9 +5,10 @@ import 'ys_step_badge.dart';
 import 'ys_theme.dart';
 
 /// Progress through a short flow: one badge per step with its label under
-/// it, joined by lines. Steps before [current] show a calm tick and a
-/// filled line, the current one its icon in an accent ring, later ones stay
-/// muted. The line into the current step fills as it appears.
+/// it, joined by lines. Steps before [current] show a calm green tick
+/// ([YsStepBadge.passed]) and a filled line, the current one its icon in an
+/// accent ring, later ones stay muted. The line into the current step fills
+/// as it appears.
 final class YsStepper extends StatelessWidget {
   const YsStepper({required this.steps, required this.current, super.key});
 
@@ -45,15 +46,19 @@ final class YsStepper extends StatelessWidget {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      YsStepBadge(
-                        state: i < current
-                            ? YsStepState.found
-                            : i == current
-                            ? YsStepState.needsAction
-                            : YsStepState.pending,
-                        icon: step.icon,
-                        size: YsLayout.stepperBadge,
-                      ),
+                      if (i < current)
+                        YsStepBadge.passed(
+                          icon: step.icon,
+                          size: YsLayout.stepperBadge,
+                        )
+                      else
+                        YsStepBadge(
+                          state: i == current
+                              ? YsStepState.needsAction
+                              : YsStepState.pending,
+                          icon: step.icon,
+                          size: YsLayout.stepperBadge,
+                        ),
                       const SizedBox(height: YsSpace.xs),
                       Text(
                         step.label,

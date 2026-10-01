@@ -45,7 +45,7 @@ enum RemotePartStatus {
   /// In place already.
   present,
 
-  /// Installed from the checklist.
+  /// Installed (or, for the model, connected) from the checklist.
   installed,
 
   /// Missing or out of date: the part's action installs it.
@@ -269,7 +269,8 @@ class RemoteSetup extends _$RemoteSetup {
   /// "Install everything" runs.
   var _everything = false;
 
-  /// Parts installed from here: they show done rather than found.
+  /// Parts installed from here, and the model when it got connected while
+  /// the checklist showed: they show done rather than found.
   final _installed = <RemotePart>{};
 
   /// Why the last attempt of each part failed.
@@ -299,6 +300,12 @@ class RemoteSetup extends _$RemoteSetup {
     _unreachable = null;
     _checking = {...RemotePart.values}..remove(RemotePart.model);
     ref.listen(onboardingProvider(instanceId), (_, next) {
+      final connected = next.value;
+      if (_modelMissing(_model.value) &&
+          connected != null &&
+          !_modelMissing(connected)) {
+        _installed.add(RemotePart.model);
+      }
       _model = next;
       if (_built) _publish();
     }, fireImmediately: true);
@@ -697,14 +704,17 @@ class RemoteSetup extends _$RemoteSetup {
     };
   }
 
-  /// [part] is in place: done when installed from here.
-  RemotePartState _inPlace(RemotePart part, String summary) => RemotePartState(
-    part,
-    _installed.contains(part)
-        ? RemotePartStatus.installed
-        : RemotePartStatus.present,
-    summary: summary,
-  );
+  /// [part] is in place, with [detail] (its version, what runs): done when
+  /// installed from here, found otherwise.
+  RemotePartState _inPlace(RemotePart part, [String? detail]) {
+    final installed = _installed.contains(part);
+    final verdict = installed ? 'Installed now' : 'Already installed';
+    return RemotePartState(
+      part,
+      installed ? RemotePartStatus.installed : RemotePartStatus.present,
+      summary: detail == null ? verdict : '$verdict · $detail',
+    );
+  }
 
   RemotePartState? _runningOrFailed(RemotePart part) {
     if (_running == part) {
@@ -727,11 +737,7 @@ class RemoteSetup extends _$RemoteSetup {
     const part = RemotePart.hermes;
     final version = hermesVersionOf(found.version) ?? found.version;
     if (hermesVersionSupported(found.version)) {
-      return RemotePartState(
-        part,
-        RemotePartStatus.present,
-        summary: 'Version $version',
-      );
+      return _inPlace(part, 'Version $version');
     }
     return RemotePartState(
       part,
@@ -775,7 +781,7 @@ class RemoteSetup extends _$RemoteSetup {
           action: RemoteAction.update,
         );
       }
-      return _inPlace(part, version.isEmpty ? 'Installed' : 'Version $version');
+      return _inPlace(part, version.isEmpty ? null : 'Version $version');
     }
     if (!hermesVersionSupported(found.version)) {
       return const RemotePartState(
@@ -1051,13 +1057,25 @@ class RemoteSetup extends _$RemoteSetup {
         alert: true,
         action: RemoteAction.setUpModel,
       ),
-      _ => const RemotePartState(
-        part,
-        RemotePartStatus.present,
-        summary: 'Connected',
-      ),
+      _ =>
+        _installed.contains(part)
+            ? const RemotePartState(
+                part,
+                RemotePartStatus.installed,
+                summary: 'Connected now',
+              )
+            : const RemotePartState(
+                part,
+                RemotePartStatus.present,
+                summary: 'Already connected',
+              ),
     };
   }
+
+  /// Whether [onboarding] still waits for a model provider that answers.
+  static bool _modelMissing(OnboardingState? onboarding) =>
+      onboarding?.step == OnboardingStep.connections ||
+      onboarding?.step == OnboardingStep.runtimeCheck;
 
   static RemotePartState _needsPlugin(RemotePart part) => RemotePartState(
     part,

@@ -5,6 +5,7 @@ import 'package:jaspr/jaspr.dart' hide ConnectionState;
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:jaspr_riverpod/jaspr_riverpod.dart';
+import 'package:universal_web/web.dart' as web;
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
@@ -83,8 +84,9 @@ class HermuseWelcome extends StatelessComponent {
   ];
 }
 
-/// Registered instances: state dot, version, rename, primary, the setup,
-/// the components on the Hermes and its connections, delete.
+/// Registered instances, one row each: its state, its chat, its model
+/// accounts and components; rename, default, setup again and removal in the
+/// row's "More actions" menu (desktop `InstancesScreen` parity).
 class HermuseInstances extends StatelessComponent {
   const HermuseInstances({
     required this.onAdd,
@@ -99,11 +101,15 @@ class HermuseInstances extends StatelessComponent {
   final VoidCallback onAdd;
   final VoidCallback onBack;
   final ValueChanged<String> onOpen;
+
+  /// Runs the onboarding again: the Hermes check, the default model.
   final ValueChanged<String> onSetup;
 
   /// Opens the component checklist of an instance: what Hermuse needs on
   /// its Hermes.
   final ValueChanged<String> onComponents;
+
+  /// The model accounts the instance can use.
   final ValueChanged<String> onConnections;
 
   @override
@@ -141,7 +147,7 @@ class HermuseInstances extends StatelessComponent {
             provider: connectionProvider(instance.id),
             builder: (context, connection) => _InstanceRow(
               instance: instance,
-              state: state.value,
+              state: state,
               // Refused credentials, on the first connection or on a later
               // reconnect (the chat's sign-in banner reads the same).
               authFailed:
@@ -149,11 +155,11 @@ class HermuseInstances extends StatelessComponent {
                   (state.value == ConnectionState.error &&
                       connection.value?.transport.lastError
                           is HermesAuthFailed),
-              isPrimary: registry.value?.primary?.id == instance.id,
+              isDefault: registry.value?.primary?.id == instance.id,
               onOpen: () => onOpen(instance.id),
               onRename: (name) => _rename(context, instance, name),
-              onSetPrimary: () => _setPrimary(context, instance),
-              onDelete: () => _delete(context, instance),
+              onMakeDefault: () => _setPrimary(context, instance),
+              onRemove: () => _remove(context, instance),
               onSetup: () => onSetup(instance.id),
               onComponents: () => onComponents(instance.id),
               onConnections: () => onConnections(instance.id),
@@ -189,9 +195,21 @@ class HermuseInstances extends StatelessComponent {
     await registry.setPrimary(instance.id);
   }
 
-  Future<void> _delete(BuildContext context, HermesInstance instance) async {
-    final registry = await context.container.read(registryProvider.future);
+  /// Forgets [instance] and its secrets; an open chat on it moves to what is
+  /// left (desktop parity).
+  Future<void> _remove(BuildContext context, HermesInstance instance) async {
+    final container = context.container;
+    final showing =
+        container.read(activeThreadProvider).value?.instanceId == instance.id;
+    final registry = await container.read(registryProvider.future);
     await registry.remove(instance.id);
+    if (!showing) return;
+    final next = registry.primary;
+    if (next == null) {
+      container.invalidate(activeThreadProvider);
+    } else {
+      await container.read(activeThreadProvider.notifier).openInstance(next.id);
+    }
   }
 
   @css
@@ -211,17 +229,91 @@ class HermuseInstances extends StatelessComponent {
       color: .variable('--content'),
       backgroundColor: .variable('--paper'),
     ),
-    css('.hermuse-instance-body > .hermuse-check-line')
-        .styles(margin: .only(top: YsSpace.sm.px)),
+    // Outlined, so the neutral buttons and the monogram disc stay visible on
+    // it (desktop `_InstanceRow`).
     css('.hermuse-instance-row').styles(
-      padding: .symmetric(vertical: 12.px, horizontal: 12.px),
+      padding: .all(YsSpace.md.px),
       radius: .circular(YsRadius.row.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(YsSpace.md.px),
+      border: .all(
+        style: .solid,
+        color: .variable('--line'),
+        width: ysHairline.px,
+      ),
+    ),
+    css('.hermuse-instance-head').styles(
       display: .flex,
       flexDirection: .row,
       alignItems: .center,
-      gap: .all(12.px),
-      // Outlined, so the neutral action buttons stay visible on it.
-      border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
+      gap: .all(YsSpace.md.px),
+    ),
+    css('.hermuse-instance-monogram').styles(
+      width: YsLayout.monogram.px,
+      height: YsLayout.monogram.px,
+      radius: .circular(YsRadius.pill.px),
+      display: .flex,
+      justifyContent: .center,
+      alignItems: .center,
+      color: .variable('--content'),
+      backgroundColor: .variable('--neutral-ambient'),
+      fontSize: YsType.monogram.size.px,
+      fontWeight: .w600,
+      lineHeight: YsType.monogram.lineHeight.px,
+      raw: {'flex-shrink': '0'},
+    ),
+    css('.hermuse-instance-body').styles(
+      flex: .grow(1),
+      display: .flex,
+      flexDirection: .column,
+      raw: {'min-width': '0'},
+    ),
+    css('.hermuse-instance-name').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(YsSpace.sm.px),
+      raw: {'min-width': '0'},
+    ),
+    css('.hermuse-instance-label').styles(
+      fontSize: YsType.label.size.px,
+      lineHeight: YsType.label.lineHeight.px,
+      fontWeight: .w500,
+      overflow: .hidden,
+      textOverflow: .ellipsis,
+      raw: {'white-space': 'nowrap', 'min-width': '0'},
+    ),
+    css('.hermuse-instance-badge').styles(
+      padding: .symmetric(vertical: YsSpace.xxs.px, horizontal: YsSpace.sm.px),
+      radius: .circular(YsRadius.pill.px),
+      color: .variable('--content-muted'),
+      border: .all(
+        style: .solid,
+        color: .variable('--line'),
+        width: ysHairline.px,
+      ),
+      fontSize: YsType.caption.size.px,
+      lineHeight: YsType.caption.lineHeight.px,
+      raw: {'white-space': 'nowrap', 'flex-shrink': '0'},
+    ),
+    css('.hermuse-instance-sub').styles(
+      fontSize: YsType.caption.size.px,
+      lineHeight: YsType.caption.lineHeight.px,
+      color: .variable('--content-muted'),
+      overflow: .hidden,
+      textOverflow: .ellipsis,
+      raw: {'white-space': 'nowrap'},
+    ),
+    css('.hermuse-instance-status').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all((YsSpace.xs + YsSpace.xxs).px),
+      color: .variable('--content-muted'),
+      fontSize: YsType.caption.size.px,
+      lineHeight: YsType.caption.lineHeight.px,
+      raw: {'white-space': 'nowrap', 'flex-shrink': '0'},
     ),
     css('.hermuse-instance-dot').styles(
       width: YsLayout.statusDot.px,
@@ -234,92 +326,41 @@ class HermuseInstances extends StatelessComponent {
         .styles(backgroundColor: .variable('--success')),
     css('.hermuse-instance-dot-busy')
         .styles(backgroundColor: .variable('--primary')),
-    css('.hermuse-instance-body').styles(
-      flex: .grow(1),
-      display: .flex,
-      flexDirection: .column,
-      gap: .all(2.px),
-      raw: {'min-width': '0'},
-    ),
-    css('.hermuse-instance-open').styles(
-      padding: .zero,
-      display: .flex,
-      color: .variable('--content'),
-      backgroundColor: Colors.transparent,
-      border: .none,
-      cursor: .pointer,
-      textAlign: .left,
-      raw: {'min-width': '0', 'font-family': 'inherit'},
-    ),
-    css('.hermuse-instance-label').styles(
-      fontSize: 15.px,
-      lineHeight: 20.px,
-      fontWeight: .w600,
-      overflow: .hidden,
-      textOverflow: .ellipsis,
-      raw: {'white-space': 'nowrap'},
-    ),
-    css('.hermuse-instance-sub').styles(
-      fontSize: 13.px,
-      lineHeight: 18.px,
-      color: .variable('--content-muted'),
-      overflow: .hidden,
-      textOverflow: .ellipsis,
-      raw: {'white-space': 'nowrap'},
-    ),
+    css('.hermuse-instance-dot-error')
+        .styles(backgroundColor: .variable('--error')),
+    // The buttons wrap; "More actions" stays at the end of the first line.
     css('.hermuse-instance-actions').styles(
       display: .flex,
       flexDirection: .row,
-      alignItems: .center,
-      gap: .all(4.px),
-      raw: {'flex-shrink': '0'},
+      alignItems: .start,
+      gap: .all(YsSpace.sm.px),
     ),
-    css('.hermuse-instance-edit').styles(
+    css('.hermuse-instance-buttons').styles(
+      flex: .grow(1),
       display: .flex,
       flexDirection: .row,
-      alignItems: .center,
-      gap: .all(8.px),
+      flexWrap: .wrap,
+      gap: .all(YsSpace.sm.px),
+      raw: {'min-width': '0'},
     ),
-    css('.hermuse-instance-input').styles(
-      height: 36.px,
-      padding: .symmetric(horizontal: 12.px),
-      radius: .circular(YsRadius.row.px),
-      flex: .grow(1),
-      color: .variable('--content'),
-      backgroundColor: .variable('--canvas'),
-      border: .all(style: .solid, color: .variable('--line'), width: 1.2.px),
-      fontSize: 15.px,
-      raw: {'outline': 'none', 'font-family': 'inherit'},
-    ),
+    css('.hermuse-instance-more')
+        .styles(display: .flex, raw: {'flex-shrink': '0'}),
+    css(
+      '.hermuse-instance-signin-col',
+    ).styles(display: .flex, flexDirection: .column, gap: .all(YsSpace.sm.px)),
     css('.hermuse-instance-signin').styles(
       display: .flex,
       flexDirection: .row,
       alignItems: .center,
-      gap: .all(8.px),
-      margin: .only(top: 8.px),
+      gap: .all(YsSpace.sm.px),
     ),
-    css('.hermuse-instance-signin-col')
-        .styles(display: .flex, flexDirection: .column, gap: .all(8.px)),
-    css('.hermuse-instance-signin .ys-inputbox')
-        .styles(height: 36.px, fontSize: 14.px, lineHeight: 20.px),
     css('.hermuse-instance-signin-field')
         .styles(flex: .grow(1), raw: {'min-width': '0'}),
-    css('.hermuse-instance-signin-link').styles(
-      fontSize: 13.px,
-      lineHeight: 18.px,
-      color: .variable('--primary-2'),
-      cursor: .pointer,
-      border: .none,
-      backgroundColor: Colors.transparent,
-      padding: .zero,
+    css('.hermuse-instance-dialog-body').styles(
+      margin: .zero,
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
     ),
-    // Phones: the actions leave the name its line and wrap under it,
-    // right-aligned.
-    css.media(MediaQuery.screen(maxWidth: 767.px), [
-      css('.hermuse-instance-row').styles(flexWrap: .wrap),
-      css('.hermuse-instance-actions')
-          .styles(width: 100.percent, flexWrap: .wrap, justifyContent: .end),
-    ]),
   ];
 }
 
@@ -328,37 +369,46 @@ class _InstanceRow extends StatefulComponent {
     required this.instance,
     required this.state,
     required this.authFailed,
-    required this.isPrimary,
+    required this.isDefault,
     required this.onOpen,
     required this.onRename,
-    required this.onSetPrimary,
-    required this.onDelete,
+    required this.onMakeDefault,
+    required this.onRemove,
     required this.onSetup,
     required this.onComponents,
     required this.onConnections,
   });
 
   final HermesInstance instance;
-  final ConnectionState? state;
+  final AsyncValue<ConnectionState> state;
 
-  /// True when the connection failed with auth (show sign-in form).
+  /// True when the connection failed with auth (offer the sign-in).
   final bool authFailed;
-  final bool isPrimary;
+
+  /// The instance Hermuse opens on start (the registry's primary).
+  final bool isDefault;
   final VoidCallback onOpen;
   final ValueChanged<String> onRename;
-  final VoidCallback onSetPrimary;
-  final VoidCallback onDelete;
+  final VoidCallback onMakeDefault;
+  final VoidCallback onRemove;
   final VoidCallback onSetup;
   final VoidCallback onComponents;
   final VoidCallback onConnections;
+
   @override
   State<_InstanceRow> createState() => _InstanceRowState();
 }
 
 class _InstanceRowState extends State<_InstanceRow> {
-  var _editing = false;
+  final _nameBox = GlobalNodeKey<web.HTMLElement>();
+  final _signInBox = GlobalNodeKey<web.HTMLElement>();
+  final _more = GlobalNodeKey<web.HTMLElement>();
+
+  /// Where the "More actions" menu opens; null while it is closed.
+  YsMenuAnchor? _menu;
+  var _renaming = false;
   var _draft = '';
-  var _confirmDelete = false;
+  var _confirmRemove = false;
   var _signingIn = false;
   var _username = '';
   var _password = '';
@@ -379,138 +429,272 @@ class _InstanceRowState extends State<_InstanceRow> {
   @override
   Component build(BuildContext context) {
     final instance = component.instance;
-    final dot = switch (component.state) {
-      ConnectionState.ready =>
-        'hermuse-instance-dot hermuse-instance-dot-ready',
-      ConnectionState.connecting || ConnectionState.reconnecting =>
-        'hermuse-instance-dot hermuse-instance-dot-busy',
-      _ => 'hermuse-instance-dot',
-    };
+    final (dot, status) = _status();
     return div(classes: 'hermuse-instance-row', [
-      YsPing(
-        live: component.state == ConnectionState.ready,
-        color: YsTheme.success,
-        child: div(classes: dot, []),
-      ),
-      div(classes: 'hermuse-instance-body', [
-        if (_editing)
-          div(classes: 'hermuse-instance-edit', [
-            input<String>(
-              type: .text,
-              value: _draft,
-              classes: 'hermuse-instance-input',
-              attributes: {'aria-label': 'Instance name'},
-              onInput: (v) => setState(() => _draft = v),
-            ),
-            YsButton.icon(
-              icon: YsIcon.check,
-              label: 'Save name',
-              onPressed: () {
-                component.onRename(_draft);
-                setState(() => _editing = false);
-              },
-              size: 32,
-            ),
-          ])
-        else
-          YsPressable(
-            onPressed: component.onOpen,
-            label: 'Open ${instance.label}',
-            classes: 'hermuse-instance-open',
-            builder: (context, press) => span(
-              classes: 'hermuse-instance-label',
-              [.text(instance.label)],
-            ),
-          ),
-        span(classes: 'hermuse-instance-sub', [
-          .text(
-            [
-              // Behind the relay the URL host is the relay itself: omit it.
-              if (!instance.baseUrl.path.startsWith('/hermes/'))
-                instance.baseUrl.host,
-              if (component.isPrimary) 'primary',
-              switch (component.state) {
-                ConnectionState.ready => 'connected',
-                ConnectionState.connecting => 'connecting…',
-                ConnectionState.reconnecting => 'reconnecting…',
-                ConnectionState.error =>
-                  component.authFailed ? 'signed out' : 'error',
-                _ => 'idle',
-              },
-            ].join(' · '),
-          ),
+      div(classes: 'hermuse-instance-head', [
+        span(
+          classes: 'hermuse-instance-monogram',
+          attributes: {'aria-hidden': 'true'},
+          [.text(_initial(instance.label))],
+        ),
+        div(classes: 'hermuse-instance-body', [
+          if (_renaming)
+            div(key: _nameBox, [
+              YsInputBox(
+                value: _draft,
+                onChanged: (v) => setState(() => _draft = v),
+                onSubmitted: _saveName,
+                name: 'instance-name-${instance.id}',
+                label: 'Instance name',
+                autocomplete: 'off',
+              ),
+            ])
+          else
+            div(classes: 'hermuse-instance-name', [
+              span(classes: 'hermuse-instance-label', [.text(instance.label)]),
+              if (component.isDefault)
+                span(classes: 'hermuse-instance-badge', [.text('Default')]),
+            ]),
+          // Behind the relay the URL host is the relay itself: omit it.
+          if (!instance.baseUrl.path.startsWith('/hermes/'))
+            span(classes: 'hermuse-instance-sub', [
+              .text(instance.baseUrl.toString()),
+            ]),
         ]),
-        // The sign-in's line: an empty box while it runs, ticked with
-        // sparks once signed in; it stays until another action starts.
-        if (_signCheck case final check?)
-          HermuseCheckLine(
-            key: const ValueKey('sign-in'),
-            text: check,
-            done: _signedIn,
+        div(classes: 'hermuse-instance-status', [
+          YsPing(
+            live: component.state.value == ConnectionState.ready,
+            color: YsTheme.success,
+            child: div(classes: dot, []),
           ),
-        if (component.authFailed && instance.auth == AuthMethod.password)
-          _RowSignIn(
-            instanceId: instance.id,
-            expanded: _signingIn,
-            username: _username,
-            password: _password,
-            busy: _signInBusy,
-            error: _signInError,
-            onToggle: () => setState(() {
-              _signingIn = !_signingIn;
-              _signInError = null;
-              _signCheck = null;
-            }),
-            onUsername: (v) => setState(() => _username = v),
-            onPassword: (v) => setState(() => _password = v),
-            onSubmit: () => unawaited(_signIn(context)),
-          ),
+          span([.text(status)]),
+        ]),
       ]),
-      div(classes: 'hermuse-instance-actions', [
-        if (_confirmDelete)
-          YsButton.neutral(label: 'Delete?', onPressed: component.onDelete)
-        else ...[
-          YsButton.icon(
-            icon: YsIcon.pencil,
-            label: 'Rename',
-            onPressed: () => setState(() {
-              _draft = instance.label;
-              _editing = !_editing;
-              _signCheck = null;
-            }),
-            size: 32,
-          ),
-          if (!component.isPrimary)
-            YsButton.icon(
-              icon: YsIcon.checkCircle,
-              label: 'Set as primary',
-              onPressed: component.onSetPrimary,
-              size: 32,
-            ),
-          YsButton.neutral(label: 'Setup', onPressed: component.onSetup),
+      // The sign-in's line: an empty box while it runs, ticked with
+      // sparks once signed in; it stays until another action starts.
+      if (_signCheck case final check?)
+        HermuseCheckLine(
+          key: const ValueKey('sign-in'),
+          text: check,
+          done: _signedIn,
+        ),
+      if (_signingIn)
+        _signInForm()
+      else if (_renaming)
+        div(classes: 'hermuse-instance-buttons', [
+          YsButton.primary(label: 'Save', onPressed: _saveName),
           YsButton.neutral(
-            label: 'Components',
+            label: 'Cancel',
+            onPressed: () => setState(() => _renaming = false),
+          ),
+        ])
+      else
+        _actions(),
+      if (_menu case final at?) _moreMenu(at),
+      if (_confirmRemove) _removeConfirmation(),
+    ]);
+  }
+
+  static String _initial(String label) {
+    final trimmed = label.trim();
+    return trimmed.isEmpty ? '?' : trimmed[0].toUpperCase();
+  }
+
+  /// The dot's classes and the state's words (desktop `InstanceStatusDot`).
+  (String, String) _status() {
+    const dot = 'hermuse-instance-dot';
+    const idle = (dot, 'Idle');
+    final failed = (
+      '$dot hermuse-instance-dot-error',
+      component.authFailed ? 'Signed out' : 'Error',
+    );
+    return switch (component.state) {
+      AsyncData(:final value) => switch (value) {
+        ConnectionState.ready => (
+          '$dot hermuse-instance-dot-ready',
+          'Connected',
+        ),
+        ConnectionState.connecting => (
+          '$dot hermuse-instance-dot-busy',
+          'Connecting…',
+        ),
+        ConnectionState.reconnecting => (
+          '$dot hermuse-instance-dot-busy',
+          'Reconnecting…',
+        ),
+        ConnectionState.error => failed,
+        ConnectionState.disconnected => idle,
+      },
+      AsyncError() => failed,
+      _ => idle,
+    };
+  }
+
+  /// One main action (sign in when the saved sign-in was refused, else the
+  /// chat), the model accounts and components, the rest in "More actions"
+  /// (desktop `_InstanceRow` parity).
+  Component _actions() {
+    final instance = component.instance;
+    final signIn = component.authFailed && instance.auth == AuthMethod.password;
+    return div(classes: 'hermuse-instance-actions', [
+      div(classes: 'hermuse-instance-buttons', [
+        if (signIn)
+          YsButton.primary(label: 'Sign in', onPressed: _startSignIn)
+        else
+          YsButton.primary(label: 'Open chat', onPressed: component.onOpen),
+        YsButton.neutral(
+          label: 'Model accounts',
+          onPressed: component.onConnections,
+        ),
+        if (instance.kind == InstanceKind.remote)
+          YsButton.neutral(
+            label: 'Check components',
             onPressed: component.onComponents,
           ),
-          YsButton.neutral(
-            label: 'Connections',
-            onPressed: component.onConnections,
-          ),
-          YsButton.icon(
-            icon: YsIcon.close,
-            label: 'Delete',
-            onPressed: () => setState(() {
-              _confirmDelete = true;
-              _signCheck = null;
-            }),
-            size: 32,
-          ),
-        ],
+      ]),
+      span(key: _more, classes: 'hermuse-instance-more', [
+        YsButton.icon(
+          icon: YsIcon.more,
+          label: 'More actions for ${instance.label}',
+          onPressed: _openMenu,
+          attributes: {
+            'aria-haspopup': 'menu',
+            'aria-expanded': '${_menu != null}',
+          },
+        ),
       ]),
     ]);
   }
 
-  Future<void> _signIn(BuildContext context) async {
+  void _openMenu() {
+    final trigger = _more.currentNode;
+    if (trigger == null) return;
+    setState(() => _menu = YsMenuAnchor.of(trigger));
+  }
+
+  /// The row's other actions (desktop parity, without the SSH uninstall the
+  /// web cannot run).
+  Component _moreMenu(YsMenuAnchor at) => YsMenu(
+    label: 'More actions for ${component.instance.label}',
+    anchor: at,
+    onClose: () => setState(() => _menu = null),
+    items: [
+      YsMenuItem(
+        label: 'Rename',
+        icon: YsIcon.pencil,
+        onSelected: _startRename,
+      ),
+      if (!component.isDefault)
+        YsMenuItem(
+          label: 'Make default',
+          icon: YsIcon.checkCircle,
+          onSelected: component.onMakeDefault,
+        ),
+      YsMenuItem(
+        label: 'Run setup again',
+        icon: YsIcon.sparkles,
+        onSelected: component.onSetup,
+      ),
+      YsMenuItem(
+        label: 'Remove from Hermuse',
+        icon: YsIcon.trash,
+        destructive: true,
+        onSelected: () => setState(() {
+          _confirmRemove = true;
+          _signCheck = null;
+        }),
+      ),
+    ],
+  );
+
+  void _startRename() {
+    setState(() {
+      _draft = component.instance.label;
+      _renaming = true;
+      _signCheck = null;
+    });
+    _focusIn(_nameBox, select: true);
+  }
+
+  void _saveName() {
+    component.onRename(_draft);
+    setState(() => _renaming = false);
+  }
+
+  void _startSignIn() {
+    setState(() {
+      _signingIn = true;
+      _signInError = null;
+      _signCheck = null;
+    });
+    _focusIn(_signInBox);
+  }
+
+  /// Puts the keyboard in the first field inside [key] once it rendered.
+  void _focusIn(GlobalNodeKey<web.HTMLElement> key, {bool select = false}) {
+    if (!kIsWeb) return;
+    context.binding.addPostFrameCallback(() {
+      final field = key.currentNode?.querySelector('input');
+      if (field == null) return;
+      (field as web.HTMLElement).focus();
+      if (select) (field as web.HTMLInputElement).select();
+    });
+  }
+
+  /// The row's sign-in, in place of its actions.
+  Component _signInForm() {
+    final id = component.instance.id;
+    void submit() => unawaited(_signIn());
+    final ready = !_signInBusy && _username.isNotEmpty && _password.isNotEmpty;
+    return div(key: _signInBox, classes: 'hermuse-instance-signin-col', [
+      div(classes: 'hermuse-instance-signin', [
+        div(classes: 'hermuse-instance-signin-field', [
+          YsInputBox(
+            value: _username,
+            onChanged: (v) => setState(() => _username = v),
+            onSubmitted: submit,
+            placeholder: 'Username',
+            name: 'row-username-$id',
+            label: 'Username',
+            icon: YsIcon.user,
+            autocomplete: 'username',
+          ),
+        ]),
+        div(classes: 'hermuse-instance-signin-field', [
+          YsInputBox(
+            value: _password,
+            onChanged: (v) => setState(() => _password = v),
+            onSubmitted: submit,
+            placeholder: 'Password',
+            name: 'row-password-$id',
+            label: 'Password',
+            obscure: true,
+            icon: YsIcon.lock,
+            autocomplete: 'current-password',
+          ),
+        ]),
+      ]),
+      if (_signInError case final message?) HermuseErrorNotice(message),
+      div(classes: 'hermuse-instance-buttons', [
+        YsButton.primary(
+          label: _signInBusy ? 'Signing in…' : 'Sign in',
+          onPressed: ready ? submit : null,
+        ),
+        YsButton.neutral(
+          label: 'Cancel',
+          onPressed: _signInBusy
+              ? null
+              : () => setState(() {
+                  _signingIn = false;
+                  _signInError = null;
+                  _signCheck = null;
+                }),
+        ),
+      ]),
+    ]);
+  }
+
+  Future<void> _signIn() async {
     if (_signInBusy || _username.isEmpty || _password.isEmpty) return;
     final username = _username;
     setState(() {
@@ -548,79 +732,31 @@ class _InstanceRowState extends State<_InstanceRow> {
     _signInError = message;
     _signCheck = null;
   });
-}
 
-/// Collapsed "Sign in" link expanding to an inline credential form.
-class _RowSignIn extends StatelessComponent {
-  const _RowSignIn({
-    required this.instanceId,
-    required this.expanded,
-    required this.username,
-    required this.password,
-    required this.busy,
-    required this.error,
-    required this.onToggle,
-    required this.onUsername,
-    required this.onPassword,
-    required this.onSubmit,
-  });
-
-  final String instanceId;
-  final bool expanded;
-  final String username;
-  final String password;
-  final bool busy;
-  final String? error;
-  final VoidCallback onToggle;
-  final ValueChanged<String> onUsername;
-  final ValueChanged<String> onPassword;
-  final VoidCallback onSubmit;
-
-  @override
-  Component build(BuildContext context) {
-    if (!expanded) {
-      return YsPressable(
-        onPressed: onToggle,
-        label: 'Sign in again',
-        classes: 'hermuse-instance-signin-link',
-        builder: (context, press) => span([.text('Sign in again')]),
-      );
-    }
-    return div(classes: 'hermuse-instance-signin-col', [
-      div(classes: 'hermuse-instance-signin', [
-        div(classes: 'hermuse-instance-signin-field', [
-          YsInputBox(
-            value: username,
-            onChanged: onUsername,
-            onSubmitted: onSubmit,
-            placeholder: 'Username',
-            name: 'row-username-$instanceId',
-            label: 'Username',
-            icon: YsIcon.user,
-            autocomplete: 'username',
-          ),
-        ]),
-        div(classes: 'hermuse-instance-signin-field', [
-          YsInputBox(
-            value: password,
-            onChanged: onPassword,
-            onSubmitted: onSubmit,
-            placeholder: 'Password',
-            name: 'row-password-$instanceId',
-            label: 'Password',
-            obscure: true,
-            icon: YsIcon.lock,
-            autocomplete: 'current-password',
-          ),
-        ]),
-        YsButton.primary(
-          label: busy ? 'Signing in…' : 'Sign in',
-          onPressed: busy || username.isEmpty || password.isEmpty
-              ? null
-              : onSubmit,
+  /// Asks before forgetting the instance: only this app's connection and
+  /// sign-in go, the Hermes keeps everything (desktop parity).
+  Component _removeConfirmation() {
+    void close() => setState(() => _confirmRemove = false);
+    return YsDialog(
+      title: 'Remove “${component.instance.label}” from Hermuse?',
+      onClose: close,
+      actions: [
+        YsButton.neutral(label: 'Cancel', onPressed: close),
+        YsButton.destructive(
+          label: 'Remove',
+          onPressed: () {
+            close();
+            component.onRemove();
+          },
+        ),
+      ],
+      child: p(classes: 'hermuse-instance-dialog-body', [
+        .text(
+          'Hermuse forgets this connection and the sign-in saved for it in '
+          'this app. Nothing is deleted on the server: Hermes, its chats and '
+          'its data stay as they are.',
         ),
       ]),
-      if (error case final message?) HermuseErrorNotice(message),
-    ]);
+    );
   }
 }

@@ -147,6 +147,9 @@ abstract final class YsLayout {
   /// Connection status dot.
   static const statusDot = 8.0;
 
+  /// Initial-letter disc of an instance (instance rows).
+  static const monogram = 32.0;
+
   /// At or above this width the panel docks beside the thread.
   static const wideMin = 768.0;
 

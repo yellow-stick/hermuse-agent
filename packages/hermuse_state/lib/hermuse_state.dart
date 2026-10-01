@@ -9,3 +9,4 @@ export 'src/onboarding.dart';
 export 'src/product.dart';
 export 'src/providers.dart';
 export 'src/remote_setup.dart';
+export 'src/server_bridge.dart';

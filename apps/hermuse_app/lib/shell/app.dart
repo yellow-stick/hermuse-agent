@@ -210,9 +210,11 @@ final class _RootState extends ConsumerState<_Root> {
     _route = _Route.addInstance;
   });
 
+  /// Back where connecting started (the instances or the chat): the URL and
+  /// SSH forms switch to each other with their own buttons, not on cancel.
   void _cancelAdd() => setState(() {
     _remoteOutcome = null;
-    _route = _desktop ? _Route.remoteInstall : _connectReturn;
+    _route = _connectReturn;
   });
 
   @override
@@ -298,6 +300,10 @@ final class _RootState extends ConsumerState<_Root> {
         autoProbe: _remoteOutcome != null,
         onDone: _added,
         onCancel: _cancelAdd,
+        // Not after SSH setup handed its dashboard over: SSH is done.
+        onSsh: _desktop && _remoteOutcome == null
+            ? () => setState(() => _route = _Route.remoteInstall)
+            : null,
       ),
       _ => null,
     };
@@ -486,6 +492,7 @@ final class _ChatRoute extends ConsumerWidget {
         return ColoredBox(
           color: palette.canvasColor,
           child: InstancesScreen(
+            addOverSsh: ref.read(localHostProvider) != null,
             onAdd: onConnect,
             onInstall:
                 ref.read(localHostProvider) != null &&
@@ -499,6 +506,12 @@ final class _ChatRoute extends ConsumerWidget {
                       : () => onRoute(_Route.install)
                 : null,
             onClose: () => onRoute(_Route.chat),
+            onOpen: (id) {
+              onRoute(_Route.chat);
+              unawaited(
+                ref.read(activeThreadProvider.notifier).openInstance(id),
+              );
+            },
             onSetup: (id) => onRoute(_Route.onboarding, id),
             onComponents: (id) => onRoute(_Route.components, id),
             onConnections: (id) => onRoute(_Route.connections, id),

@@ -11,10 +11,13 @@ are separate from the desktop app requirements below.
 
 ## Remove a server installation over SSH
 
-On the server SSH setup form, choose **Remove from server**. You can also use
-this action on a remote row in **Hermes instances**. It works even if setup
-stopped partway through and no connection was saved. This removes the server
-installation, not the desktop app.
+In **Connect to a machine** (the server SSH setup form), choose **Uninstall
+Hermes from a server**: it works even if setup stopped partway through and no
+connection was saved. For a server already in **Hermes instances**, open the
+**More actions** menu (**⋯**) of its row and choose **Uninstall from server…**.
+This removes the server installation, not the desktop app, and not the saved
+connection: **Remove from Hermuse** in the same menu forgets that one without
+touching the server.
 
 Enter the SSH host, port and a root or passwordless-sudo administrator account,
 not the dedicated `hermes` account being removed. Use an SSH password or leave
@@ -231,9 +234,10 @@ preparation.
 
 ## 3. Connect your models
 
-In **Connections**, add the AI accounts and subscriptions you already have.
-Hermuse Agent does not come with a model account: you sign in or enter your
-API keys yourself. Then send your agent a first task, for example:
+In **Hermes instances** (**Settings** at the bottom of the rail), choose
+**Model accounts** on your Hermes and add the AI accounts and subscriptions you
+already have. Hermuse Agent does not come with a model account: you sign in or
+enter your API keys yourself. Then send your agent a first task, for example:
 
 > Plan a walk in Nantes for me: open OpenStreetMap centered on the Château des
 > ducs de Bretagne, then open the Wikipedia page of the château in a new tab,

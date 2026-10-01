@@ -734,7 +734,9 @@ void main() {
             uninstaller: uninstaller,
             onDone: outcomes.add,
           );
-          await tester.tap(_button('Remove from server'));
+          final uninstall = find.text('Uninstall Hermes from a server');
+          await tester.ensureVisible(uninstall);
+          await tester.tap(uninstall);
           await tester.pumpAndSettle();
           await tester.enterText(_input('Host or IP address'), _key.host);
           await tester.enterText(
@@ -1026,11 +1028,11 @@ void main() {
           const RemoteInstallFailed('preflight', 'Server operation stopped.'),
         );
         await tester.pumpAndSettle();
-        await tester.ensureVisible(_button('Remove from server'));
-        await tester.tap(_button('Remove from server'));
+        await tester.ensureVisible(_button('Uninstall from server'));
+        await tester.tap(_button('Uninstall from server'));
         await tester.pumpAndSettle();
-        await tester.ensureVisible(_button('Connect instead'));
-        await tester.tap(_button('Connect instead'));
+        await tester.ensureVisible(find.text('Connect instead'));
+        await tester.tap(find.text('Connect instead'));
         await tester.pumpAndSettle();
         await _connect(tester);
         expect(installer.attempts, hasLength(1));

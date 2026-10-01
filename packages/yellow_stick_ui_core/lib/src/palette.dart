@@ -36,6 +36,8 @@ final class YsPalette {
     required this.backdrop,
     required this.success,
     required this.successMuted,
+    required this.info,
+    required this.infoMuted,
     required this.error,
     required this.errorWash,
     required this.logoSurface,
@@ -91,8 +93,15 @@ final class YsPalette {
   /// Positive status (Connected).
   final YsColor success;
 
-  /// Positive wash: behind a check that was already in place.
+  /// Positive wash: behind the calm tick of a flow step the user has gone
+  /// past.
   final YsColor successMuted;
+
+  /// Informational status: something already in place, nothing done now.
+  final YsColor info;
+
+  /// Informational wash: behind the tick of a check already in place.
+  final YsColor infoMuted;
 
   /// Negative status (errors, destructive actions).
   final YsColor error;
@@ -129,6 +138,8 @@ final class YsPalette {
     backdrop: YsColor(0x8C000000),
     success: YsColor(0xFF07B123),
     successMuted: YsColor(0x2907B123),
+    info: YsColor(0xFF3B82F6),
+    infoMuted: YsColor(0x293B82F6),
     error: YsColor(0xFFE5484D),
     errorWash: YsColor(0x14E5484D),
     logoSurface: YsColor(0xFFFFFFFF),
@@ -155,6 +166,8 @@ final class YsPalette {
     'backdrop': backdrop,
     'success': success,
     'success-muted': successMuted,
+    'info': info,
+    'info-muted': infoMuted,
     'error': error,
     'error-wash': errorWash,
     'logo-surface': logoSurface,

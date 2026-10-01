@@ -15,7 +15,7 @@ import '../shell/screens.dart';
 /// Docker, the agent's computer and a model, each found in place or
 /// installed from its row. What only the user can do says how, with the
 /// command to run on the server. Continue opens the chat once a model
-/// answers, the onboarding before.
+/// answers, the onboarding before; it waits while a look or an install runs.
 final class ComponentsScreen extends ConsumerWidget {
   const ComponentsScreen({
     required this.instance,
@@ -38,8 +38,14 @@ final class ComponentsScreen extends ConsumerWidget {
     final setup = ref.watch(provider);
     final checklist = ref.read(provider.notifier);
     final phase = setup.phase;
-    final everything = setup.installable.length >= 2;
-    final onContinue = setup[RemotePart.model].status.settled
+    final unreachable = phase == RemoteSetupPhase.unreachable;
+    // A look or an install runs: what depends on its outcome waits for it.
+    final working = _working(setup);
+    // Installs need the Hermes to answer.
+    final everything = !unreachable && setup.installable.length >= 2;
+    final onContinue = working
+        ? null
+        : setup[RemotePart.model].status.settled
         ? onChat
         : onSetUpModel;
     return SingleChildScrollView(
@@ -73,19 +79,24 @@ final class ComponentsScreen extends ConsumerWidget {
           if (setup.unreachable case final reason?)
             SetupNotice(reason, alert: true),
         ],
+        // One main action: the installs when offered, else reaching the
+        // Hermes again when it does not answer, else Continue.
         actions: [
           if (everything)
             YsButton.primary(
               label: 'Install everything missing',
-              onPressed: () => unawaited(checklist.installEverything()),
+              onPressed: working
+                  ? null
+                  : () => unawaited(checklist.installEverything()),
             ),
-          if (phase == RemoteSetupPhase.unreachable)
-            YsButton.neutral(
-              label: 'Check again',
-              onPressed: () => unawaited(checklist.checkAgain()),
+          if (unreachable)
+            YsButton.primary(
+              label: working ? 'Checking…' : 'Check again',
+              onPressed: working
+                  ? null
+                  : () => unawaited(checklist.checkAgain()),
             ),
-          // The main action unless installs are offered or run.
-          if (everything || setup.busy)
+          if (everything || unreachable)
             YsButton.neutral(label: 'Continue', onPressed: onContinue)
           else
             YsButton.primary(label: 'Continue', onPressed: onContinue),
@@ -142,3 +153,14 @@ final class ComponentsScreen extends ConsumerWidget {
     );
   }
 }
+
+/// Whether a look or an install of [setup] runs: Continue, "Install
+/// everything missing" and "Check again" wait for it. Web parity:
+/// `HermuseComponents._working`.
+bool _working(RemoteSetupState setup) =>
+    setup.busy ||
+    setup.parts.any(
+      (row) =>
+          row.status == RemotePartStatus.checking ||
+          row.status == RemotePartStatus.installing,
+    );

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
@@ -8,25 +10,28 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import 'screens.dart';
 
-/// One-line state dot + label of an instance's connection.
+/// One-line state dot + label of an instance's connection; [signedOut] names
+/// a failure that is the saved sign-in being refused.
 final class InstanceStatusDot extends ConsumerWidget {
-  const InstanceStatusDot(this.instanceId, {super.key});
+  const InstanceStatusDot(this.instanceId, {this.signedOut = false, super.key});
 
   final String instanceId;
+  final bool signedOut;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = YsTheme.of(context);
     final state = ref.watch(connectionStateProvider(instanceId));
+    final failed = (palette.errorColor, signedOut ? 'Signed out' : 'Error');
     final (color, label) = switch (state) {
       AsyncData(:final value) => switch (value) {
         ConnectionState.ready => (palette.successColor, 'Connected'),
-        ConnectionState.connecting ||
-        ConnectionState.reconnecting => (palette.primaryColor, 'Connecting…'),
-        ConnectionState.error => (palette.errorColor, 'Error'),
+        ConnectionState.connecting => (palette.primaryColor, 'Connecting…'),
+        ConnectionState.reconnecting => (palette.primaryColor, 'Reconnecting…'),
+        ConnectionState.error => failed,
         ConnectionState.disconnected => (palette.contentSubtleColor, 'Idle'),
       },
-      AsyncError() => (palette.errorColor, 'Error'),
+      AsyncError() => failed,
       _ => (palette.contentSubtleColor, 'Idle'),
     };
     return Semantics(
@@ -58,14 +63,18 @@ final class InstanceStatusDot extends ConsumerWidget {
   }
 }
 
-/// Manage the registered Hermes instances: add, rename, primary, delete.
+/// The registered Hermes instances, one row each: its chat, its model
+/// accounts and components, everything else in the row's "More actions"
+/// menu.
 final class InstancesScreen extends ConsumerWidget {
   const InstancesScreen({
     required this.onAdd,
     required this.onClose,
+    required this.onOpen,
     required this.onSetup,
     required this.onComponents,
     required this.onConnections,
+    this.addOverSsh = false,
     this.onInstall,
     this.onRemoveFromServer,
     super.key,
@@ -73,15 +82,29 @@ final class InstancesScreen extends ConsumerWidget {
 
   final VoidCallback onAdd;
 
+  /// Desktop: [onAdd] opens the SSH setup ("Connect to a machine", as on the
+  /// welcome screen); elsewhere the dashboard URL form ("Add a Hermes").
+  final bool addOverSsh;
+
   /// Desktop without a local instance: install/adopt Hermes here.
   final VoidCallback? onInstall;
   final VoidCallback onClose;
+
+  /// Opens the instance's main chat, leaving this screen.
+  final ValueChanged<String> onOpen;
+
+  /// Runs the onboarding wizard again: the Hermes check, the default model.
   final ValueChanged<String> onSetup;
 
   /// What Hermuse needs on a remote instance, and its installs.
   final ValueChanged<String> onComponents;
+
+  /// The model accounts the instance can use.
   final ValueChanged<String> onConnections;
+
+  /// Desktop only: uninstalls Hermes from a remote instance's server.
   final ValueChanged<String>? onRemoveFromServer;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = YsTheme.of(context);
@@ -120,8 +143,11 @@ final class InstancesScreen extends ConsumerWidget {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    YsButton.primary(
-                      label: 'Add instance',
+                    // Neutral: each row's "Open chat" is the accent.
+                    YsButton.neutral(
+                      label: addOverSsh
+                          ? 'Connect to a machine'
+                          : 'Add a Hermes',
                       icon: YsIcon.plus,
                       onPressed: onAdd,
                     ),
@@ -154,19 +180,23 @@ final class InstancesScreen extends ConsumerWidget {
           style: YsType.body.flutter.copyWith(color: palette.contentMutedColor),
         );
       }
+      final defaultId = ref.watch(registryProvider).value?.primary?.id;
       return Flexible(
         child: ListView(
           shrinkWrap: true,
           children: [
             for (final instance in list) ...[
               _InstanceRow(
+                key: ValueKey(instance.id),
                 instance: instance,
+                isDefault: instance.id == defaultId,
+                onOpen: onOpen,
                 onSetup: onSetup,
                 onComponents: onComponents,
                 onConnections: onConnections,
                 onRemoveFromServer: onRemoveFromServer,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: YsSpace.sm),
             ],
           ],
         ),
@@ -188,13 +218,20 @@ final class InstancesScreen extends ConsumerWidget {
 final class _InstanceRow extends ConsumerStatefulWidget {
   const _InstanceRow({
     required this.instance,
+    required this.isDefault,
+    required this.onOpen,
     required this.onSetup,
     required this.onComponents,
     required this.onConnections,
     this.onRemoveFromServer,
+    super.key,
   });
 
   final HermesInstance instance;
+
+  /// The instance Hermuse opens on start (the registry's primary).
+  final bool isDefault;
+  final ValueChanged<String> onOpen;
   final ValueChanged<String> onSetup;
   final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
@@ -206,8 +243,10 @@ final class _InstanceRow extends ConsumerStatefulWidget {
 
 final class _InstanceRowState extends ConsumerState<_InstanceRow> {
   var _renaming = false;
-  var _confirmingDelete = false;
   var _signingIn = false;
+  final _removeDialog = OverlayPortalController();
+  final _labelFocus = FocusNode();
+  final _signUserFocus = FocusNode();
   late final TextEditingController _label;
   late final TextEditingController _signUser = TextEditingController();
   late final TextEditingController _signPassword = TextEditingController();
@@ -230,6 +269,8 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
     _label.dispose();
     _signUser.dispose();
     _signPassword.dispose();
+    _labelFocus.dispose();
+    _signUserFocus.dispose();
     super.dispose();
   }
 
@@ -273,12 +314,19 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
     _signCheck = null;
   });
 
-  /// Opens one of the row's forms; the last sign-in's line goes away.
-  void _start(VoidCallback open) => setState(() {
-    _error = null;
-    _signCheck = null;
-    open();
-  });
+  /// Opens one of the row's forms, then puts the keyboard in its [focus]
+  /// field; the last sign-in's line goes away.
+  void _start(VoidCallback open, {FocusNode? focus}) {
+    setState(() {
+      _error = null;
+      _signCheck = null;
+      open();
+    });
+    if (focus == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) focus.requestFocus();
+    });
+  }
 
   Future<void> _rename() async {
     final label = _label.text.trim();
@@ -300,250 +348,324 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
     }
   }
 
-  Future<void> _delete() async {
-    await (await ref.read(registryProvider.future)).remove(widget.instance.id);
-    // Point the open chat at what is left, if it pointed at the deleted one.
-    final active = ref.read(activeThreadProvider).value;
-    if (active != null && active.instanceId == widget.instance.id) {
-      final registry = await ref.read(registryProvider.future);
-      final next = registry.primary;
-      if (next == null) {
-        ref.invalidate(activeThreadProvider);
-      } else {
-        await ref.read(activeThreadProvider.notifier).openInstance(next.id);
-      }
-    }
+  Future<void> _makeDefault() async =>
+      (await ref.read(registryProvider.future)).setPrimary(widget.instance.id);
+
+  void _askRemove() {
+    setState(() {
+      _error = null;
+      _signCheck = null;
+    });
+    _removeDialog.show();
   }
 
-  Future<void> _open() async {
-    await ref
-        .read(activeThreadProvider.notifier)
-        .openInstance(widget.instance.id);
+  /// Forgets the instance and its saved secrets; an open chat on it moves to
+  /// what is left. The row goes away meanwhile, hence the container.
+  Future<void> _remove() async {
+    _removeDialog.hide();
+    final id = widget.instance.id;
+    final container = ProviderScope.containerOf(context, listen: false);
+    final showing =
+        container.read(activeThreadProvider).value?.instanceId == id;
+    final registry = await container.read(registryProvider.future);
+    try {
+      await registry.remove(id);
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = 'Could not remove it: $e');
+      return;
+    }
+    if (!showing) return;
+    final next = registry.primary;
+    if (next == null) {
+      container.invalidate(activeThreadProvider);
+    } else {
+      await container.read(activeThreadProvider.notifier).openInstance(next.id);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final instance = widget.instance;
+    final state = ref.watch(connectionStateProvider(instance.id));
+    final connection = ref.watch(connectionProvider(instance.id));
+    // Refused credentials, on the first connection or on a later reconnect
+    // (the chat's sign-in banner reads the same).
+    final signedOut =
+        connection.error is HermesAuthFailed ||
+        (state.value == ConnectionState.error &&
+            connection.value?.transport.lastError is HermesAuthFailed);
     // Outlined, not filled: the neutral buttons and the monogram disc share
     // the neutral fill and would vanish on it (web `.hermuse-instance-row`).
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(YsRadius.row),
-        border: Border.all(color: palette.lineColor, width: ysHairline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                _Monogram(label: instance.label),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _renaming
-                      ? YsInputBox(
-                          controller: _label,
-                          semanticLabel: 'Instance name',
-                          autofocus: true,
-                          onSubmitted: (_) => _rename(),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              instance.label,
-                              style: YsType.label.flutter.copyWith(
-                                color: palette.contentColor,
-                              ),
-                            ),
-                            Text(
-                              instance.baseUrl.toString(),
-                              style: YsType.caption.flutter.copyWith(
-                                color: palette.contentMutedColor,
-                              ),
-                            ),
-                          ],
-                        ),
+    return OverlayPortal(
+      controller: _removeDialog,
+      overlayChildBuilder: _removeConfirmation,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(YsRadius.row),
+          border: Border.all(color: palette.lineColor, width: ysHairline),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(YsSpace.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _head(palette, signedOut: signedOut),
+              // The sign-in's line: an empty box while it runs, ticked with
+              // sparks once signed in; it stays until another action starts.
+              if (_signCheck case final check?) ...[
+                const SizedBox(height: YsSpace.sm),
+                YsDialogCheck(
+                  key: const ValueKey('sign-in'),
+                  text: check,
+                  done: _signedIn,
                 ),
-                const SizedBox(width: 12),
-                InstanceStatusDot(instance.id),
               ],
-            ),
-            // The sign-in's line: an empty box while it runs, ticked with
-            // sparks once signed in; it stays until another action starts.
-            if (_signCheck case final check?) ...[
-              const SizedBox(height: 8),
-              YsDialogCheck(
-                key: const ValueKey('sign-in'),
-                text: check,
-                done: _signedIn,
-              ),
+              if (_error case final error?) ...[
+                const SizedBox(height: YsSpace.sm),
+                YsDialogError(error),
+              ],
+              const SizedBox(height: YsSpace.md),
+              if (_signingIn)
+                ..._signInForm()
+              else if (_renaming)
+                _renameActions()
+              else
+                _actions(
+                  signIn: signedOut && instance.auth == AuthMethod.password,
+                ),
             ],
-            if (_error case final error?) ...[
-              const SizedBox(height: 8),
-              YsDialogError(error),
-            ],
-            const SizedBox(height: 8),
-            if (_signingIn) ...[
-              YsInputBox(
-                controller: _signUser,
-                placeholder: 'Username',
-                semanticLabel: 'Username',
-                icon: YsIcon.user,
-                onSubmitted: (_) => _signIn(),
-              ),
-              const SizedBox(height: 8),
-              YsInputBox(
-                controller: _signPassword,
-                placeholder: 'Password',
-                semanticLabel: 'Password',
-                icon: YsIcon.lock,
-                obscure: true,
-                onSubmitted: (_) => _signIn(),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  YsButton.primary(
-                    label: _signBusy ? 'Signing in…' : 'Sign in',
-                    onPressed: _signBusy ? null : _signIn,
-                  ),
-                  const SizedBox(width: 8),
-                  YsButton.neutral(
-                    label: 'Cancel',
-                    onPressed: _signBusy
-                        ? null
-                        : () => setState(() {
-                            _signingIn = false;
-                            _error = null;
-                            _signCheck = null;
-                          }),
-                  ),
-                ],
-              ),
-            ] else if (_confirmingDelete)
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Delete “${instance.label}” and its saved credentials?',
-                      style: YsType.small.flutter.copyWith(
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Monogram, name ("Default" beside the one opened on start), address and
+  /// connection state; the name turns into its field while renaming.
+  Widget _head(YsPalette palette, {required bool signedOut}) {
+    final instance = widget.instance;
+    return Row(
+      children: [
+        _Monogram(label: instance.label),
+        const SizedBox(width: YsSpace.md),
+        Expanded(
+          child: _renaming
+              ? YsInputBox(
+                  controller: _label,
+                  focusNode: _labelFocus,
+                  semanticLabel: 'Instance name',
+                  onSubmitted: (_) => _rename(),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            instance.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: YsType.label.flutter.copyWith(
+                              color: palette.contentColor,
+                            ),
+                          ),
+                        ),
+                        if (widget.isDefault) ...[
+                          const SizedBox(width: YsSpace.sm),
+                          const _DefaultBadge(),
+                        ],
+                      ],
+                    ),
+                    Text(
+                      instance.baseUrl.toString(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: YsType.caption.flutter.copyWith(
                         color: palette.contentMutedColor,
                       ),
                     ),
-                  ),
-                  YsButton.neutral(
-                    label: 'Delete',
-                    onPressed: _delete,
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  const SizedBox(width: 8),
-                  YsButton.icon(
-                    icon: YsIcon.close,
-                    onPressed: () => setState(() => _confirmingDelete = false),
-                    semanticLabel: 'Cancel delete',
-                    size: 28,
-                    iconSize: 16,
-                  ),
-                ],
-              )
-            else if (_renaming)
-              Row(
-                children: [
-                  YsButton.primary(label: 'Save', onPressed: _rename),
-                  const SizedBox(width: 8),
-                  YsButton.neutral(
-                    label: 'Cancel',
-                    onPressed: () => setState(() {
-                      _renaming = false;
-                      _error = null;
-                      _label.text = instance.label;
-                    }),
-                  ),
-                ],
-              )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  YsButton.neutral(
-                    label: 'Open',
-                    onPressed: _open,
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  YsButton.neutral(
-                    label: 'Rename',
-                    onPressed: () => _start(() => _renaming = true),
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  YsButton.neutral(
-                    label: 'Primary',
-                    onPressed: () => ref
-                        .read(registryProvider.future)
-                        .then((r) => r.setPrimary(instance.id)),
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  YsButton.neutral(
-                    label: 'Setup',
-                    onPressed: () => widget.onSetup(instance.id),
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  if (instance.kind == InstanceKind.remote)
-                    YsButton.neutral(
-                      label: 'Components',
-                      onPressed: () => widget.onComponents(instance.id),
-                      textStyle: YsType.small,
-                      height: 28,
-                    ),
-                  if (instance.kind == InstanceKind.remote &&
-                      widget.onRemoveFromServer != null)
-                    YsButton.neutral(
-                      label: 'Remove from server',
-                      onPressed: () => widget.onRemoveFromServer!(instance.id),
-                      textStyle: YsType.small,
-                      height: 28,
-                    ),
-                  YsButton.neutral(
-                    label: 'Connections',
-                    onPressed: () => widget.onConnections(instance.id),
-                    textStyle: YsType.small,
-                    height: 28,
-                  ),
-                  if (instance.auth == AuthMethod.password)
-                    YsButton.neutral(
-                      label: 'Sign in',
-                      onPressed: () => _start(() => _signingIn = true),
-                      textStyle: YsType.small,
-                      height: 28,
-                    ),
-                  YsButton.icon(
-                    icon: YsIcon.close,
-                    onPressed: () => _start(() => _confirmingDelete = true),
-                    semanticLabel: 'Delete ${instance.label}',
-                    tooltip: 'Delete',
-                    size: 28,
-                    iconSize: 16,
-                  ),
-                ],
-              ),
-          ],
+                  ],
+                ),
         ),
+        const SizedBox(width: YsSpace.md),
+        InstanceStatusDot(instance.id, signedOut: signedOut),
+      ],
+    );
+  }
+
+  /// One main action (sign in when the saved sign-in was refused, else the
+  /// chat), the model accounts and components, the rest in "More actions".
+  Widget _actions({required bool signIn}) {
+    final instance = widget.instance;
+    final more = 'More actions for ${instance.label}';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Wrap(
+            spacing: YsSpace.sm,
+            runSpacing: YsSpace.sm,
+            children: [
+              if (signIn)
+                YsButton.primary(
+                  label: 'Sign in',
+                  onPressed: () =>
+                      _start(() => _signingIn = true, focus: _signUserFocus),
+                )
+              else
+                YsButton.primary(
+                  label: 'Open chat',
+                  onPressed: () => widget.onOpen(instance.id),
+                ),
+              YsButton.neutral(
+                label: 'Model accounts',
+                onPressed: () => widget.onConnections(instance.id),
+              ),
+              if (instance.kind == InstanceKind.remote)
+                YsButton.neutral(
+                  label: 'Check components',
+                  onPressed: () => widget.onComponents(instance.id),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(width: YsSpace.sm),
+        YsMenuAnchor(
+          semanticLabel: more,
+          items: [
+            YsMenuItem(
+              label: 'Rename',
+              icon: YsIcon.pencil,
+              onSelected: () => _start(() {
+                _label.text = instance.label;
+                _renaming = true;
+              }, focus: _labelFocus),
+            ),
+            if (!widget.isDefault)
+              YsMenuItem(
+                label: 'Make default',
+                icon: YsIcon.checkCircle,
+                onSelected: () => unawaited(_makeDefault()),
+              ),
+            YsMenuItem(
+              label: 'Run setup again',
+              icon: YsIcon.sparkles,
+              onSelected: () => widget.onSetup(instance.id),
+            ),
+            if (widget.onRemoveFromServer case final uninstall?
+                when instance.kind == InstanceKind.remote)
+              YsMenuItem(
+                label: 'Uninstall from server…',
+                icon: YsIcon.package,
+                onSelected: () => uninstall(instance.id),
+              ),
+            YsMenuItem(
+              label: 'Remove from Hermuse',
+              icon: YsIcon.trash,
+              destructive: true,
+              onSelected: _askRemove,
+            ),
+          ],
+          builder: (context, menu) => YsButton.icon(
+            icon: YsIcon.more,
+            onPressed: () => menu.open(),
+            semanticLabel: more,
+            tooltip: 'More actions',
+            size: YsLayout.pillHeight,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// The row's sign-in, in place of its actions.
+  List<Widget> _signInForm() => [
+    YsInputBox(
+      controller: _signUser,
+      focusNode: _signUserFocus,
+      placeholder: 'Username',
+      semanticLabel: 'Username',
+      icon: YsIcon.user,
+      onSubmitted: (_) => _signIn(),
+    ),
+    const SizedBox(height: YsSpace.sm),
+    YsInputBox(
+      controller: _signPassword,
+      placeholder: 'Password',
+      semanticLabel: 'Password',
+      icon: YsIcon.lock,
+      obscure: true,
+      onSubmitted: (_) => _signIn(),
+    ),
+    const SizedBox(height: YsSpace.sm),
+    Row(
+      children: [
+        YsButton.primary(
+          label: _signBusy ? 'Signing in…' : 'Sign in',
+          onPressed: _signBusy ? null : _signIn,
+        ),
+        const SizedBox(width: YsSpace.sm),
+        YsButton.neutral(
+          label: 'Cancel',
+          onPressed: _signBusy
+              ? null
+              : () => setState(() {
+                  _signingIn = false;
+                  _error = null;
+                  _signCheck = null;
+                }),
+        ),
+      ],
+    ),
+  ];
+
+  Widget _renameActions() => Row(
+    children: [
+      YsButton.primary(label: 'Save', onPressed: _rename),
+      const SizedBox(width: YsSpace.sm),
+      YsButton.neutral(
+        label: 'Cancel',
+        onPressed: () => setState(() {
+          _renaming = false;
+          _error = null;
+          _label.text = widget.instance.label;
+        }),
+      ),
+    ],
+  );
+
+  /// Asks before forgetting the instance: only this app's connection and
+  /// sign-in go, the Hermes keeps everything.
+  Widget _removeConfirmation(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final instance = widget.instance;
+    final where = instance.kind == InstanceKind.local
+        ? 'this computer'
+        : 'the server';
+    return YsDialog(
+      title: 'Remove “${instance.label}” from Hermuse?',
+      onClose: _removeDialog.hide,
+      actions: [
+        YsButton.neutral(label: 'Cancel', onPressed: _removeDialog.hide),
+        YsButton.destructive(
+          label: 'Remove',
+          onPressed: () => unawaited(_remove()),
+        ),
+      ],
+      child: Text(
+        'Hermuse forgets this connection and the sign-in saved for it in '
+        'this app. Nothing is deleted on $where: Hermes, its chats and its '
+        'data stay as they are.',
+        style: YsType.small.flutter.copyWith(color: palette.contentColor),
       ),
     );
   }
 }
 
-/// Circular label monogram used in the rail switcher and instance rows.
+/// Circular label monogram of an instance row.
 final class _Monogram extends StatelessWidget {
   const _Monogram({required this.label});
 
@@ -556,8 +678,8 @@ final class _Monogram extends StatelessWidget {
         ? '?'
         : label.trim().characters.first.toUpperCase();
     return SizedBox(
-      width: 32,
-      height: 32,
+      width: YsLayout.monogram,
+      height: YsLayout.monogram,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: palette.neutralAmbientColor,
@@ -576,11 +698,40 @@ final class _Monogram extends StatelessWidget {
   }
 }
 
+/// "Default" beside the name of the instance Hermuse opens on start.
+final class _DefaultBadge extends StatelessWidget {
+  const _DefaultBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(YsRadius.pill),
+        border: Border.all(color: palette.lineColor, width: ysHairline),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: YsSpace.sm,
+          vertical: YsSpace.xxs,
+        ),
+        child: Text(
+          'Default',
+          style: YsType.caption.flutter.copyWith(
+            color: palette.contentMutedColor,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Add-instance flow: URL → status probe → credentials → test → save.
 final class AddInstanceScreen extends ConsumerStatefulWidget {
   const AddInstanceScreen({
     required this.onDone,
     required this.onCancel,
+    this.onSsh,
     this.initialUrl,
     this.initialUsername,
     this.initialPassword,
@@ -590,7 +741,13 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
 
   /// The instance is saved (its id): the caller opens it.
   final ValueChanged<String> onDone;
+
+  /// Back where connecting started.
   final VoidCallback onCancel;
+
+  /// Desktop: the SSH setup form instead (no dashboard address yet, or no
+  /// Hermes on the machine). Null where SSH setup is not available.
+  final VoidCallback? onSsh;
 
   /// In-memory handoff from remote setup; secrets are saved only after login.
   final String? initialUrl;
@@ -681,11 +838,14 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   bool get _isInitialUrl =>
       _initialAddress != null && _parsedUrl == _initialAddress;
 
-  void _cancel() {
+  void _cancel() => _leave(widget.onCancel);
+
+  /// Drops the typed secrets, then goes to [next].
+  void _leave(VoidCallback next) {
     _cancelled = true;
     _password.clear();
     _token.clear();
-    widget.onCancel();
+    next();
   }
 
   void _failProbe(String message) => setState(() {
@@ -930,6 +1090,13 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                       ],
                     ),
                   ),
+                  if (widget.onSsh case final onSsh?) ...[
+                    const SizedBox(height: YsSpace.lg),
+                    YsButton.neutral(
+                      label: 'Connect with SSH instead',
+                      onPressed: _busy ? null : () => _leave(onSsh),
+                    ),
+                  ],
                 ],
               ),
             ),

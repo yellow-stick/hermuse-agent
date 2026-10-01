@@ -8,6 +8,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'model_tiers.dart';
 import 'onboarding.dart';
 import 'providers.dart';
+import 'server_bridge.dart';
 
 part 'connections.g.dart';
 
@@ -73,6 +74,7 @@ final class ConnectionCard {
     this.keyEnv = '',
     this.advanced = false,
     this.bridgeSpec,
+    this.onServer = false,
   });
 
   /// Provider id (`nous`, `openai-codex`, `openai-api`, `custom:<id>`, …).
@@ -121,6 +123,11 @@ final class ConnectionCard {
   /// Bridge spec for [ConnectionFlow.bridge] cards, null otherwise.
   final BridgeCardSpec? bridgeSpec;
 
+  /// True for bridge cards of an instance on a server: the subscription
+  /// account lives in the bridge of the Hermuse plugin there (see
+  /// [bridgeOnServer]), not in this desktop's sidecar.
+  final bool onServer;
+
   ConnectionCard copyWith({
     String? name,
     String? logoKey,
@@ -137,6 +144,7 @@ final class ConnectionCard {
     String? keyEnv,
     bool? advanced,
     BridgeCardSpec? Function()? bridgeSpec,
+    bool? onServer,
   }) => ConnectionCard(
     id: id,
     name: name ?? this.name,
@@ -156,6 +164,7 @@ final class ConnectionCard {
     keyEnv: keyEnv ?? this.keyEnv,
     advanced: advanced ?? this.advanced,
     bridgeSpec: bridgeSpec == null ? this.bridgeSpec : bridgeSpec(),
+    onServer: onServer ?? this.onServer,
   );
 }
 
@@ -323,8 +332,10 @@ const devicePollInterval = Duration(seconds: 5);
 /// `GET /api/credentials/pool`, [options] is `model.options`
 /// (`include_unconfigured`), [endpoints] is
 /// `GET /api/providers/custom-endpoints`, [env] is `GET /api/env`.
-/// [bridgeFiles] is the sidecar `listAuthFiles()` snapshot; null hides the
-/// bridge cards (web/mobile: no sidecar, no [BridgeHost] override).
+/// [bridgeFiles] is the sidecar `listAuthFiles()` snapshot; [serverBridge]
+/// replaces it for an instance on a server ([bridgeOnServer]). Both null
+/// hides the bridge cards (web/mobile: no sidecar, no [BridgeHost]
+/// override).
 List<ConnectionCard> buildConnectionCards({
   required Map<String, Object?> oauth,
   required Map<String, Object?> pool,
@@ -332,6 +343,7 @@ List<ConnectionCard> buildConnectionCards({
   required Map<String, Object?> endpoints,
   required Map<String, Object?> env,
   List<AuthFile>? bridgeFiles,
+  ServerBridgeStatus? serverBridge,
 }) {
   final poolByProvider = <String, List<PoolEntry>>{};
   for (final entry in (pool['providers'] as List?) ?? const []) {
@@ -458,12 +470,22 @@ List<ConnectionCard> buildConnectionCards({
     );
   }
 
-  // Subscription-bridge cards (desktop only): one per sidecar provider,
-  // connected when a usable auth file exists. A Hermes `external` OAuth card
+  // Subscription-bridge cards (desktop only): one per bridge provider,
+  // connected when a usable account exists — in this desktop's sidecar, or
+  // in the bridge on the instance's server — and Hermes has the endpoint. A
+  // Hermes `external` OAuth card
   // routed to a bridge keeps its own card too — the bridge is the advanced
   // alternative, never a replacement of the terminal path.
   final files = bridgeFiles;
-  if (files != null) {
+  if (serverBridge != null) {
+    final rows = [
+      for (final entry in (endpoints['endpoints'] as List?) ?? const [])
+        if (entry is Map<String, Object?>) entry,
+    ];
+    for (final spec in bridgeCardSpecs) {
+      cards.add(_serverBridgeCard(spec, serverBridge, rows));
+    }
+  } else if (files != null) {
     final usableByProvider = <String, List<AuthFile>>{};
     for (final file in files) {
       if (file.usable) {
@@ -506,6 +528,70 @@ List<ConnectionCard> buildConnectionCards({
     }
   }
   return cards;
+}
+
+/// Bridge card of an instance served by its server's bridge: connected when
+/// the server holds a usable account of [spec] AND Hermes has the card's
+/// endpoint pointing at that bridge. An entry still pointing elsewhere (a
+/// desktop sidecar) reads as not registered, so a tap re-registers it. A
+/// server that cannot run the bridge (old plugin, other host) puts the card
+/// in error with what to do.
+ConnectionCard _serverBridgeCard(
+  BridgeCardSpec spec,
+  ServerBridgeStatus server,
+  List<Map<String, Object?>> endpoints,
+) {
+  final accounts = [
+    for (final account in server.accounts)
+      if (spec.authFileProviders.contains(account.provider)) account,
+  ];
+  final usable = [
+    for (final account in accounts)
+      if (account.usable) account,
+  ];
+  final named = [
+    for (final row in endpoints)
+      if (row['name'] == spec.label) row,
+  ];
+  final endpoint = server.endpoint;
+  final registered =
+      endpoint != null &&
+      named.any((row) => _sameUrl(row['base_url'], endpoint));
+  final connected = server.supported && usable.isNotEmpty && registered;
+  final email = usable.isEmpty ? '' : usable.first.email;
+  final removable = accounts.isNotEmpty || named.isNotEmpty;
+  return ConnectionCard(
+    id: spec.cardId,
+    name: spec.label,
+    logoKey: spec.provider.name,
+    flow: ConnectionFlow.bridge,
+    state: !server.supported
+        ? ConnectionCardState.error
+        : connected
+        ? ConnectionCardState.connected
+        : ConnectionCardState.disconnected,
+    detail: !server.supported
+        ? server.detail
+        : connected
+        ? (email.isEmpty ? 'on the server' : 'on the server · $email')
+        : usable.isNotEmpty
+        ? 'advanced · tap to register in Hermes'
+        : accounts.isNotEmpty && !server.running
+        ? 'advanced · the bridge on the server is stopped, tap to restart it'
+        : 'advanced · sign in with your subscription',
+    disconnectable: removable,
+    disconnectHint: removable ? '' : 'Nothing to disconnect yet.',
+    advanced: true,
+    bridgeSpec: spec,
+    onServer: true,
+  );
+}
+
+/// Same URL, give or take a trailing slash.
+bool _sameUrl(Object? url, String expected) {
+  String trimmed(String text) =>
+      text.endsWith('/') ? text.substring(0, text.length - 1) : text;
+  return url is String && trimmed(url) == trimmed(expected);
 }
 
 String _cardDetail({
@@ -934,6 +1020,11 @@ class ConnectionCards extends _$ConnectionCards {
   /// refresh cards. When usable sidecar credentials already exist, [startLogin]
   /// is skipped and the card re-registers directly (idempotent: Hermes merges
   /// onto the existing entry by name).
+  ///
+  /// An instance on a server ([bridgeOnServer]) signs in on this desktop's
+  /// sidecar too — the OAuth callback must reach this machine — but the
+  /// account then lives in the bridge of the Hermuse plugin on the server,
+  /// which Hermes points at (see [_serverBridgeLogin]).
   Future<BridgePollResult> startBridgeLogin(
     String cardId, {
     Duration timeout = const Duration(minutes: 15),
@@ -954,11 +1045,20 @@ class ConnectionCards extends _$ConnectionCards {
   ) async {
     final spec = bridgeSpecForCard(cardId);
     if (spec == null) throw StateError('unknown bridge card $cardId');
-    final current = state.value;
-    if (current == null) throw StateError('connections are still loading');
+    if (state.value == null) {
+      throw StateError('connections are still loading');
+    }
     final host = ref.read(bridgeHostProvider);
     if (host == null) {
       throw UnsupportedError('no subscription-bridge host on this platform');
+    }
+    final registry = await ref.read(registryProvider.future);
+    if (bridgeOnServer(registry.byId(instanceId))) {
+      try {
+        return await _serverBridgeLogin(spec, host, timeout, pollInterval);
+      } on ServerBridgeException catch (e) {
+        return await _failBridge(cardId, e.message);
+      }
     }
     final sidecar = await host.ensureStarted();
     final management = CliproxyManagement(
@@ -972,62 +1072,182 @@ class ConnectionCards extends _$ConnectionCards {
     final usable = files.any(
       (f) => f.usable && spec.authFileProviders.contains(f.provider),
     );
+    _showBridgeProgress(
+      cardId,
+      usable ? 'registering in Hermes…' : 'waiting for subscription approval…',
+    );
+    if (!usable) {
+      final outcome = await _signInOnSidecar(
+        management,
+        spec,
+        timeout,
+        pollInterval,
+      );
+      if (outcome.outcome != BridgePollOutcome.ok) return outcome;
+    }
+    // Signed in (or already was): discover what the sidecar can actually
+    // serve for this provider, then point a Hermes custom endpoint at it.
+    final catalogue = await management.listModels(apiKey: sidecar.apiKey);
+    return _registerBridge(
+      spec,
+      _bridgeModelIds(catalogue, spec),
+      baseUrl: sidecar.baseUrl,
+      apiKey: sidecar.apiKey,
+      where: 'sidecar',
+    );
+  }
+
+  /// Sign-in for an instance on a server ([bridgeOnServer]).
+  ///
+  /// The plugin's bridge is set up first, so an old plugin fails before any
+  /// browser opens. Without a usable account on the server, the login runs
+  /// on this desktop's sidecar (the OAuth callback must reach this machine)
+  /// and the account file it saved moves to the server; the sidecar's own
+  /// accounts of that provider are then put back as they were, so the
+  /// sign-in lives in one CLIProxyAPI only — two refreshing one grant would
+  /// rotate each other's refresh token out. Models come from the server
+  /// bridge, and the Hermes endpoint points at its loopback address with its
+  /// key.
+  Future<BridgePollResult> _serverBridgeLogin(
+    BridgeCardSpec spec,
+    BridgeHost host,
+    Duration timeout,
+    Duration pollInterval,
+  ) async {
+    final rest = await ref.read(restClientProvider(instanceId).future);
+    final server = ServerBridgeClient(rest);
+    final found = await server.status();
+    if (!found.supported) throw ServerBridgeFailed(found.detail);
+    _showBridgeProgress(spec.cardId, 'preparing the bridge on the server…');
+    final bridge = await server.ensure();
+    final signedIn = (await server.status()).accounts.any(
+      (a) => a.usable && spec.authFileProviders.contains(a.provider),
+    );
+    if (!signedIn) {
+      _showBridgeProgress(spec.cardId, 'waiting for subscription approval…');
+      final sidecar = await host.ensureStarted();
+      final local = CliproxyManagement(
+        ref.read(httpClientProvider),
+        baseUrl: sidecar.baseUrl,
+        managementKey: sidecar.managementKey,
+      );
+      final kept = await _sidecarAccounts(local, spec);
+      final outcome = await _signInOnSidecar(
+        local,
+        spec,
+        timeout,
+        pollInterval,
+      );
+      if (outcome.outcome != BridgePollOutcome.ok) return outcome;
+      try {
+        final saved = await _sidecarAccounts(local, spec);
+        final fresh = {
+          for (final MapEntry(:key, :value) in saved.entries)
+            if (kept[key] != value) key: value,
+        };
+        if (fresh.isEmpty) {
+          return await _failBridge(
+            spec.cardId,
+            'Signed in, but the sidecar saved no ${spec.label} account.',
+          );
+        }
+        _showBridgeProgress(spec.cardId, 'moving the account to the server…');
+        for (final MapEntry(:key, :value) in fresh.entries) {
+          await server.uploadAccount(key, value);
+        }
+      } finally {
+        await _restoreSidecarAccounts(local, spec, kept);
+      }
+    }
+    _showBridgeProgress(spec.cardId, 'registering in Hermes…');
+    final discovered = await _serverBridgeModels(
+      server,
+      spec,
+      retries: signedIn ? 0 : _serverModelRetries,
+      delay: pollInterval < _serverModelDelay
+          ? pollInterval
+          : _serverModelDelay,
+    );
+    return _registerBridge(
+      spec,
+      discovered,
+      baseUrl: bridge.baseUrl,
+      apiKey: bridge.apiKey,
+      where: 'server bridge',
+    );
+  }
+
+  /// Shows [cardId] pending with [detail] while a bridge sign-in works.
+  void _showBridgeProgress(String cardId, String detail) {
+    final current = state.value;
+    if (current == null) return;
     state = AsyncData(
       current.copyWith(
         cards: [
           for (final card in current.cards)
             if (card.id == cardId)
-              card.copyWith(
-                state: ConnectionCardState.pending,
-                detail: usable
-                    ? 'registering in Hermes…'
-                    : 'waiting for subscription approval…',
-              )
+              card.copyWith(state: ConnectionCardState.pending, detail: detail)
             else
               card,
         ],
       ),
     );
-    if (!usable) {
-      final start = await management.startLogin(spec.provider);
-      final login = BridgeLogin.fromStart(cardId, spec.provider, start);
-      state = AsyncData(state.value!.copyWith(pendingBridgeLogin: () => login));
-      final outcome = await _pollBridgeUntilSettled(
-        management,
-        login,
-        timeout,
-        pollInterval,
+  }
+
+  /// Starts [spec]'s login on this desktop's sidecar and polls it to its
+  /// end. A login that does not end ok settles the cards (a failure shows on
+  /// the card) and clears the pending login.
+  Future<BridgePollResult> _signInOnSidecar(
+    CliproxyManagement management,
+    BridgeCardSpec spec,
+    Duration timeout,
+    Duration pollInterval,
+  ) async {
+    final start = await management.startLogin(spec.provider);
+    final login = BridgeLogin.fromStart(spec.cardId, spec.provider, start);
+    state = AsyncData(state.value!.copyWith(pendingBridgeLogin: () => login));
+    final outcome = await _pollBridgeUntilSettled(
+      management,
+      login,
+      timeout,
+      pollInterval,
+    );
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (outcome.outcome != BridgePollOutcome.ok && ref.mounted) {
+      final cards = await _loadCards();
+      state = AsyncData(
+        ConnectionsState(
+          cards: [
+            for (final card in cards)
+              if (card.id == spec.cardId &&
+                  outcome.outcome == BridgePollOutcome.error)
+                card.copyWith(
+                  state: ConnectionCardState.error,
+                  detail: outcome.message,
+                )
+              else
+                card,
+          ],
+          pendingBridgeLogin: null,
+        ),
       );
-      _pollTimer?.cancel();
-      _pollTimer = null;
-      if (outcome.outcome != BridgePollOutcome.ok) {
-        if (ref.mounted) {
-          final cards = await _loadCards();
-          state = AsyncData(
-            ConnectionsState(
-              cards: [
-                for (final card in cards)
-                  if (card.id == cardId &&
-                      outcome.outcome == BridgePollOutcome.error)
-                    card.copyWith(
-                      state: ConnectionCardState.error,
-                      detail: outcome.message,
-                    )
-                  else
-                    card,
-              ],
-              pendingBridgeLogin: null,
-            ),
-          );
-        }
-        return outcome;
-      }
     }
-    // Signed in (or already was): discover what the sidecar can actually
-    // serve for this provider, then point a Hermes custom endpoint at it.
-    // The upsert merges by name, so re-running never forks a twin. Only the
-    // ≤2 selected models (large + small) are registered, never the catalogue.
-    final discovered = await _discoverBridgeModels(management, sidecar, spec);
+    return outcome;
+  }
+
+  /// Persists the large + small pick of [discovered], points the Hermes
+  /// custom endpoint of [spec] at the bridge ([baseUrl] with [apiKey]) and
+  /// refreshes. The upsert merges by name, so re-running never forks a twin;
+  /// only the ≤2 selected models are registered, never the catalogue.
+  /// [where] names the bridge when it advertises no model of [spec].
+  Future<BridgePollResult> _registerBridge(
+    BridgeCardSpec spec,
+    List<String> discovered, {
+    required Uri baseUrl,
+    required String apiKey,
+    required String where,
+  }) async {
     final pair = pickLargeAndSmall(discovered);
     final selected = [
       if (pair.large != null) pair.large!,
@@ -1043,36 +1263,18 @@ class ConnectionCards extends _$ConnectionCards {
       }),
     );
     if (selected.isEmpty) {
-      if (ref.mounted) {
-        final cards = await _loadCards();
-        state = AsyncData(
-          ConnectionsState(
-            cards: [
-              for (final card in cards)
-                if (card.id == cardId)
-                  card.copyWith(
-                    state: ConnectionCardState.error,
-                    detail:
-                        'Signed in, but the sidecar advertises no ${spec.label} models.',
-                  )
-                else
-                  card,
-            ],
-            pendingBridgeLogin: null,
-          ),
-        );
-      }
-      return const BridgePollResult(
-        BridgePollOutcome.error,
-        message: 'The sidecar advertises no models for this subscription.',
+      return _failBridge(
+        spec.cardId,
+        'Signed in, but the $where advertises no ${spec.label} models.',
+        'The $where advertises no models for this subscription.',
       );
     }
     final rest = await ref.read(restClientProvider(instanceId).future);
     await rest.postJson(
       '/api/providers/custom-endpoints',
       hermesCustomEndpoint(
-        cliproxyBaseUrl: sidecar.baseUrl,
-        apiKey: sidecar.apiKey,
+        cliproxyBaseUrl: baseUrl,
+        apiKey: apiKey,
         name: spec.label,
         model: selected.first,
         models: selected,
@@ -1093,6 +1295,35 @@ class ConnectionCards extends _$ConnectionCards {
       );
     }
     return const BridgePollResult(BridgePollOutcome.ok);
+  }
+
+  /// Settles a failed bridge sign-in: cards reloaded with [cardId] in error
+  /// showing [detail], no pending login. The result carries [message]
+  /// (default: [detail]).
+  Future<BridgePollResult> _failBridge(
+    String cardId,
+    String detail, [
+    String? message,
+  ]) async {
+    if (ref.mounted) {
+      final cards = await _loadCards();
+      state = AsyncData(
+        ConnectionsState(
+          cards: [
+            for (final card in cards)
+              if (card.id == cardId)
+                card.copyWith(state: ConnectionCardState.error, detail: detail)
+              else
+                card,
+          ],
+          pendingBridgeLogin: null,
+        ),
+      );
+    }
+    return BridgePollResult(
+      BridgePollOutcome.error,
+      message: message ?? detail,
+    );
   }
 
   /// Cancels the in-flight bridge login (sidecar `DELETE /oauth-session`
@@ -1132,11 +1363,14 @@ class ConnectionCards extends _$ConnectionCards {
 
   /// Deletes the Hermes custom-endpoint registration of a bridge card. The
   /// sidecar credential is deliberately kept: re-tapping the card re-registers
-  /// without another OAuth dance.
+  /// without another OAuth dance. On an instance on a server
+  /// ([bridgeOnServer]) the card's accounts are removed from the server's
+  /// bridge too.
   Future<void> disconnectBridge(String cardId) async {
     final spec = bridgeSpecForCard(cardId);
     if (spec == null) throw StateError('unknown bridge card $cardId');
     final rest = await ref.read(restClientProvider(instanceId).future);
+    final registry = await ref.read(registryProvider.future);
     final endpoints = await rest.getJson('/api/providers/custom-endpoints');
     String? endpointId;
     for (final entry in (endpoints['endpoints'] as List?) ?? const []) {
@@ -1146,13 +1380,40 @@ class ConnectionCards extends _$ConnectionCards {
         break;
       }
     }
-    if (endpointId == null || endpointId.isEmpty) {
+    final registered = endpointId != null && endpointId.isNotEmpty;
+    if (endpointId != null && endpointId.isNotEmpty) {
+      await rest.delete(
+        '/api/providers/custom-endpoints/${Uri.encodeComponent(endpointId)}',
+      );
+    }
+    final removed =
+        bridgeOnServer(registry.byId(instanceId)) &&
+        await _deleteServerAccounts(ServerBridgeClient(rest), spec);
+    if (!registered && !removed) {
       throw StateError('${spec.label} is not registered in Hermes.');
     }
-    await rest.delete(
-      '/api/providers/custom-endpoints/${Uri.encodeComponent(endpointId)}',
-    );
     await refresh();
+  }
+
+  /// Removes [spec]'s accounts from the server bridge; whether any went.
+  static Future<bool> _deleteServerAccounts(
+    ServerBridgeClient server,
+    BridgeCardSpec spec,
+  ) async {
+    final ServerBridgeStatus status;
+    try {
+      status = await server.status();
+    } on ServerBridgeUnavailable {
+      return false; // no bridge there: none of the card's accounts either
+    }
+    var removed = false;
+    for (final account in status.accounts) {
+      if (spec.authFileProviders.contains(account.provider) &&
+          await server.deleteAccount(account.name)) {
+        removed = true;
+      }
+    }
+    return removed;
   }
 
   var _bridgeCancelled = false;
@@ -1231,32 +1492,12 @@ class ConnectionCards extends _$ConnectionCards {
     }
   }
 
-  /// Models the sidecar can serve for [spec] right now: `GET /v1/models`
-  /// (Bearer API key) filtered to [BridgeCardSpec.modelOwners], in sidecar
-  /// order (the registry lists newest first). Empty [BridgeCardSpec.modelOwners]
-  /// (Devin: no catalogue section) keeps every advertised model.
-  Future<List<String>> _discoverBridgeModels(
-    CliproxyManagement management,
-    BridgeConnection sidecar,
-    BridgeCardSpec spec,
-  ) async {
-    final catalogue = await management.listModels(apiKey: sidecar.apiKey);
-    final ids = [
-      for (final model in catalogue)
-        if (model.id.isNotEmpty &&
-            (spec.modelOwners.isEmpty ||
-                (model.ownedBy != null &&
-                    spec.modelOwners.contains(model.ownedBy))))
-          model.id,
-    ];
-    return ids.toSet().toList();
-  }
-
   Future<List<ConnectionCard>> _loadCards() async {
     final rest = await ref.read(restClientProvider(instanceId).future);
     final connection = await ref.read(connectionProvider(instanceId).future);
     final registry = await ref.read(registryProvider.future);
-    final profile = registry.byId(instanceId)?.profile;
+    final instance = registry.byId(instanceId);
+    final profile = instance?.profile;
     final oauth = await rest.getJson('/api/providers/oauth');
     final pool = await rest.getJson('/api/credentials/pool');
     final endpoints = await rest.getJson('/api/providers/custom-endpoints');
@@ -1268,14 +1509,31 @@ class ConnectionCards extends _$ConnectionCards {
         includeUnconfigured: true,
       ),
     );
+    final onServer = bridgeOnServer(instance);
     return buildConnectionCards(
       oauth: oauth,
       pool: pool,
       options: options,
       endpoints: endpoints,
       env: env,
-      bridgeFiles: await _bridgeFiles(),
+      bridgeFiles: onServer ? null : await _bridgeFiles(),
+      serverBridge: onServer ? await _serverBridge(rest) : null,
     );
+  }
+
+  /// The server's bridge for an instance on a server, or null where this
+  /// device has no sidecar for the sign-in's OAuth callback (web/mobile:
+  /// bridge cards stay hidden). A plugin without the bridge yields what to
+  /// do; an unreachable one renders the cards without connected state.
+  Future<ServerBridgeStatus?> _serverBridge(HermesRestClient rest) async {
+    if (ref.read(bridgeHostProvider) == null) return null;
+    try {
+      return await ServerBridgeClient(rest).status();
+    } on ServerBridgeException catch (e) {
+      return ServerBridgeStatus.unavailable(e.message);
+    } on Object {
+      return const ServerBridgeStatus();
+    }
   }
 
   /// Sidecar auth-file snapshot, or null when there is no bridge host
@@ -1305,4 +1563,85 @@ class ConnectionCards extends _$ConnectionCards {
     String path,
     Map<String, Object?> body,
   ) => rest.deleteWithBody(path, body);
+}
+
+/// Reads of the server catalogue after an account upload, [_serverModelDelay]
+/// apart: CLIProxyAPI lists an uploaded account's models once its auth
+/// watcher registered them, within about a second.
+const _serverModelRetries = 10;
+const _serverModelDelay = Duration(seconds: 1);
+
+/// Ids of [catalogue] owned by [spec]'s vendors, in catalogue order (the
+/// registry lists newest first). Empty [BridgeCardSpec.modelOwners] (Devin:
+/// no catalogue section) keeps every advertised model.
+List<String> _bridgeModelIds(
+  Iterable<SidecarModel> catalogue,
+  BridgeCardSpec spec,
+) => {
+  for (final model in catalogue)
+    if (model.id.isNotEmpty &&
+        (spec.modelOwners.isEmpty ||
+            (model.ownedBy != null &&
+                spec.modelOwners.contains(model.ownedBy))))
+      model.id,
+}.toList();
+
+/// [spec]'s models on the server bridge, read again up to [retries] times
+/// [delay] apart while there are none (an account just uploaded).
+Future<List<String>> _serverBridgeModels(
+  ServerBridgeClient server,
+  BridgeCardSpec spec, {
+  int retries = 0,
+  Duration delay = Duration.zero,
+}) async {
+  var models = _bridgeModelIds(await server.models(), spec);
+  for (var attempt = 0; models.isEmpty && attempt < retries; attempt++) {
+    await Future<void>.delayed(delay);
+    models = _bridgeModelIds(await server.models(), spec);
+  }
+  return models;
+}
+
+/// Account files of [spec]'s providers on this desktop's sidecar: name →
+/// JSON text, as CLIProxyAPI stored them.
+Future<Map<String, String>> _sidecarAccounts(
+  CliproxyManagement sidecar,
+  BridgeCardSpec spec,
+) async {
+  final accounts = <String, String>{};
+  for (final file in await sidecar.listAuthFiles()) {
+    if (!file.name.endsWith('.json') ||
+        !spec.authFileProviders.contains(file.provider)) {
+      continue;
+    }
+    try {
+      accounts[file.name] = await sidecar.downloadAuthFile(file.name);
+    } on CliproxyHttpError catch (e) {
+      // An account without a file (runtime-only) has nothing to move.
+      if (e.statusCode != 404) rethrow;
+    }
+  }
+  return accounts;
+}
+
+/// Puts [kept] back as the sidecar's [spec] accounts after a sign-in for a
+/// server: a file the login added goes, one it replaced gets its previous
+/// content again. Best effort: the server account is what the sign-in was
+/// for.
+Future<void> _restoreSidecarAccounts(
+  CliproxyManagement sidecar,
+  BridgeCardSpec spec,
+  Map<String, String> kept,
+) async {
+  try {
+    final now = await _sidecarAccounts(sidecar, spec);
+    for (final name in now.keys) {
+      if (!kept.containsKey(name)) await sidecar.deleteAuthFile(name);
+    }
+    for (final MapEntry(:key, :value) in kept.entries) {
+      if (now[key] != value) await sidecar.uploadAuthFile(key, value);
+    }
+  } on Object {
+    // The sidecar keeps a copy; the next refresh of either side may fail.
+  }
 }

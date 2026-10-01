@@ -293,7 +293,7 @@ const hermusePluginIdentifier =
 /// Version of the Hermuse plugin these apps are built with: the desktop app
 /// bundles it (`plugin.yaml`), and a remote Hermes running an older one is
 /// offered the update.
-const hermusePluginVersion = '0.2.0';
+const hermusePluginVersion = '0.3.0';
 
 /// Hermes' agent-plugin management API.
 const _pluginsApi = '/api/dashboard/agent-plugins';

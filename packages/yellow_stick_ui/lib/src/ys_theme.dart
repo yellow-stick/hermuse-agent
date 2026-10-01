@@ -22,6 +22,8 @@ extension YsFlutterPalette on YsPalette {
   Color get backdropColor => Color(backdrop.value);
   Color get successColor => Color(success.value);
   Color get successMutedColor => Color(successMuted.value);
+  Color get infoColor => Color(info.value);
+  Color get infoMutedColor => Color(infoMuted.value);
   Color get errorColor => Color(error.value);
   Color get errorWashColor => Color(errorWash.value);
   Color get logoSurfaceColor => Color(logoSurface.value);

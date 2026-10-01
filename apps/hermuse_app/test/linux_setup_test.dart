@@ -340,7 +340,16 @@ void main() {
         await _settle(tester, until: () => manage.evaluate().isNotEmpty);
         await tester.tap(manage);
         await _settle(tester);
-        await tester.tap(find.widgetWithText(YsButton, 'Remove from server'));
+        // Uninstalling lives in the row's "More actions" menu.
+        await tester.tap(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is YsButton &&
+                widget.semanticLabel == 'More actions for VPS',
+          ),
+        );
+        await _settle(tester);
+        await tester.tap(find.text('Uninstall from server…'));
         await _settle(tester);
         expect(find.byType(RemoteInstallScreen), findsOneWidget);
         expect(
@@ -480,11 +489,23 @@ void main() {
         expect(find.byType(AddInstanceScreen), findsOneWidget);
         expect(find.byType(RemoteInstallScreen), findsNothing);
         expect(keyring.values, isEmpty);
-        await tester.tap(find.bySemanticsLabel('Cancel').first);
+        // Each form switches to the other with its own button…
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with SSH instead'),
+        );
         await _settle(tester);
         expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        expect(find.byType(AddInstanceScreen), findsNothing);
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with a dashboard URL'),
+        );
+        await _settle(tester);
+        expect(find.byType(AddInstanceScreen), findsOneWidget);
+        // …and cancelling goes back where connecting started, not to the
+        // other form.
         await tester.tap(find.bySemanticsLabel('Cancel').first);
         await _settle(tester);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
         expect(find.byType(WelcomeScreen), findsOneWidget);
       },
     );

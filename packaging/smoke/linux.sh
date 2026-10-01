@@ -63,7 +63,8 @@ INSTALL_STAGES='prerequisites repository venv python-deps node-deps path config 
 UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_PREPARE='Prepare'
 UI_CHECK_AGAIN='Check again'
-UI_CONNECTIONS='Connections'
+# The instance row's button that opens its Connections.
+UI_CONNECTIONS='Model accounts'
 UI_SEARCH_CONNECTIONS='Search connections'
 UI_BRIDGE_CARD='Meta (bridge)'
 UI_CONNECT='Connect'
@@ -456,7 +457,8 @@ ui_rail() { # <n|last>
   ui_pointer_away "$wid"
 }
 
-# Settings (bottom of the rail) lists the instances, each with its Connections.
+# Settings (bottom of the rail) lists the instances; each row's "Model
+# accounts" opens its Connections.
 ui_connections() {
   ui_click "$UI_BACK_TO_CHAT" 10 || true
   ui_click "$UI_CONNECTIONS" 5 || { ui_rail last && ui_click "$UI_CONNECTIONS" 60; }

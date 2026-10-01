@@ -65,13 +65,12 @@ final class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 label: 'Back to chat',
                 onPressed: widget.onSkipToChat,
               ),
+              // The first look failed: nothing to refresh, read it anew (the
+              // "Checking this Hermes…" card shows meanwhile).
               YsButton.primary(
                 label: 'Retry',
-                onPressed: () => unawaited(
-                  ref
-                      .read(onboardingProvider(widget.instance.id).notifier)
-                      .refresh(),
-                ),
+                onPressed: () =>
+                    ref.invalidate(onboardingProvider(widget.instance.id)),
               ),
             ],
           ),
@@ -90,6 +89,7 @@ final class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         OnboardingStep.connections => ConnectionsScreen(
           instance: widget.instance,
           onBack: widget.onSkipToChat,
+          lead: const _StepDots(OnboardingStep.connections),
         ),
         OnboardingStep.defaultModel => _DefaultModel(
           instanceId: widget.instance.id,
@@ -355,8 +355,11 @@ final class _RuntimeCheckState extends ConsumerState<_RuntimeCheck> {
         Center(
           child: HermuseLink(
             label: 'Skip for now',
-            onPressed: () =>
-                ref.read(onboardingProvider(widget.instanceId).notifier).skip(),
+            onPressed: _busy
+                ? null
+                : () => ref
+                      .read(onboardingProvider(widget.instanceId).notifier)
+                      .skip(),
           ),
         ),
       ],
@@ -612,7 +615,7 @@ final class _FreeTierBox extends StatelessWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: YsButton.neutral(
-                  label: busy ? '…' : 'Use ${tier.model}',
+                  label: busy ? 'Saving…' : 'Use ${tier.model}',
                   onPressed: busy ? null : onUse,
                 ),
               ),
@@ -680,7 +683,6 @@ final class _ProfileStepState extends ConsumerState<_ProfileStep> {
                       widget.onSkipToChat();
                     },
             ),
-            const SizedBox(width: 12),
             YsButton.primary(
               label: _busy ? 'Starting…' : 'Start the tour',
               onPressed: _busy

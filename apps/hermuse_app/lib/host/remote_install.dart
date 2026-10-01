@@ -423,7 +423,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
     children: [
       YsDialogHead(
         art: YsArt.remote,
-        title: _removing ? 'Remove from your server' : 'Connect to a machine',
+        title: _removing
+            ? 'Uninstall from your server'
+            : 'Connect to a machine',
         helper:
             'Use root, or an administrator who already has passwordless sudo.',
         trailing: YsButton.icon(
@@ -472,10 +474,14 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
           label: 'Connect with a dashboard URL',
           onPressed: onDashboard,
         ),
-      YsButton.neutral(
-        label: _removing ? 'Connect instead' : 'Remove from server',
-        onPressed: _switchOperation,
-      ),
+      // The other operation, kept quiet: a connected server's row offers
+      // its uninstall in "More actions".
+      YsDialogLinks([
+        (
+          _removing ? 'Connect instead' : 'Uninstall Hermes from a server',
+          _switchOperation,
+        ),
+      ]),
     ],
   );
 
@@ -763,7 +769,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
         YsButton.primary(label: 'Try again', onPressed: _retry),
       if (_phase == _Phase.failed)
         YsButton.neutral(
-          label: 'Remove from server',
+          label: 'Uninstall from server',
           onPressed: _switchOperation,
         ),
       YsButton.neutral(label: 'Cancel', onPressed: _cancel),
@@ -789,7 +795,13 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       status: _finished.contains(step)
           ? _previouslyCompleted.contains(step)
                 ? 'Already installed'
-                : 'Ready'
+                : switch (step) {
+                    RemoteInstallStep.connect => 'Connected',
+                    RemoteInstallStep.preflight ||
+                    RemoteInstallStep.verify => 'Checked',
+                    RemoteInstallStep.firewall => 'Set up now',
+                    _ => 'Installed now',
+                  }
           : step == _running
           ? _phase == _Phase.failed
                 ? 'Stopped'

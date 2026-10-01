@@ -15,9 +15,11 @@ hermes-plugin/hermuse/
 ├── plugin.yaml            # agent-plugin manifest (kind: standalone, provides_tools,
 │                          #   provides_hooks, provides_browser_providers)
 ├── __init__.py            # register(ctx): 6 tools + skill + `hermes hermuse` CLI +
-│                          #   `hermuse` browser provider + computer hooks + live
-│                          #   mount of the dashboard routes (no restart after install)
+│                          #   `hermuse` browser provider + computer hooks + restart of
+│                          #   a set-up subscription bridge + live mount of the
+│                          #   dashboard routes (no restart after install)
 ├── store.py               # stdlib-only file store (shared by tools + dashboard backend)
+├── subscription_bridge.py # pinned CLIProxyAPI next to Hermes (see "Subscription bridge")
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
 ├── cron_specs.py          # feed/ideas/goals/reflection job specs + idempotent registration
@@ -165,6 +167,11 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | `GET` | `/computer/snapshots/{tool_call_id}` | → JPEG saved after that browser call / `400` bad id / `404` |
 | `POST` | `/computer/ticket` | → `{"ticket": …}` (30 s, single use) |
 | `WS` | `/computer/ws?ticket=&fps=1..10` | live stream + Take control (see below); closes `4403` bad origin, `4401` bad ticket, `4001` computer unavailable / stream ended |
+| `GET` | `/bridge/status` | → `{supported, platform, version, installed, running, base_url, accounts: [{name, provider, email, usable, status, status_message}], detail}` |
+| `POST` | `/bridge/ensure` | download (pinned, checksummed) + start the bridge → `{base_url, api_key, version}`; `409` unsupported host / busy, `502` download or start failure |
+| `POST` | `/bridge/accounts` | `{name, content}` (account file name + JSON text, ≤ 128 KiB) → `{ok, name}`; `400` bad name/content, `409` not set up |
+| `DELETE` | `/bridge/accounts/{name}` | → `{ok, name}` / `404`; `400` bad name (traversal impossible: one `[A-Za-z0-9@._+=-]` segment ending `.json`, never hidden) |
+| `GET` | `/bridge/models` | → `{object: "list", data: [{id, object, owned_by}]}` (models of usable accounts); `409` not set up |
 
 Shapes:
 
@@ -190,8 +197,11 @@ hermuse/
 ├── goals/<id>.md  +  index.json  # .md carries the appended timeline too
 ├── artifacts/files/<id>/<file>  +  index.json
 ├── reflections/<date>.md  +  index.json
-└── computer/                 # runtime.json, control.json, build.json + build.log,
-                              #   snapshots/<tool_call_id>.jpg (newest 200)
+├── computer/                 # runtime.json, control.json, build.json + build.log,
+│                             #   snapshots/<tool_call_id>.jpg (newest 200)
+└── bridge/                   # subscription bridge (0700): bin/cliproxy-<version>,
+                              #   keys.json + config.yaml (0600), auth/ (account files),
+                              #   cliproxy.json + cliproxy.log, bridge.lock
 ```
 
 Managed root files are created with sensible defaults on first load and never
@@ -215,6 +225,31 @@ the files), and are tagged `origin: {source: hermuse, key}` so registration
 is idempotent. Installing the plugin never starts background work on its own;
 registration is always an explicit `hermes hermuse enable` (or
 `POST /cron/enable`).
+
+## Subscription bridge
+
+Claude Pro/Max and ChatGPT subscriptions reach a Hermes on a server through a
+CLIProxyAPI next to it (`subscription_bridge.py`), the same pinned release the
+desktop app bundles as its sidecar (v7.3.18, `packages/hermuse_host/cliproxy.lock`).
+The Hermuse desktop app signs the subscription in with its own sidecar — the
+OAuth browser callback must reach the user's machine — then:
+
+1. `POST /bridge/ensure` downloads the Linux x86-64 or ARM64 release from
+   GitHub, checks the archive and binary sha256 against the pins, and starts it
+   detached (no root) on `127.0.0.1:<port>`; the port, the `/v1` API key and
+   the management key are generated once and kept in `bridge/keys.json`
+   (0600), so the endpoint registered in Hermes stays valid across restarts;
+2. `POST /bridge/accounts` hands it the account file (written through the
+   CLIProxyAPI management API on loopback, applied at once); the desktop puts
+   its sidecar's own accounts back as they were before the sign-in, so only
+   one CLIProxyAPI refreshes each grant;
+3. `GET /bridge/models` lists what the account can serve, and the app
+   registers `<base_url>/v1` with the API key as a Hermes custom endpoint.
+
+The management key never leaves the server and remote management stays off
+(`allow-remote: false`). The bridge restarts on its own when a Hermes process
+loads the plugin after a reboot or a crash, and when `/bridge/status` finds it
+stopped. Other hosts answer `supported: false`.
 
 ## The agent's computer
 
@@ -307,4 +342,8 @@ guard, snapshots, Docker states against a scripted `docker` (incl. the
 local-build fallback and its reported error) run for real against a fake
 `docker` executable, the inter-process lifecycle lock and global deadlines,
 the provider's fail-safe session, and the ticketed WebSocket bridge against a
-fake `screend`.
+fake `screend`; the subscription bridge: pins equal to the desktop lock, a
+release off its checksums never installed, private files, the detached
+process (reused, restarted on its persisted port at plugin load, moved off a
+taken port, never confused with a recycled pid) and the account/model routes
+with name validation, all against a fake CLIProxyAPI executable (no network).

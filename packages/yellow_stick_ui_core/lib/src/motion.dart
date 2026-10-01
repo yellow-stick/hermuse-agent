@@ -531,7 +531,8 @@ enum YsStepState {
   /// Being looked at: a short arc scans the ring, the glyph breathes.
   checking,
 
-  /// Already in place and working: a calm tick on a soft disc, not drawn.
+  /// Already in place and working, nothing done now: a calm info-blue tick
+  /// on a soft info disc, not drawn — set apart from the green [done].
   found,
 
   /// In progress: an arc sweeps the ring, or fills it to a known progress.

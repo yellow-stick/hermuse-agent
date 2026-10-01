@@ -236,6 +236,10 @@ void main() {
     final s = await looked();
 
     expect(status(s, RemotePart.hermes), RemotePartStatus.present);
+    expect(
+      s[RemotePart.hermes].summary,
+      startsWith('Already installed · Version '),
+    );
     expect(s[RemotePart.plugin].status, RemotePartStatus.missing);
     expect(s[RemotePart.plugin].action, RemoteAction.install);
     for (final part in [RemotePart.jobs, RemotePart.computer]) {
@@ -454,7 +458,8 @@ void main() {
       ]),
     );
     expect(status(s, RemotePart.docker), RemotePartStatus.installed);
-    expect(s[RemotePart.computer].summary, isNotEmpty);
+    expect(s[RemotePart.docker].summary, 'Installed now · Running');
+    expect(s[RemotePart.computer].summary, 'Installed now · Ready');
   });
 
   test(
@@ -625,7 +630,7 @@ void main() {
   );
 
   test(
-    'the model row follows the onboarding: connected once it answers',
+    'the model row follows the onboarding: connected now once it answers',
     () async {
       var s = await looked();
       expect(status(s, RemotePart.model), RemotePartStatus.needsUser);
@@ -647,8 +652,9 @@ void main() {
         );
       await notifier().checkAgain();
       s = await until(
-        (s) => status(s, RemotePart.model) == RemotePartStatus.present,
+        (s) => status(s, RemotePart.model) == RemotePartStatus.installed,
       );
+      expect(s[RemotePart.model].summary, 'Connected now');
       expect(s[RemotePart.model].action, isNull);
     },
   );
