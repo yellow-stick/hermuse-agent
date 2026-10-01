@@ -108,7 +108,6 @@ enum _Route {
   chat,
   welcome,
   addInstance,
-  connectChoice,
   remoteInstall,
   remoteUninstall,
   install,
@@ -172,7 +171,7 @@ final class _RootState extends ConsumerState<_Root> {
     switch (next.goal) {
       case LinuxSetupGoal.connect:
         setState(
-          () => _route = _desktop ? _Route.connectChoice : _Route.addInstance,
+          () => _route = _desktop ? _Route.remoteInstall : _Route.addInstance,
         );
       case LinuxSetupGoal.local:
         setState(() {
@@ -189,7 +188,7 @@ final class _RootState extends ConsumerState<_Root> {
     }
   }
 
-  /// Connect to a Hermes server; on Linux the keyring comes first.
+  /// Connect to a machine; on Linux the keyring comes first.
   void _connect() {
     _connectReturn = _route == _Route.instances
         ? _Route.instances
@@ -202,7 +201,7 @@ final class _RootState extends ConsumerState<_Root> {
       return;
     }
     setState(
-      () => _route = _desktop ? _Route.connectChoice : _Route.addInstance,
+      () => _route = _desktop ? _Route.remoteInstall : _Route.addInstance,
     );
   }
 
@@ -213,7 +212,7 @@ final class _RootState extends ConsumerState<_Root> {
 
   void _cancelAdd() => setState(() {
     _remoteOutcome = null;
-    _route = _desktop ? _Route.connectChoice : _Route.chat;
+    _route = _desktop ? _Route.remoteInstall : _connectReturn;
   });
 
   @override
@@ -278,14 +277,10 @@ final class _RootState extends ConsumerState<_Root> {
     // Connection setup does not depend on an open chat. Keep its form alive
     // while the first instance saves to the keystore and registry.
     final connection = switch (_route) {
-      _Route.connectChoice when _desktop => HermesPresentScreen(
-        onYes: () => setState(() => _route = _Route.addInstance),
-        onNo: () => setState(() => _route = _Route.remoteInstall),
-        onCancel: () => setState(() => _route = _connectReturn),
-      ),
       _Route.remoteInstall when _desktop => RemoteInstallScreen(
         onDone: _remoteInstalled,
-        onCancel: () => setState(() => _route = _Route.connectChoice),
+        onCancel: () => setState(() => _route = _connectReturn),
+        onDashboard: () => setState(() => _route = _Route.addInstance),
       ),
       _Route.remoteUninstall when _desktop => RemoteInstallScreen(
         remove: true,
@@ -554,7 +549,6 @@ final class _ChatRoute extends ConsumerWidget {
       // Shown by the root; an instance deleted meanwhile leaves the chat.
       case _Route.components:
       case _Route.addInstance:
-      case _Route.connectChoice:
       case _Route.remoteInstall:
       case _Route.remoteUninstall:
       case _Route.welcome:

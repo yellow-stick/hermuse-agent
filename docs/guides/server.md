@@ -53,11 +53,11 @@ directory. Use the existing-server path for installations you already manage.
 
 ### Choose SSH setup and give permission
 
-1. For an existing machine, choose **Connect to a Hermes** in the desktop app.
-   At **Is Hermes already installed on that machine?**, choose:
-   - **Yes, Hermes is installed** opens the dashboard connection form. Use
-     [Add your Hermes in Hermuse](#3-add-your-hermes-in-hermuse).
-   - **No, install Hermes** opens **Install on your server**.
+1. Choose **Connect to a machine** in the desktop app. The SSH form opens
+   directly: Hermuse detects what is already installed after connecting, without
+   asking you to classify the machine first. If you only have its dashboard URL,
+   choose **Connect with a dashboard URL** instead and follow
+   [Add your Hermes in Hermuse](#3-add-your-hermes-in-hermuse).
 2. Enter **Host or IP address** (not a dashboard URL), **SSH port** (default
    `22`) and **SSH user** (default `root`). **SSH password (optional)** can be
    left blank if an SSH key is already set up for this machine.
@@ -312,8 +312,8 @@ answer `200`.
 
 ## 3. Add your Hermes in Hermuse
 
-In the Hermuse desktop app choose **Connect to a Hermes**, then **Yes, Hermes is
-installed**; in the web app choose **Add a Hermes**. Enter:
+In the Hermuse desktop app choose **Connect to a machine**, then **Connect with
+a dashboard URL**; in the web app choose **Connect to a machine**. Enter:
 
 - **Hermes URL**: the HTTPS address from step 2.
 - **Name**: anything you like, for example `Home server`.

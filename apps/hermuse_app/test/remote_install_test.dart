@@ -1029,8 +1029,8 @@ void main() {
         await tester.ensureVisible(_button('Remove from server'));
         await tester.tap(_button('Remove from server'));
         await tester.pumpAndSettle();
-        await tester.ensureVisible(_button('Install instead'));
-        await tester.tap(_button('Install instead'));
+        await tester.ensureVisible(_button('Connect instead'));
+        await tester.tap(_button('Connect instead'));
         await tester.pumpAndSettle();
         await _connect(tester);
         expect(installer.attempts, hasLength(1));

@@ -179,8 +179,9 @@ as it is.
 
 Hermuse Agent keeps credentials only in the system keyring, never in plain
 text. If the keyring is locked, unlock it when your system asks, then choose
-**Check again**. **Connect to a Hermes → Yes, Hermes is installed** also checks
-the keyring first, but installs neither Hermes nor Docker on your computer.
+**Check again**. **Connect to a machine** also checks the keyring first, but
+installs neither Hermes nor Docker on your computer. It opens SSH setup directly;
+use **Connect with a dashboard URL** if you already have the dashboard address.
 
 Then Hermuse Agent:
 

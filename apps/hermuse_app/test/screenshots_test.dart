@@ -180,9 +180,9 @@ Future<void> main() async {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Connect to a Hermes'), findsWidgets);
+      expect(find.text('Connect to a machine'), findsWidgets);
       await tester.tap(
-        find.widgetWithText(YsChoiceCard, 'Connect to a Hermes'),
+        find.widgetWithText(YsChoiceCard, 'Connect to a machine'),
       );
       await tester.pumpAndSettle();
 

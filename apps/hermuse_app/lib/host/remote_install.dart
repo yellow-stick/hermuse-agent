@@ -16,6 +16,7 @@ final class RemoteInstallScreen extends StatefulWidget {
   const RemoteInstallScreen({
     required this.onDone,
     required this.onCancel,
+    this.onDashboard,
     this.installer,
     this.uninstaller,
     this.remove = false,
@@ -26,6 +27,7 @@ final class RemoteInstallScreen extends StatefulWidget {
 
   final ValueChanged<RemoteInstallOutcome> onDone;
   final VoidCallback onCancel;
+  final VoidCallback? onDashboard;
   final RemoteInstaller? installer;
   final RemoteUninstaller? uninstaller;
   final bool remove;
@@ -421,7 +423,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
     children: [
       YsDialogHead(
         art: YsArt.remote,
-        title: _removing ? 'Remove from your server' : 'Install on your server',
+        title: _removing ? 'Remove from your server' : 'Connect to a machine',
         helper:
             'Use root, or an administrator who already has passwordless sudo.',
         trailing: YsButton.icon(
@@ -436,6 +438,10 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
           _removing
               ? 'Inspect the server again before retrying removal. Use your SSH key or re-enter your SSH password.'
               : 'Existing server setup will be checked again; only missing or unhealthy parts are repaired. Use your SSH key or re-enter your SSH password.',
+        ),
+      if (!_removing)
+        const YsDialogBody(
+          'Connect over SSH to detect what is already installed. Healthy components are kept; only missing or unhealthy parts are set up.',
         ),
       if (_removing)
         const YsDialogBody(
@@ -461,8 +467,13 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
         label: _removing ? 'Review inspection' : 'Review setup',
         onPressed: _review,
       ),
+      if (widget.onDashboard case final onDashboard? when !_removing)
+        YsButton.neutral(
+          label: 'Connect with a dashboard URL',
+          onPressed: onDashboard,
+        ),
       YsButton.neutral(
-        label: _removing ? 'Install instead' : 'Remove from server',
+        label: _removing ? 'Connect instead' : 'Remove from server',
         onPressed: _switchOperation,
       ),
     ],
@@ -509,6 +520,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
             const YsDialogTitle('Allow server setup?'),
             YsDialogBody(
               'Connect to ${_username.text.trim()}@${_host.text.trim()} on SSH port ${_port.text.trim()}.',
+            ),
+            const YsDialogBody(
+              'First check what is already installed on this machine. Keep healthy components and install or repair only what is missing or unhealthy.',
             ),
             const YsDialogBody(
               'For Ubuntu 24.04/26.04 or Debian 12/13 with systemd, x86-64 or ARM64, '

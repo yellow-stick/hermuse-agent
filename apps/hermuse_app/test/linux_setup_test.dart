@@ -428,64 +428,66 @@ void main() {
       expect(connections, greaterThan(0));
     });
 
-    testWidgets('should gate both existing-machine choices on secure storage', (
-      tester,
-    ) async {
-      tester.view
-        ..physicalSize = const Size(900, 1500)
-        ..devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final root = (await tester.runAsync(
-        () => Directory.systemTemp.createTemp('hermuse_remote_gate'),
-      ))!;
-      addTearDown(() => root.deleteSync(recursive: true));
-      final setup = _Setup(root.path);
-      addTearDown(() => tester.runAsync(setup.dispose));
-      setup.inspections.add(_inspection(locked: true));
-      final keyring = _Keyring();
-      final host = LocalHermesHost.test(
-        detector: setup.script.detector(),
-        secrets: keyring,
-      );
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            ...setup.overrides(secrets: keyring),
-            localHostProvider.overrideWithValue(host),
-          ],
-          child: const HermuseApp(),
-        ),
-      );
-      await _settle(tester);
-      await tester.tap(
-        find.widgetWithText(YsChoiceCard, 'Connect to a Hermes'),
-      );
-      await _settle(tester);
-      expect(find.byType(LinuxSetupGate), findsOneWidget);
-      expect(find.byType(HermesPresentScreen), findsNothing);
-      expect(find.byType(RemoteInstallScreen), findsNothing);
-      expect(find.byType(AddInstanceScreen), findsNothing);
+    testWidgets(
+      'should open machine detection after secure storage and retain the dashboard URL route',
+      (tester) async {
+        tester.view
+          ..physicalSize = const Size(900, 1500)
+          ..devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final root = (await tester.runAsync(
+          () => Directory.systemTemp.createTemp('hermuse_remote_gate'),
+        ))!;
+        addTearDown(() => root.deleteSync(recursive: true));
+        final setup = _Setup(root.path);
+        addTearDown(() => tester.runAsync(setup.dispose));
+        setup.inspections.add(_inspection(locked: true));
+        final keyring = _Keyring();
+        final host = LocalHermesHost.test(
+          detector: setup.script.detector(),
+          secrets: keyring,
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              ...setup.overrides(secrets: keyring),
+              localHostProvider.overrideWithValue(host),
+            ],
+            child: const HermuseApp(),
+          ),
+        );
+        await _settle(tester);
+        await tester.tap(
+          find.widgetWithText(YsChoiceCard, 'Connect to a machine'),
+        );
+        await _settle(tester);
+        expect(find.byType(LinuxSetupGate), findsOneWidget);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
+        expect(find.byType(AddInstanceScreen), findsNothing);
 
-      keyring.locked = false;
-      await tester.tap(find.widgetWithText(YsButton, 'Check again'));
-      await _settle(
-        tester,
-        until: () => find.byType(HermesPresentScreen).evaluate().isNotEmpty,
-      );
-      await tester.tap(find.widgetWithText(YsChoiceCard, 'No, install Hermes'));
-      await _settle(tester);
-      expect(find.byType(RemoteInstallScreen), findsOneWidget);
-      expect(find.byType(AddInstanceScreen), findsNothing);
-      await tester.tap(find.bySemanticsLabel('Cancel').first);
-      await _settle(tester);
-      await tester.tap(
-        find.widgetWithText(YsChoiceCard, 'Yes, Hermes is installed'),
-      );
-      await _settle(tester);
-      expect(find.byType(AddInstanceScreen), findsOneWidget);
-      expect(find.byType(RemoteInstallScreen), findsNothing);
-      expect(keyring.values, isEmpty);
-    });
+        keyring.locked = false;
+        await tester.tap(find.widgetWithText(YsButton, 'Check again'));
+        await _settle(
+          tester,
+          until: () => find.byType(RemoteInstallScreen).evaluate().isNotEmpty,
+        );
+        expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        expect(find.byType(AddInstanceScreen), findsNothing);
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with a dashboard URL'),
+        );
+        await _settle(tester);
+        expect(find.byType(AddInstanceScreen), findsOneWidget);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
+        expect(keyring.values, isEmpty);
+        await tester.tap(find.bySemanticsLabel('Cancel').first);
+        await _settle(tester);
+        expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        await tester.tap(find.bySemanticsLabel('Cancel').first);
+        await _settle(tester);
+        expect(find.byType(WelcomeScreen), findsOneWidget);
+      },
+    );
 
     testWidgets('should leave other platforms on their own install flow', (
       tester,

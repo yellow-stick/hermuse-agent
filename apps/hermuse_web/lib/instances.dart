@@ -13,7 +13,7 @@ import 'scope.dart';
 import 'screens.dart';
 
 /// Welcome screen: no instance is registered yet. The mascot says hello
-/// above the one way to start on the web: adding a Hermes.
+/// above the one way to start on the web: connecting with a dashboard URL.
 class HermuseWelcome extends StatelessComponent {
   const HermuseWelcome({required this.onAdd, super.key});
 
@@ -26,13 +26,13 @@ class HermuseWelcome extends StatelessComponent {
           const HermuseMascot(),
           h1(classes: 'hermuse-welcome-title', [.text("Hi, I'm Hermuse")]),
           p(classes: 'hermuse-welcome-body', [
-            .text('I run on your own Hermes Agent. Add one to start chatting.'),
+            .text('I run on your own Hermes Agent. Connect to start chatting.'),
           ]),
           div(classes: 'hermuse-welcome-choices', [
             YsChoiceCard(
               art: YsArt.remote,
-              title: 'Add a Hermes',
-              body: 'A Hermes already running on a server or another computer.',
+              title: 'Connect to a machine',
+              body: 'Enter the dashboard URL of a Hermes Agent already running on your machine or a server.',
               onPressed: onAdd,
             ),
           ]),
