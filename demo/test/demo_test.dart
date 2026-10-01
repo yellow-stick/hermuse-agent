@@ -51,9 +51,10 @@ void main() {
       expect(chat.state.activeThreadId, ava.main.id);
       expect(chat.state.mainThread.messages, isNotEmpty);
       expect(chat.state.sideThreads.map((t) => t.title), [
-        for (final side in ava.sideChats)
-          if (!side.archived) side.title,
-      ], reason: 'archived side chats stay in the archive');
+        'Weekend in Annecy',
+        'Overnight inbox',
+        'Autumn half-marathon',
+      ], reason: 'pinned first, then by recency; the overnight run is new');
     },
   );
 
@@ -104,7 +105,8 @@ void main() {
     expect(posts.map((p) => p.title), [
       for (final post in ava.feed) post['title'],
     ]);
-    expect(posts.first.createdAt, '2026-09-30 07:30');
+    expect(posts.first.title, 'Your morning recap');
+    expect(posts.first.createdAt, '2026-09-30 08:30');
     expect(
       (await container.read(goalsProvider(ava.id).future)).first.timeline,
       hasLength(3),
@@ -148,7 +150,7 @@ void main() {
     expect(views.last.mode, ComputerMode.desktop);
     await session.close();
     await expectLater(
-      rest.postJson('$hermusePluginRoute/feed/feed-ava-1/react', {
+      rest.postJson('$hermusePluginRoute/feed/feed-ava-0/react', {
         'reaction': 'love',
       }),
       throwsA(

@@ -153,7 +153,8 @@ const _ava = DemoInstance(
       DemoRow.tool('memory', "Read this morning's feed (3 posts)"),
       DemoRow.agent(
         'Three things, written before you woke up:\n\n'
-        '- **The electricity switch** is confirmed, with the new rate.\n'
+        '- **Your morning recap** — 18 emails read overnight, switch '
+          'confirmed, school form pre-filled, dentist moved.\n'
         '- **Annecy this weekend: sun, 19 °C** — good news for the trip.\n'
         '- **Week 3 of your running plan** starts with an easy 6 km.\n\n'
         'Say the word and I change what I follow.',
@@ -161,6 +162,26 @@ const _ava = DemoInstance(
     ],
   ),
   sideChats: [
+    DemoChat(
+      id: '20260930_021048_ava010',
+      title: 'Overnight inbox',
+      age: Duration(hours: 7),
+      rows: [
+        DemoRow.agent(
+          'Night shift done — I went through your emails while you slept '
+          '(Email: connected):\n\n'
+          '- **Read 18 new emails**, answered 2, skipped 3 newsletters.\n'
+          '- **Lumen Pure: switch confirmed** — €0.18/kWh from Friday.\n'
+          '- **School trip form due Friday** — pre-filled, needs your '
+          'signature.\n'
+          '- **Dentist moved to Thursday 9:30** — calendar updated.\n\n'
+          'Nothing else needed you. The recap is in your Feed.',
+          reasoning:
+              'Nightly pass over the connected mailbox: triage, act on what '
+              'is actionable, report the rest in the morning feed.',
+        ),
+      ],
+    ),
     DemoChat(
       id: '20260929_183002_ava001',
       title: 'Weekend in Annecy',
@@ -237,15 +258,16 @@ const _ava = DemoInstance(
   ],
   feed: [
     {
-      'id': 'feed-ava-1',
-      'title': 'Your electricity switch is confirmed',
-      'topic': 'Home',
+      'id': 'feed-ava-0',
+      'title': 'Your morning recap',
+      'topic': 'Overnight',
       'body':
-          'Lumen Pure confirmed the switch overnight: €0.18/kWh from Friday, '
-          'about €22 a month less than the Voltia renewal. Same meter, no '
-          'visit, no cut. The comparison is in your Library.',
-      'sources': ['https://example.com/lumen/switch-confirmation'],
-      'age': Duration(hours: 2),
+          'While you slept I read 18 emails (Email: connected). Lumen Pure '
+          'confirmed the switch — €0.18/kWh from Friday. The school trip '
+          'form is pre-filled, it needs your signature. Dentist moved to '
+          'Thursday 9:30, calendar updated. Nothing else needed you.',
+      'sources': <String>[],
+      'age': Duration(hours: 1),
       'reactions': {'love': ''},
     },
     {
@@ -392,7 +414,9 @@ const _ava = DemoInstance(
         'running. At most three posts a day, concrete news only.',
     'HEARTBEAT.md':
         '# Heartbeat\n\nEvery morning at 07:30: calendar check, weather, '
-        'one suggestion for the day.',
+        'one suggestion for the day.\n'
+        'Every night at 02:00: go through new emails (Email: connected), '
+        'act on what is actionable, report the rest in the morning feed.',
     'PREFERENCES.md':
         '# Preferences\n\n- No messages after 22:00\n- Prefer trains under '
         '4 hours\n- Vegetarian most days\n- Reads French and English bills',

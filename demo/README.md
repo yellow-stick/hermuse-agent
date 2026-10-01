@@ -10,6 +10,10 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
   - Ava's main chat: the agent compares her electricity renewal and switches
     her (€0.24 → €0.18/kWh, ~€22/month saved), then shows the morning Feed
     it wrote while she slept.
+  - `Overnight inbox`: the night pass over the connected mailbox
+    (02:10, 18 emails read, switch confirmed, school form pre-filled,
+    dentist moved) — cron output lives in a side chat, the recap in the
+    morning Feed post.
   - `Weekend in Annecy`: a trip for two under €400, priced line by line
     (trains, hotel, swim), hotel booked with free cancellation.
   - `Autumn half-marathon`: a 12-week plan with Sunday check-ins and a
