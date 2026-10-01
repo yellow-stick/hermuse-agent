@@ -37,12 +37,14 @@ String remoteOwnershipMutationScript(
   Set<String> paths, {
   bool account = false,
   bool computer = false,
+  bool web = false,
   bool caddy = false,
 }) => _recipe({
   'mode': 'mutation',
   'paths': paths.toList()..sort(),
   'account': account,
   'computer': computer,
+  'web': web,
   'caddy': caddy,
 });
 
@@ -90,6 +92,10 @@ SITE = "/etc/caddy/hermuse-remote.caddy"
 IMPORT = "import /etc/caddy/hermuse-remote.caddy"
 CONTAINER = "hermuse-computer-hermes"
 VOLUME = CONTAINER + "-home"
+COMPUTER_IMAGE = r"(?:ghcr\.io/yellow-stick/)?hermuse-computer:[a-zA-Z0-9_.-]+"
+WEB_CONTAINER = "hermuse-web"
+WEB_LABEL = ("org.hermuse.remote-installer", "web-v1")
+WEB_IMAGE = r"ghcr\.io/yellow-stick/hermuse-web:[a-zA-Z0-9_.-]+"
 RUNTIME_PATHS = [HOME + "/.local/bin/hermes", HOME + "/.local/bin/hermes-agent", HOME + "/.local/bin/hermes-acp",
                  HOME + "/.local/bin/node", HOME + "/.local/bin/npm", HOME + "/.local/bin/npx", PLUGIN, CHECKOUT,
                  HERMES + "/bin", HERMES + "/node", HERMES + "/runtime", HOME + "/.local/share/uv"]
@@ -294,7 +300,7 @@ def docker_inspect(kind, name):
         return {"id": item["Id"], "image": item.get("Config", {}).get("Image", ""),
                 "imageId": item.get("Image"), "mounts": item.get("Mounts", []),
                 "ports": item.get("HostConfig", {}).get("PortBindings", {}),
-                "name": item.get("Name", "")}
+                "name": item.get("Name", ""), "labels": item.get("Config", {}).get("Labels") or {}}
     if kind == "image":
         return {"id": item["Id"], "tags": item.get("RepoTags", [])}
     return {"name": item.get("Name"), "created": item.get("CreatedAt"), "labels": item.get("Labels")}
@@ -309,13 +315,37 @@ def docker():
         if tags.returncode:
             raise RuntimeError("Docker daemon is unavailable; computer assets cannot be inspected.")
         images = {tag: docker_inspect("image", tag) for tag in tags.stdout.splitlines()
-                  if re.fullmatch(r"(?:ghcr\.io/yellow-stick/)?hermuse-computer:[a-zA-Z0-9_.-]+", tag)}
+                  if re.fullmatch(COMPUTER_IMAGE, tag)}
         refs = command(["docker", "ps", "-a", "--filter", "volume=" + VOLUME,
                         "--format", "{{.ID}}"], required=True).stdout.splitlines() if volume else []
         return {"available": True, "container": container, "volume": volume,
                 "images": images, "volumeReferences": refs}
     except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired):
         return {"available": True, "error": "Docker is unavailable or ambiguous; no Docker resources will be changed."}
+
+def web_docker():
+    if not shutil.which("docker"):
+        return {"available": False}
+    try:
+        container = docker_inspect("container", WEB_CONTAINER)
+        tags = command(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], required=False)
+        if tags.returncode:
+            raise RuntimeError("Docker daemon is unavailable; web app assets cannot be inspected.")
+        images = {tag: docker_inspect("image", tag) for tag in tags.stdout.splitlines()
+                  if re.fullmatch(WEB_IMAGE, tag)}
+        return {"available": True, "container": container, "images": images}
+    except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired):
+        return {"available": True, "error": "Docker is unavailable or ambiguous; no web app Docker resources will be changed."}
+
+def web_complete(value):
+    return (value.get("available") is True and not value.get("error")
+            and all(key in value for key in ("container", "images")))
+
+def web_labelled(container):
+    return bool(container) and (container.get("labels") or {}).get(WEB_LABEL[0]) == WEB_LABEL[1]
+
+def created_image(value, tag):
+    return value.get("webImagesCreated" if re.fullmatch(WEB_IMAGE, tag) else "imagesCreated", {}).get(tag)
 
 def import_count():
     try:
@@ -470,6 +500,11 @@ def mutation():
             if tag in current["images"] and image.get("id") != current["images"][tag].get("id"):
                 raise RuntimeError("An owned computer image tag was replaced; it was not claimed.")
         pending["computer"] = current
+    if REQUEST["web"]:
+        current = web_docker()
+        if not web_complete(current):
+            raise RuntimeError("The real Docker store cannot be inspected before web app mutation.")
+        pending["web"] = current
     if REQUEST["caddy"]:
         expected = value.get("caddy", {}).get("siteAfter")
         current = info(SITE, digest=True)
@@ -513,6 +548,24 @@ def checkpoint():
             images = value.setdefault("imagesCreated", {})
             for tag, item in current.get("images", {}).items():
                 if tag not in before["images"] or tag in images and images[tag].get("id") == before["images"][tag].get("id"):
+                    images[tag] = item
+    web_before = pending.get("web")
+    if web_before:
+        current = web_docker()
+        if web_complete(web_before) and web_complete(current):
+            after = value.setdefault("webAfter", {})
+            recorded = (after.get("container") or {}).get("id")
+            prior = web_before.get("container")
+            created = current.get("container")
+            # Only a labelled container replacing nothing, or replacing the
+            # recorded one, is claimed; an unrecorded predecessor stays unproven.
+            if web_labelled(created) and (prior is None or recorded and prior["id"] == recorded):
+                after["container"] = created
+                value["webContainerCreated"] = True
+            images = value.setdefault("webImagesCreated", {})
+            for tag, item in current["images"].items():
+                previous = web_before["images"].get(tag)
+                if previous is None or tag in images and images[tag].get("id") == previous.get("id"):
                     images[tag] = item
     if pending.get("caddy"):
         for path, identity in installer_assets().items():
@@ -655,15 +708,30 @@ def data_root_safe(value, usage=None):
     return True, None
 
 
-def site_owned(value):
+def site_text(value):
     expected = value.get("caddy", {}).get("siteAfter")
     current = info(SITE, digest=True)
     if not root_file(SITE) or not expected or not current or expected.get("sha256") != current.get("sha256"):
-        return False
+        return None
     try:
-        return bool(re.fullmatch(r"# Managed by Hermuse remote installer\n[a-zA-Z0-9.-]+ \{\n  vars hermuse_remote_installer v1\n  reverse_proxy 127\.0\.0\.1:9119\n\}\n", text(SITE)))
+        return text(SITE)
     except (OSError, UnsafePath, UnicodeError):
-        return False
+        return None
+
+# Exactly the dashboard site, optionally followed by the web app site on the
+# derived app.<dashboard> host; nothing else.
+SITE_PATTERN = (r"# Managed by Hermuse remote installer\n"
+                r"([a-zA-Z0-9.-]+) \{\n  vars hermuse_remote_installer v1\n  reverse_proxy 127\.0\.0\.1:9119\n\}\n"
+                r"(app\.\1 \{\n  vars hermuse_remote_installer v1\n  reverse_proxy 127\.0\.0\.1:9120\n\}\n)?")
+
+def site_owned(value):
+    body = site_text(value)
+    return bool(body is not None and re.fullmatch(SITE_PATTERN, body))
+
+def site_publishes_web(value):
+    body = site_text(value)
+    match = re.fullmatch(SITE_PATTERN, body) if body is not None else None
+    return bool(match and match[2])
 
 def service_owned():
     if not root_file(SERVICE):
@@ -915,13 +983,35 @@ def inventory(own_lock=False):
             resources.append(resource("image:" + tag, tag, "image", owned,
                 "Remove only this newly installed tag, without force; a used/shared image stays." if owned else
                 "The image tag was preexisting or its creation/identity is unproven; preserve it.", managed=bool(owned)))
+    current_web = web_docker()
+    observed["web"] = current_web
+    if not web_complete(current_web):
+        if value.get("webContainerCreated") or value.get("webImagesCreated"):
+            resources.append(resource("web-unavailable", "Web app Docker assets", "container", False,
+                current_web.get("error", "The Docker CLI is unavailable; recorded web app assets cannot be inspected or removed.")))
+    else:
+        container = current_web.get("container")
+        if container:
+            original = value.get("webAfter", {}).get("container") or {}
+            recorded = bool(value.get("webContainerCreated") and original.get("id") == container["id"]
+                            and web_labelled(container))
+            resources.append(resource("web", WEB_CONTAINER, "container", not problem and recorded,
+                "Stop and remove this identified Hermuse web app container only; never prune Docker." if recorded else
+                "A name or label alone is not ownership; this container is preserved.", managed=recorded))
+        for tag, image in current_web.get("images", {}).items():
+            expected = created_image(value, tag)
+            owned = bool(not problem and expected and expected.get("id") == image.get("id"))
+            resources.append(resource("image:" + tag, tag, "image", owned,
+                "Remove only this newly installed web app tag, without force; a used/shared image stays." if owned else
+                "The web app image tag was preexisting or its creation/identity is unproven; preserve it.", managed=owned))
     if info(SITE):
         removable = not problem and site_owned(value) and shutil.which("caddy") and root_file(CADDY) and caddy_source_safe()
         empty_site = root_file(SITE) and read(SITE) == b"# Managed by Hermuse remote installer; route removed, import retained\n"
         if not empty_site:
+            routes = "dashboard and web app routes" if site_publishes_web(value) else "dashboard route"
             resources.append(resource("caddy-route", SITE, "network", removable,
-                "Remove only the exact dedicated dashboard route; validate/reload Caddy, preserving all other sites." if removable else
-                "The dedicated route lacks matching manifest/source proof, was modified, or Caddy's active config cannot be safely validated; it is preserved.",
+                "Remove only the exact dedicated " + routes + "; validate/reload Caddy, preserving all other sites." if removable else
+                "The dedicated routes lack matching manifest/source proof, were modified, or Caddy's active config cannot be safely validated; they are preserved.",
                 managed=bool(value or site_owned(value))))
         elif import_count():
             resources.append(resource("caddy-import", IMPORT, "network", False,
@@ -1182,6 +1272,15 @@ def remove():
                 warnings.append("Legacy/preexisting browser configuration has no before-state provenance and was retained; only Hermuse plugin entries were removed.")
         step("services", True)
         step("runtime")
+        if "web" in candidates:
+            current = docker_inspect("container", WEB_CONTAINER)
+            expected = baseline_observed["web"].get("container")
+            if not current or not expected or current["id"] != expected["id"] or not web_labelled(current):
+                raise RuntimeError("Web app container identity changed before deletion.")
+            command(["docker", "rm", "-f", current["id"]], timeout=60)
+            if docker_inspect("container", WEB_CONTAINER):
+                raise RuntimeError("The identified web app container was not removed.")
+            done("web")
         if "computer" in candidates:
             current = docker_inspect("container", CONTAINER)
             expected = baseline_observed["docker"].get("container")
@@ -1207,15 +1306,15 @@ def remove():
             if not identifier.startswith("image:"):
                 continue
             tag = identifier[6:]
-            expected = value.get("imagesCreated", {}).get(tag)
+            expected = created_image(value, tag)
             current = docker_inspect("image", tag)
             if not expected or not current or expected.get("id") != current.get("id"):
-                raise RuntimeError("Computer image identity changed before deletion.")
+                raise RuntimeError("Image identity changed before deletion: " + tag)
             result = command(["docker", "image", "rm", tag], required=False, timeout=60)
             if result.returncode:
-                warnings.append("Computer image tag " + tag + " is in use/shared and was preserved.")
+                warnings.append("Image tag " + tag + " is in use/shared and was preserved.")
             elif docker_inspect("image", tag):
-                raise RuntimeError("The computer image tag was not removed.")
+                raise RuntimeError("The image tag was not removed: " + tag)
             else:
                 done(identifier)
         step("runtime", True)

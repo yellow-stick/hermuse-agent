@@ -93,6 +93,10 @@ enum YsIcon {
     '<path d="M11.5 3a17 17 0 0 0 0 18"/><path d="M12.5 3a17 17 0 0 1 3 8"/>'
     '<circle cx="18" cy="18" r="3"/><path d="m20.2 20.2 1.8 1.8"/>',
   ),
+  globe(
+    '<circle cx="12" cy="12" r="10"/>'
+    '<path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+  ),
   checkCircle('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),
   arrowLeft('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),
   chevronLeft('<path d="m15 18-6-6 6-6"/>'),
