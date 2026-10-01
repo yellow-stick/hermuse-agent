@@ -548,7 +548,7 @@ class _InstanceRowState extends State<_InstanceRow> {
         ),
         if (instance.kind == InstanceKind.remote)
           YsButton.neutral(
-            label: 'Check components',
+            label: "What's installed",
             onPressed: component.onComponents,
           ),
       ]),

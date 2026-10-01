@@ -63,8 +63,8 @@ the web app shows **What's on** that Hermes: Hermes itself, the Hermuse plugin,
 its background jobs, Docker, the agent's computer and a model provider, each
 found or missing. Click **Install** on what is missing (or **Install everything
 missing**), then **Continue**; where only the server can act, the row gives the
-command to copy and **Check again**. The list opens again from **Check
-components** on its row in **Instances**.
+command to copy and **Check again**. The list opens again from **What's
+installed** on its row in **Instances**.
 [Install Hermuse on your Hermes](server.md#4-install-hermuse-on-your-hermes-one-click)
 explains each part. SSH server provisioning is available in the desktop app,
 not the web app; provision the server first, then register its HTTPS URL on

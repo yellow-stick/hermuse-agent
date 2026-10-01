@@ -526,7 +526,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
               ),
               if (instance.kind == InstanceKind.remote)
                 YsButton.neutral(
-                  label: 'Check components',
+                  label: "What's installed",
                   onPressed: () => widget.onComponents(instance.id),
                 ),
             ],

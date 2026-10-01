@@ -185,8 +185,8 @@ Next, **What's on <name>** lists the installed components. Choose
 **Continue** to set up a model provider; sign in to a provider or enter your
 API key in the model onboarding. No model account is supplied by the server
 installation. Once a model answers, continue to chat and
-[try the agent's computer](#6-try-it). Components can be reopened under
-**Instances → Components**.
+[try the agent's computer](#6-try-it). The list can be reopened under
+**Instances → What's installed**.
 
 ### If SSH setup stops
 
@@ -329,7 +329,7 @@ what it needs there, each part found in place, missing or waiting on another:
 Hermes Agent itself, the **Hermuse plugin**, its **background jobs** (daily
 feed, weekly ideas, weekly goals check-in, nightly reflection), **Docker**, the
 **agent's computer** and a **model provider**. You find it again under
-**Instances → Components**.
+**Instances → What's installed**.
 
 Click **Install** on a row, or **Install everything missing** when several
 parts are. Hermuse installs through the Hermes dashboard and the plugin, with
@@ -424,7 +424,7 @@ sign-in, and **Disconnect** removes it from the server.
 
 This needs the Hermuse plugin 0.3.0 or later: an older one shows **Update the
 Hermuse plugin on this server** on these rows; update it from the instance's
-**Components**. The web app cannot offer these sign-ins (its browser cannot
+**What's installed**. The web app cannot offer these sign-ins (its browser cannot
 receive the sign-in callback). Using a consumer subscription outside its
 official clients may breach the vendor's terms: personal use only.
 
