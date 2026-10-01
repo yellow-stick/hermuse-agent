@@ -134,6 +134,7 @@ final class ThreadViewState extends State<ThreadView> {
   }
 
   void _send() {
+    if (_composer.text.trim().isEmpty) return;
     widget.controller.send(_composer.text);
     _composer.clear();
   }
@@ -529,21 +530,11 @@ final class _Composer extends StatelessWidget {
                               tooltip: 'Stop',
                               icon: YsIcon.stop,
                             )
-                          : hasText
-                          ? _RoundAction(
+                          : _RoundAction(
                               key: const ValueKey('send'),
-                              onPressed: onSend,
+                              onPressed: hasText ? onSend : null,
                               semanticLabel: 'Send message',
                               icon: YsIcon.send,
-                            )
-                          : YsButton.icon(
-                              key: const ValueKey('voice'),
-                              icon: YsIcon.mic,
-                              onPressed: () {},
-                              semanticLabel: 'Voice',
-                              tooltip: 'Voice',
-                              size: 32,
-                              iconSize: 20,
                             ),
                     ),
                   ),
@@ -567,7 +558,7 @@ final class _RoundAction extends StatelessWidget {
     super.key,
   });
 
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final String semanticLabel;
   final YsIcon icon;
   final String? tooltip;
@@ -583,16 +574,20 @@ final class _RoundAction extends StatelessWidget {
         width: 32,
         height: 32,
         decoration: BoxDecoration(
-          color: state.hovered || state.pressed
-              ? palette.primary2Color
-              : palette.primaryColor,
+          color: state.disabled
+              ? palette.neutralAmbientColor
+              : state.hovered || state.pressed
+                  ? palette.primary2Color
+                  : palette.primaryColor,
           shape: BoxShape.circle,
         ),
         child: Center(
           child: YsIconWidget(
             icon,
             size: 18,
-            color: palette.primaryContentColor,
+            color: state.disabled
+                ? palette.contentMutedColor
+                : palette.primaryContentColor,
           ),
         ),
       ),

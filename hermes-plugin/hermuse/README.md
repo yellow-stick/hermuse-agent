@@ -20,6 +20,7 @@ hermes-plugin/hermuse/
 │                          #   dashboard routes (no restart after install)
 ├── store.py               # stdlib-only file store (shared by tools + dashboard backend)
 ├── subscription_bridge.py # pinned CLIProxyAPI next to Hermes (see "Subscription bridge")
+├── dashboard_restart.py   # in-place restart of the dashboard (see "Restarting the dashboard")
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
 ├── cron_specs.py          # feed/ideas/goals/reflection job specs + idempotent registration
@@ -62,14 +63,19 @@ the server:
    mounts `/api/plugins/hermuse/*` there at once (Hermes itself only mounts
    plugin backends when the dashboard starts). The app polls
    `GET /api/plugins/hermuse/files` until it stops answering `404`; if it never
-   does, restarting the dashboard (`systemctl --user restart hermes-dashboard`,
-   or re-running `hermes dashboard`) finishes the install.
+   does, restarting the dashboard finishes the install (see "Restarting the
+   dashboard").
 3. `POST /api/plugins/hermuse/cron/enable`, then
    `POST /api/plugins/hermuse/computer/setup`, which configures Hermes and starts
    the computer's background bootstrap: `/computer/status` reports `building`
    (`Installing Docker…`, `Downloading the computer image…` or
    `Building the computer image…`) until the computer is `stopped` (ready to
    start).
+
+An update is the same install with `"force": true` over the installed copy.
+The dashboard keeps serving the plugin code it loaded until it restarts, so
+the app then restarts it through the running plugin (see "Restarting the
+dashboard").
 
 ### From the Hermuse Agent desktop app (Hermes on this computer)
 
@@ -172,6 +178,8 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | `POST` | `/bridge/accounts` | `{name, content}` (account file name + JSON text, ≤ 128 KiB) → `{ok, name}`; `400` bad name/content, `409` not set up |
 | `DELETE` | `/bridge/accounts/{name}` | → `{ok, name}` / `404`; `400` bad name (traversal impossible: one `[A-Za-z0-9@._+=-]` segment ending `.json`, never hidden) |
 | `GET` | `/bridge/models` | → `{object: "list", data: [{id, object, owned_by}]}` (models of usable accounts); `409` not set up |
+| `GET` | `/dashboard` | → `{"boot": …}`: this start of the dashboard process (another value once it restarted) |
+| `POST` | `/dashboard/restart` | restart the dashboard in place once the answer is out → `202 {"boot": …}`; `409` a restart is already on its way; `501` this process cannot restart in place (Windows, a backend a desktop app spawned, anything but `hermes dashboard`/`serve`) |
 
 Shapes:
 
@@ -225,6 +233,36 @@ the files), and are tagged `origin: {source: hermuse, key}` so registration
 is idempotent. Installing the plugin never starts background work on its own;
 registration is always an explicit `hermes hermuse enable` (or
 `POST /cron/enable`).
+
+## Restarting the dashboard
+
+A dashboard serves the plugin routes it imported when it started, so an
+updated plugin runs only once it restarts, and Hermes 0.21 has no API for
+that. `POST /dashboard/restart` (`dashboard_restart.py`) answers `202`, then
+about a second later:
+
+1. runs Hermes' own exit teardown of its chat sessions (open transcripts are
+   persisted; at most 15 s), since `atexit` does not run on `exec`;
+2. re-executes the command line that started the process (`sys.orig_argv`:
+   the venv Python and its flags, then the `hermes` launcher or console script
+   or `-m hermes_cli.main`, `dashboard` and its options) with `os.execv`, in
+   the same environment and working directory; every socket is closed on
+   `exec`, so the new program binds the port again.
+
+The PID does not change, so whatever runs the dashboard keeps it: a systemd
+unit sees no exit (`Restart=on-failure` has nothing to do), a user unit, a
+terminal. One restart at a time (`409`); `501` where it cannot run in place:
+Windows (`exec` starts another process there), a backend a desktop app spawned
+(it restarts it itself), any process but `hermes dashboard`/`hermes serve`.
+
+The Hermuse app reads `GET /dashboard`, posts the restart, then polls
+`GET /dashboard` until another `boot` answers. A plugin older than 0.3.0 has no
+such route (`404`/`405`), nor does a plugin whose routes did not mount: the app
+then shows the command that restarts the dashboard on that server, read from
+the systemd unit its process runs in (`/proc/self/cgroup`, through Hermes'
+authenticated file API): `sudo systemctl restart hermuse-dashboard` on a server
+the desktop app set up, `systemctl --user restart hermes-dashboard` for the user
+service of the server guide.
 
 ## Subscription bridge
 
@@ -333,7 +371,9 @@ cd hermes-plugin/hermuse
 ```
 
 Covers store writes/round-trips, idempotent defaults that never clobber
-edits, REST routes + `files/` traversal rejection, real-backend cron
+edits, REST routes + `files/` traversal rejection, the in-place dashboard
+restart (the launch command re-executed after the session teardown, one at a
+time, refused where it cannot run in place), real-backend cron
 registration idempotence, entry-point wiring (tools + skill + CLI + browser
 provider + hooks) and the live mount of the routes into a running dashboard,
 and the computer: Take control lease, `pre_tool_call` gate and readiness

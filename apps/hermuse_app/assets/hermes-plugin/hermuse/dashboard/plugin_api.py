@@ -3,11 +3,12 @@
 Loaded by the dashboard plugin system (``hermes_cli/web_server_dashboard.py``)
 from this file path via ``importlib`` — NOT as part of the plugin package — so
 it adds its parent dir to ``sys.path`` to import the sibling ``store`` and
-``subscription_bridge`` modules (stdlib-only, shared with the agent plugin) and
-the ``computer`` package. HTTP auth (the ``/bridge/*`` routes included) is
-enforced by Hermes' existing ``/api/`` gate; the computer WebSocket (which
-that gate does not cover) takes a single-use ticket from
-``POST /computer/ticket``, like Hermes' own ``/api/display/ws``.
+``subscription_bridge`` modules (stdlib-only, shared with the agent plugin),
+``dashboard_restart`` and the ``computer`` package. HTTP auth (the
+``/bridge/*`` and ``/dashboard/*`` routes included) is enforced by Hermes'
+existing ``/api/`` gate; the computer WebSocket (which that gate does not
+cover) takes a single-use ticket from ``POST /computer/ticket``, like Hermes'
+own ``/api/display/ws``.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import dashboard_restart  # noqa: E402
 import store  # noqa: E402
 import subscription_bridge  # noqa: E402
 from computer import runtime as computer_runtime  # noqa: E402
@@ -335,6 +337,27 @@ def cron_disable():
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
     return {"removed": remove_all(cron_jobs)}
+
+
+# --- Dashboard ---------------------------------------------------------------
+
+
+@router.get("/dashboard")
+def dashboard_status():
+    """This start of the dashboard process: ``boot`` changes once it restarted."""
+    return {"boot": dashboard_restart.BOOT}
+
+
+@router.post("/dashboard/restart", status_code=202)
+def restart_dashboard():
+    """Restarts this dashboard in place once the answer is out (see ``dashboard_restart``)."""
+    try:
+        argv = dashboard_restart.command_line()
+    except dashboard_restart.RestartUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    if not dashboard_restart.schedule(argv):
+        raise HTTPException(status_code=409, detail="The dashboard is already restarting.")
+    return {"boot": dashboard_restart.BOOT}
 
 
 # --- Subscription bridge ---------------------------------------------------

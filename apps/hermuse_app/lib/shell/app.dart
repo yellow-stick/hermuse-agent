@@ -31,6 +31,8 @@ import '../product/library.dart';
 import '../product/route.dart';
 import '../sidebar/side_chats.dart';
 import '../thread/thread_view.dart';
+import 'app_update.dart';
+import 'app_update_dialog.dart';
 import 'brand.dart';
 import 'chat_scope.dart';
 import 'instances.dart';
@@ -54,6 +56,8 @@ final class HermuseApp extends StatefulWidget {
 final class HermuseAppState extends State<HermuseApp> {
   ChatListenable? _chat;
 
+  /// The update prompt shows once per launch, above every route.
+  var _updateShown = false;
   @override
   void dispose() {
     _chat?.dispose();
@@ -89,11 +93,15 @@ final class HermuseAppState extends State<HermuseApp> {
                       color: YsPalette.dark.canvasColor,
                       child: KeystoreErrorScreen(error: keystoreError),
                     )
-                  : _Root(
-                      controllerOverride: widget.controllerOverride,
-                      onAdopt: _adopt,
-                      chat: () => _chat!,
-                      current: () => _chat?.controller,
+                  : _UpdateGate(
+                      shown: _updateShown,
+                      onShown: () => _updateShown = true,
+                      child: _Root(
+                        controllerOverride: widget.controllerOverride,
+                        onAdopt: _adopt,
+                        chat: () => _chat!,
+                        current: () => _chat?.controller,
+                      ),
                     ),
             ),
           ),
@@ -459,7 +467,80 @@ final class _InstallRouteState extends State<_InstallRoute> {
   );
 }
 
-/// Loads the chat controller and shows the chat or an instance screen.
+/// Update prompt above the shell: one feed check per launch, shown once.
+///
+/// The check runs through the shared [appUpdateProvider] (daily cadence,
+/// per-version skip in the settings table). Only [AppUpdateAvailable] opens
+/// the dialog; failures stay silent and retry on the next launch.
+final class _UpdateGate extends ConsumerStatefulWidget {
+  const _UpdateGate({
+    required this.child,
+    required this.shown,
+    required this.onShown,
+  });
+
+  final Widget child;
+  final bool shown;
+  final VoidCallback onShown;
+
+  @override
+  ConsumerState<_UpdateGate> createState() => _UpdateGateState();
+}
+
+final class _UpdateGateState extends ConsumerState<_UpdateGate> {
+  final _dialog = OverlayPortalController();
+  var _open = false;
+
+  void _sync(AppUpdateAvailable? available) {
+    final show = available != null && !widget.shown && !_open && mounted;
+    if (show && !_dialog.isShowing) {
+      _open = true;
+      widget.onShown();
+      _dialog.show();
+    } else if (!show && _open) {
+      _open = false;
+      if (_dialog.isShowing) _dialog.hide();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = currentAppPlatform();
+    final status = ref.watch(
+      appUpdateProvider(
+        currentVersion: currentAppVersion(),
+        platform: platform,
+      ),
+    );
+    final available = switch (status) {
+      AsyncData(value: final AppUpdateAvailable a) => a,
+      _ => null,
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync(available));
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => available == null
+          ? const SizedBox.shrink()
+          : AppUpdateDialog(
+              check: available.check,
+              platform: platform,
+              onClose: () => setState(() => _open = false),
+              onDismissVersion: () => unawaited(
+                ref
+                    .read(
+                      appUpdateProvider(
+                        currentVersion: currentAppVersion(),
+                        platform: platform,
+                      ).notifier,
+                    )
+                    .dismiss(available.check.release!.tag),
+              ),
+            ),
+      child: widget.child,
+    );
+  }
+}
+
 final class _ChatRoute extends ConsumerWidget {
   const _ChatRoute({
     required this.thread,

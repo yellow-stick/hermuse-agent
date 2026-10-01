@@ -804,7 +804,7 @@ abstract final class YsPingMotion {
   static const reach = 2.6;
 }
 
-/// Composer action changing between voice, send and stop: the new glyph
+/// Composer action changing between send and stop: the new glyph
 /// turns in [turn] of a turn and grows from [from] scale over [swap] ms
 /// ([YsEase.settle]) while the disc behind it fills.
 abstract final class YsMorphMotion {

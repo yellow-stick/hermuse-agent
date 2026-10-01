@@ -12,7 +12,7 @@ dependencies:
   hermes_client: ^0.1.0
   hermuse_chat: ^0.1.0
   hermuse_data: ^0.1.0
-  http: ^1.6.0
+  hermuse_update: ^0.1.0
   riverpod: ^3.4.3
   riverpod_annotation: ^4.0.7
   web_socket: ^1.0.1
