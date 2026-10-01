@@ -493,6 +493,16 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
     _session = session;
     _views = session.states.listen(_onView);
     _frames = session.frames.listen(_onFrame);
+    // The demo serves one stream per instance: point it at the tab this
+    // thread actually used (its latest browser host), so the viewer opens
+    // on the matching page.
+    final block = _latestBrowserBlock(component.controller.state.activeThread);
+    final host = block?.host ?? '';
+    if (host.contains('stay.watto')) {
+      session.activateTab('stay');
+    } else if (host.contains('compare.watto') || host.contains('lumenpure')) {
+      session.activateTab('switch');
+    }
     unawaited(
       session.closed.then((closed) {
         if (!mounted || !identical(_session, session)) return;

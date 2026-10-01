@@ -16,9 +16,16 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
     knee-aware week, tracked in Goals.
   - Otto's main chat: customer-interview synthesis → one-pager in the
     Library, plus which AI subscription the chat runs on.
-- Nothing can be written: the composer is replaced by a note, and adding
-  instances, new side chats, rename/archive/delete, reply and the agent's
-  computer are hidden. Anything that still reaches the backend (feed reactions,
+- Its own computer. And you own it. The electricity and Annecy answers
+  carry a Browser card: `browser_*` transcript rows render the card, and
+  the demo serves it fictional stills. Open preview / Open computer shows
+  the fake computer live: replayed frames of fictional sites
+  (`demo/tool/frames/`, regenerated with `render.sh`), a Browser | Desktop
+  switch, and working browser tabs. Take control shows but stays inert;
+  nothing writes anywhere.
+- Nothing else can be written: the composer is replaced by a note, and
+  adding instances, new side chats, rename/archive/delete and reply are
+  hidden. Anything that still reaches the backend (feed reactions,
   idea feedback, goal edits, file saves) is refused with "This demo is
   read-only". Pins, reactions and panel options stay: they are local to the
   browser. No journey shows approvals or confirmations as a selling point.
@@ -28,8 +35,18 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
 `package:hermuse_demo` (this folder) answers the app in the browser:
 
 - `DemoTransport` replaces the Hermes WebSocket: `session.resume` returns the
-  transcripts of `lib/src/content.dart`, every other call is refused.
-- `demoPluginClient` answers the Hermuse plugin routes (`GET` only).
+  transcripts of `lib/src/content.dart` (browser steps ride as `browser_*`
+  tool rows with their page URLs), every other call is refused.
+- `demoPluginClient` answers the Hermuse plugin routes: feed/ideas/goals/
+  library/reflections/system files as before, plus the fake computer —
+  `GET computer/status` (running), `GET computer/thumbnail` and
+  `GET computer/snapshots/<toolId>` from the embedded frames of
+  `lib/src/computer_frames.dart`, and the `POST computer/ticket` that opens
+  the replayed stream. Every other write is refused.
+- `demoComputerConnector` (injected as the `ComputerClient`'s socket)
+  replays the computer's screen: geometry + state messages, then looping
+  JPEG frames of the fictional sites, with local answers to take/release,
+  mode and tab messages. Nothing leaves the browser.
 - `seedDemo` fills a separate browser database (`hermuse-demo`, never the
   app's own `hermuse`) with the instances, the chat index and the search
   cache, on every page load.

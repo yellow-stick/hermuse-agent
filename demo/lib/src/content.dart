@@ -14,13 +14,20 @@ library;
 
 /// One transcript row of a demo chat.
 final class DemoRow {
-  const DemoRow.user(this.text) : role = 'user', reasoning = null, tool = null;
+  const DemoRow.user(this.text)
+    : role = 'user',
+      reasoning = null,
+      tool = null,
+      args = const {};
 
   const DemoRow.agent(this.text, {this.reasoning})
     : role = 'assistant',
-      tool = null;
-  /// A finished tool call; [text] is the summary its row shows.
-  const DemoRow.tool(String this.tool, this.text)
+      tool = null,
+      args = const {};
+  /// A finished tool call; [text] is the summary its row shows. Browser
+  /// calls (`browser_*`) also carry their [args] (page URL, element text),
+  /// like the live transcript does.
+  const DemoRow.tool(String this.tool, this.text, {this.args = const {}})
     : role = 'tool',
       reasoning = null;
 
@@ -29,6 +36,9 @@ final class DemoRow {
   final String text;
   final String? reasoning;
   final String? tool;
+
+  /// Raw tool arguments (page URL, element text) of `browser_*` rows.
+  final Map<String, Object?> args;
 }
 
 /// A conversation: the main chat of an instance or one of its side chats.
@@ -112,8 +122,20 @@ const _ava = DemoInstance(
         'and it looks expensive.',
       ),
       DemoRow.tool('read_file', 'Read renewal email from Voltia (PDF)'),
-      DemoRow.tool('web_search', 'Voltia renewal rates October 2026'),
-      DemoRow.tool('web_search', 'Cheapest green electricity Lyon October'),
+      DemoRow.tool(
+        'browser_navigate',
+        'compare.watto.example/energy-lyon',
+        args: {'url': 'https://compare.watto.example/energy-lyon'},
+      ),
+      DemoRow.tool(
+        'browser_click',
+        'Compare Voltia renewal, Verte and Lumen Pure',
+      ),
+      DemoRow.tool(
+        'browser_type',
+        'Fill the Lumen Pure switch form',
+        args: {'url': 'https://switch.lumenpure.example/form'},
+      ),
       DemoRow.agent(
         'Your renewal jumps to **€0.24/kWh** — about €98 a month for us. '
         'I compared it with the two cheapest green offers in Lyon:\n\n'
@@ -164,7 +186,12 @@ const _ava = DemoInstance(
           'and I tell you if they drop below €25.',
         ),
         DemoRow.user('Book the hotel side of it, with free cancellation.'),
-        DemoRow.tool('web_search', 'Hotel du Lac Annecy free cancellation'),
+        DemoRow.tool(
+          'browser_navigate',
+          'stay.watto.example/annecy-lac',
+          args: {'url': 'https://stay.watto.example/annecy-lac'},
+        ),
+        DemoRow.tool('browser_type', 'Fill the Hôtel du Lac booking form'),
         DemoRow.agent(
           'Found it: two nights at the Hôtel du Lac, **€270 with breakfast**, '
           'free cancellation until Thursday. I filled in the booking on my '

@@ -66,6 +66,9 @@ final class DemoTransport implements HermesTransport {
             reasoning: row.reasoning,
             name: row.tool,
             context: row.role == 'tool' ? row.text : null,
+            args: row.role == 'tool' && row.args.isNotEmpty
+                ? row.args
+                : null,
             toolCallId: row.role == 'tool' ? '${chat.id}-tool-$i' : null,
             timestamp: start + 40.0 * i,
             rowId: base + i,

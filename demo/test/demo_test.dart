@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:hermuse_data/hermuse_data.dart';
@@ -117,6 +119,34 @@ void main() {
         ava.files[preferencesFileName],
       ),
     );
+    // The fake computer: running, stills per browser step, ticket allowed.
+    final computer = await container.read(
+      computerClientProvider(ava.id).future,
+    );
+    final status = await computer.status();
+    expect(status.state, ComputerState.running);
+    final shot = await computer.snapshot('${ava.main.id}-tool-2');
+    expect(shot, isNotEmpty);
+    expect(shot!.first, 0xFF);
+    expect(await computer.thumbnail(), isNotEmpty);
+    final session = await computer.open();
+    final views = <ComputerViewState>[];
+    final frames = <Uint8List>[];
+    session.states.listen(views.add);
+    session.frames.listen(frames.add);
+    await pumpEventQueue();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(views, isNotEmpty);
+    expect(frames, isNotEmpty);
+    expect(frames.first.first, 0xFF);
+    // Take control answers but hands over nothing; mode flips the frame.
+    session.take();
+    await pumpEventQueue();
+    expect(views.last.inControl, isFalse);
+    session.setMode(ComputerMode.desktop);
+    await pumpEventQueue();
+    expect(views.last.mode, ComputerMode.desktop);
+    await session.close();
     await expectLater(
       rest.postJson('$hermusePluginRoute/feed/feed-ava-1/react', {
         'reaction': 'love',

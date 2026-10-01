@@ -1,29 +1,73 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'computer_frames.dart';
 import 'content.dart';
 import 'transport.dart';
+
+/// Fake computer of a demo instance: the plugin status it reports, the JPEG
+/// frame per snapshot id (a browser tool call) and the fallback thumbnail.
+final class DemoComputer {
+  const DemoComputer({
+    this.thumbnail = 'energy',
+    this.snapshots = const {},
+    this.tabs = const [],
+  });
+
+  /// Frame served as the live thumbnail.
+  final String thumbnail;
+
+  /// `snapshot(toolId)` answers, keyed by transcript tool-call index.
+  final Map<int, String> snapshots;
+
+  /// Chromium tabs the live stream reports.
+  final List<Map<String, Object?>> tabs;
+}
 
 /// An HTTP client answering the Hermuse plugin routes of [instance] from the
 /// demo content: GETs return its feed, ideas, goals, library, reflections
 /// and system files; every write is refused with 405 [demoReadOnlyMessage]
 /// (not 401/403, which the app reads as a sign-in problem).
-http.Client demoPluginClient(DemoInstance instance, {DateTime? now}) {
+http.Client demoPluginClient(
+  DemoInstance instance, {
+  DateTime? now,
+  DemoComputer computer = const DemoComputer(),
+}) {
   final loaded = now ?? DateTime.now();
   return MockClient((request) async {
     final path = request.url.path;
     if (!path.startsWith(hermusePluginRoute)) return _json(404, _notFound);
+    final route = path.substring(hermusePluginRoute.length);
+    // The fake computer: status + stills read like the plugin; the ticket
+    // opens the replayed stream (see `demoComputerConnector`). Everything
+    // else still refuses writes with 405.
+    if (route == '/computer/status' && request.method == 'GET') {
+      return _json(200, {
+        'state': 'running',
+        'detail': '',
+        'control': 'agent',
+        'mode': 'browser',
+      });
+    }
+    if (route == '/computer/thumbnail' && request.method == 'GET') {
+      return _bytes(demoComputerFrame(computer.thumbnail));
+    }
+    const snapshotsPrefix = '/computer/snapshots/';
+    if (route.startsWith(snapshotsPrefix) && request.method == 'GET') {
+      final frame = _snapshotFrame(instance, computer, route);
+      return frame == null ? _json(404, _notFound) : _bytes(frame);
+    }
+    if (route == '/computer/ticket' && request.method == 'POST') {
+      return _json(200, {'ticket': 'demo-ticket'});
+    }
     if (request.method != 'GET') {
       return _json(405, {'detail': demoReadOnlyMessage});
     }
-    final body = _get(
-      instance,
-      path.substring(hermusePluginRoute.length),
-      loaded,
-    );
+    final body = _get(instance, route, loaded);
     return body == null ? _json(404, _notFound) : _json(200, body);
   });
 }
@@ -99,3 +143,34 @@ http.Response _json(int status, Map<String, Object?> body) => http.Response(
   status,
   headers: {'content-type': 'application/json; charset=utf-8'},
 );
+
+http.Response _bytes(Uint8List body) => http.Response.bytes(
+  body,
+  200,
+  headers: {'content-type': 'image/jpeg'},
+);
+
+/// Frame for a snapshot request: the mapped frame of the transcript tool
+/// call the id points at. The Annecy booking steps always show the stay
+/// page; electricity steps use the per-index map, else the thumbnail.
+Uint8List? _snapshotFrame(
+  DemoInstance instance,
+  DemoComputer computer,
+  String route,
+) {
+  const prefix = '/computer/snapshots/';
+  final id = Uri.decodeComponent(route.substring(prefix.length));
+  for (final chat in instance.chats) {
+    for (final (i, row) in chat.rows.indexed) {
+      if (row.role == 'tool' && '${chat.id}-tool-$i' == id) {
+        if (chat.title == 'Weekend in Annecy') {
+          return demoComputerFrame('annecy');
+        }
+        final frame = computer.snapshots[i];
+        if (frame != null) return demoComputerFrame(frame);
+        return demoComputerFrame(computer.thumbnail);
+      }
+    }
+  }
+  return null;
+}
