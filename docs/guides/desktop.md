@@ -4,8 +4,75 @@ The Hermuse Agent desktop app works with Hermes Agent: it can install Hermes
 Agent on your computer, keep it running, and add Hermuse to it. Nothing leaves
 your computer except the requests to the AI models you connect.
 
-To use a Hermes that runs on a server instead, see
-[Set up Hermuse with Hermes on a server](server.md).
+To install Hermes and Hermuse on a server over SSH, or connect to a server
+where Hermes already runs, see
+[Set up Hermuse with Hermes on a server](server.md). The server requirements
+are separate from the desktop app requirements below.
+
+## Remove a server installation over SSH
+
+On the server SSH setup form, choose **Remove from server**. You can also use
+this action on a remote row in **Hermes instances**. It works even if setup
+stopped partway through and no connection was saved. This removes the server
+installation, not the desktop app.
+
+Enter the SSH host, port and a root or passwordless-sudo administrator account,
+not the dedicated `hermes` account being removed. Use an SSH password or leave
+it blank to use an existing key on your computer. As during installation, accept
+the server's SSH fingerprint only after verifying its identity. Inspection is
+read-only and closes its SSH connection. The confirmation reconnects with that
+same pinned host key and checks that the inspected resources have not changed.
+
+The preview lists what can be removed and what must be preserved, with a reason
+for each. Choose explicitly:
+
+- **Uninstall and keep data** stops/disables the exact managed dashboard service,
+  removes proven managed runtimes, the Hermuse plugin and its background jobs,
+  and the identified agent-computer container. It keeps configuration,
+  credentials, sessions, Feed/Ideas/Goals data, caches, the computer's named home
+  volume and the dedicated account. Only Hermuse plugin references and
+  browser settings with a known original absence are removed from configuration;
+  unrelated settings and jobs are preserved.
+- **Uninstall and purge data** additionally removes only proven owned
+  configuration/data/cache directories and an unshared, proven owned computer
+  home volume. The dedicated account is removed only if its original UID/home
+  identity is known, no processes or other services use it, and its home can be
+  made empty without removing unrelated files. Modified shell startup files,
+  extra home files, other service usage and unproven caches keep the account.
+
+Removal never resets the firewall, prunes Docker, or deletes a shared broker,
+another Caddy site or a preexisting system installation. Only an exact
+manifest-matched Caddy fragment with the installer's internal route marker can
+be removed. An exact import is removed only when its insertion was recorded;
+preexisting imports retain an empty owned fragment so Caddy stays valid.
+Unrelated imports/sites are left as they are, and Caddy validation failures
+restore the changed configuration bytes.
+
+Firewall reversal uses the recorded exact UFW additions and prior activation,
+not a stale complete ruleset. A previously inactive firewall is disabled only
+while its committed configuration is unchanged. If another administrator
+changed it, active SSH ingress and potentially shared HTTP/HTTPS rules remain,
+with an explanation. System packages, Docker/Caddy installations and Caddy
+certificate storage are retained even if setup installed them: package origin
+alone does not prove exclusive use.
+
+Older installations without precise provenance are handled conservatively:
+known managed service/plugin/checkout/container resources can be removed, but
+unproven runtimes, data, volumes, accounts, firewall additions and Caddy routes
+are retained and reported as **partial removal**, never as fully reversed.
+An interrupted installation can also leave an unbound resource that must be
+preserved. A nonsecret root-owned ownership audit remains under
+`/var/lib/hermuse-provision/ownership.json` after normal removal or purge, so
+another inspection and later purge do not lose the ownership evidence.
+
+Setup and removal exclude each other with a process-held SSH/kernel lock;
+pending firewall/Caddy rollback transactions also block removal. **Cancel**
+closes the transport and stops later work; already completed removals are not
+rolled back. After a failure, cancellation or partial removal, choose
+**Inspect remaining resources** before confirming a retry.
+
+The saved connection and its app-side credentials are retained in both modes.
+Deleting that saved connection is a separate action.
 
 ## Download for Linux
 
@@ -112,8 +179,8 @@ as it is.
 
 Hermuse Agent keeps credentials only in the system keyring, never in plain
 text. If the keyring is locked, unlock it when your system asks, then choose
-**Check again**. **Connect to a Hermes** (a Hermes on a server) also checks the
-keyring first, but installs neither Hermes nor Docker.
+**Check again**. **Connect to a Hermes → Yes, Hermes is installed** also checks
+the keyring first, but installs neither Hermes nor Docker on your computer.
 
 Then Hermuse Agent:
 

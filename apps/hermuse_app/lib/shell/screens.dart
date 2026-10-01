@@ -400,7 +400,9 @@ final class WelcomeScreen extends ConsumerWidget {
       YsChoiceCard(
         art: YsArt.remote,
         title: 'Connect to a Hermes',
-        body: 'A Hermes already running on a server or another computer.',
+        body: onInstall == null
+            ? 'A Hermes already running on a server or another computer.'
+            : 'Use a server or another computer, with or without Hermes.',
         onPressed: onConnect,
       ),
       if (onInstall case final install?)
@@ -472,6 +474,51 @@ final class WelcomeScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// Desktop connection choice, before asking for a dashboard URL or SSH access.
+final class HermesPresentScreen extends StatelessWidget {
+  const HermesPresentScreen({
+    required this.onYes,
+    required this.onNo,
+    required this.onCancel,
+    super.key,
+  });
+
+  final VoidCallback onYes;
+  final VoidCallback onNo;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) => YsEntrance(
+    child: Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(YsSpace.xl),
+        child: YsDialogCard(
+          children: [
+            const HermuseMascot(),
+            const YsDialogTitle('Is Hermes already installed on that machine?'),
+            const YsDialogBody(
+              'Connect to its dashboard, or let Hermuse set up your server.',
+            ),
+            YsChoiceCard(
+              art: YsArt.remote,
+              title: 'Yes, Hermes is installed',
+              body: 'I have its dashboard URL and sign-in details.',
+              onPressed: onYes,
+            ),
+            YsChoiceCard(
+              art: YsArt.local,
+              title: 'No, install Hermes',
+              body: 'Use SSH to install Hermes and Hermuse on my Linux server.',
+              onPressed: onNo,
+            ),
+            YsButton.neutral(label: 'Cancel', onPressed: onCancel),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 /// Blocking screen shown when the platform keystore is unavailable (macOS,

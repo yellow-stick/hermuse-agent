@@ -67,6 +67,7 @@ final class InstancesScreen extends ConsumerWidget {
     required this.onComponents,
     required this.onConnections,
     this.onInstall,
+    this.onRemoveFromServer,
     super.key,
   });
 
@@ -80,6 +81,7 @@ final class InstancesScreen extends ConsumerWidget {
   /// What Hermuse needs on a remote instance, and its installs.
   final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
+  final ValueChanged<String>? onRemoveFromServer;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = YsTheme.of(context);
@@ -162,6 +164,7 @@ final class InstancesScreen extends ConsumerWidget {
                 onSetup: onSetup,
                 onComponents: onComponents,
                 onConnections: onConnections,
+                onRemoveFromServer: onRemoveFromServer,
               ),
               const SizedBox(height: 8),
             ],
@@ -188,12 +191,14 @@ final class _InstanceRow extends ConsumerStatefulWidget {
     required this.onSetup,
     required this.onComponents,
     required this.onConnections,
+    this.onRemoveFromServer,
   });
 
   final HermesInstance instance;
   final ValueChanged<String> onSetup;
   final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
+  final ValueChanged<String>? onRemoveFromServer;
 
   @override
   ConsumerState<_InstanceRow> createState() => _InstanceRowState();
@@ -500,6 +505,14 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                       textStyle: YsType.small,
                       height: 28,
                     ),
+                  if (instance.kind == InstanceKind.remote &&
+                      widget.onRemoveFromServer != null)
+                    YsButton.neutral(
+                      label: 'Remove from server',
+                      onPressed: () => widget.onRemoveFromServer!(instance.id),
+                      textStyle: YsType.small,
+                      height: 28,
+                    ),
                   YsButton.neutral(
                     label: 'Connections',
                     onPressed: () => widget.onConnections(instance.id),
@@ -568,12 +581,22 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
   const AddInstanceScreen({
     required this.onDone,
     required this.onCancel,
+    this.initialUrl,
+    this.initialUsername,
+    this.initialPassword,
+    this.autoProbe = false,
     super.key,
   });
 
   /// The instance is saved (its id): the caller opens it.
   final ValueChanged<String> onDone;
   final VoidCallback onCancel;
+
+  /// In-memory handoff from remote setup; secrets are saved only after login.
+  final String? initialUrl;
+  final String? initialUsername;
+  final String? initialPassword;
+  final bool autoProbe;
 
   @override
   ConsumerState<AddInstanceScreen> createState() => AddInstanceScreenState();
@@ -590,6 +613,9 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   HermesStatus? _status;
   String? _error;
   var _busy = false;
+  var _cancelled = false;
+  var _initialCredentialsPending = true;
+  late final Uri? _initialAddress;
 
   /// The address the running check reaches.
   Uri? _checking;
@@ -599,7 +625,22 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   var _probeFailed = false;
 
   @override
+  void initState() {
+    super.initState();
+    _url.text = widget.initialUrl ?? '';
+    _initialAddress = _parsedUrl;
+    if (widget.autoProbe) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_cancelled) _probe();
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _cancelled = true;
+    _password.clear();
+    _token.clear();
     _url.dispose();
     _label.dispose();
     _username.dispose();
@@ -622,19 +663,41 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
     }
   }
 
-  /// A new address drops what the check said about the previous one.
+  /// A changed address needs a fresh probe. Never carry generated dashboard
+  /// credentials over to another server.
   void _urlChanged(String _) => setState(() {
-    if (_status != null) return;
+    _status = null;
     _error = null;
     _probeFailed = false;
+    if (!_isInitialUrl) {
+      _initialCredentialsPending = false;
+      if (widget.initialPassword != null) {
+        _username.clear();
+        _password.clear();
+      }
+    }
   });
 
+  bool get _isInitialUrl =>
+      _initialAddress != null && _parsedUrl == _initialAddress;
+
+  void _cancel() {
+    _cancelled = true;
+    _password.clear();
+    _token.clear();
+    widget.onCancel();
+  }
+
   void _failProbe(String message) => setState(() {
-    _error = message;
+    _error = widget.initialUrl != null && _isInitialUrl
+        ? '$message\n\nMake sure TCP ports 80 and 443 are reachable from '
+              'the internet in both the server and provider firewalls.'
+        : message;
     _probeFailed = true;
   });
 
   Future<void> _probe() async {
+    if (_busy || _cancelled) return;
     final url = _parsedUrl;
     if (url == null) {
       setState(() => _error = 'Enter a valid http(s) URL');
@@ -647,13 +710,14 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       _status = null;
       _checking = url;
     });
+    bool current() => mounted && !_cancelled && _parsedUrl == url;
     try {
       final status = await HermesRestClient(
         ref.read(httpClientProvider),
         baseUrl: url,
       ).getStatus();
       checkSupportedVersion(status.version);
-      if (!mounted) return;
+      if (!current()) return;
       if (status.loginMethod == null) {
         _failProbe(
           'This Hermes needs a login Hermuse does not support '
@@ -664,25 +728,31 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       setState(() {
         _status = status;
         if (!_labelEdited.value) _label.text = url.host;
+        if (_initialCredentialsPending && _isInitialUrl) {
+          _username.text = widget.initialUsername ?? '';
+          _password.text = widget.initialPassword ?? '';
+          _initialCredentialsPending = false;
+        }
       });
     } on UnsupportedServerVersion catch (e) {
-      if (mounted) {
+      if (current()) {
         _failProbe(
           'Hermes ${e.version} is not supported (needs ${e.supported}.x)',
         );
       }
     } on HermesUnreachable {
-      if (mounted) _failProbe('Host unreachable: $url');
+      if (current()) _failProbe('Host unreachable: $url');
     } on HermesException catch (e) {
-      if (mounted) _failProbe(e.message);
+      if (current()) _failProbe(e.message);
     } on Object catch (e) {
-      if (mounted) _failProbe('$e');
+      if (current()) _failProbe('$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted && !_cancelled) setState(() => _busy = false);
     }
   }
 
   Future<void> _save() async {
+    if (_busy || _cancelled) return;
     final url = _parsedUrl;
     final login = _status?.loginMethod;
     if (url == null || login == null) return;
@@ -726,6 +796,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                     SecretKeys.password: secret,
                   },
           );
+      if (!mounted || _cancelled) return;
       _token.clear();
       _password.clear();
       widget.onDone(candidate.id);
@@ -798,7 +869,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                     helper: 'Paste the web address of your Hermes dashboard.',
                     trailing: YsButton.icon(
                       icon: YsIcon.close,
-                      onPressed: widget.onCancel,
+                      onPressed: _cancel,
                       semanticLabel: 'Cancel',
                       tooltip: 'Cancel',
                     ),

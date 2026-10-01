@@ -93,8 +93,9 @@ Details: [Run Hermes on your computer with the desktop app](docs/guides/desktop.
 
 ## Get started
 
-- [Set up Hermuse with Hermes on a server](docs/guides/server.md): a VPS or a
-  home server, with a one-click install from Hermuse.
+- [Set up Hermuse with Hermes on a server](docs/guides/server.md): install
+  Hermes and Hermuse over SSH from the desktop app, or connect an existing
+  server's dashboard.
 - [Run Hermes on your computer with the desktop app](docs/guides/desktop.md).
 - [Web app and relay](docs/guides/web-app-and-relay.md): serve the web app for
   your Hermes.
