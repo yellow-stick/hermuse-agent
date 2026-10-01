@@ -75,6 +75,7 @@ final class ConnectionCard {
     this.advanced = false,
     this.bridgeSpec,
     this.onServer = false,
+    this.needsPlugin = false,
   });
 
   /// Provider id (`nous`, `openai-codex`, `openai-api`, `custom:<id>`, …).
@@ -128,6 +129,11 @@ final class ConnectionCard {
   /// [bridgeOnServer]), not in this desktop's sidecar.
   final bool onServer;
 
+  /// True for a server bridge card whose server lacks a Hermuse plugin with
+  /// the bridge: [detail] says whether to install or update it, which the
+  /// server's setup checklist does.
+  final bool needsPlugin;
+
   ConnectionCard copyWith({
     String? name,
     String? logoKey,
@@ -145,6 +151,7 @@ final class ConnectionCard {
     bool? advanced,
     BridgeCardSpec? Function()? bridgeSpec,
     bool? onServer,
+    bool? needsPlugin,
   }) => ConnectionCard(
     id: id,
     name: name ?? this.name,
@@ -165,6 +172,7 @@ final class ConnectionCard {
     advanced: advanced ?? this.advanced,
     bridgeSpec: bridgeSpec == null ? this.bridgeSpec : bridgeSpec(),
     onServer: onServer ?? this.onServer,
+    needsPlugin: needsPlugin ?? this.needsPlugin,
   );
 }
 
@@ -534,8 +542,9 @@ List<ConnectionCard> buildConnectionCards({
 /// the server holds a usable account of [spec] AND Hermes has the card's
 /// endpoint pointing at that bridge. An entry still pointing elsewhere (a
 /// desktop sidecar) reads as not registered, so a tap re-registers it. A
-/// server that cannot run the bridge (old plugin, other host) puts the card
-/// in error with what to do.
+/// server whose plugin lacks the bridge waits on its install or update
+/// ([ConnectionCard.needsPlugin]); one that cannot run it (other host) puts
+/// the card in error with why.
 ConnectionCard _serverBridgeCard(
   BridgeCardSpec spec,
   ServerBridgeStatus server,
@@ -558,6 +567,10 @@ ConnectionCard _serverBridgeCard(
       endpoint != null &&
       named.any((row) => _sameUrl(row['base_url'], endpoint));
   final connected = server.supported && usable.isNotEmpty && registered;
+  final needsPlugin =
+      !server.supported &&
+      (server.detail == serverBridgeUpdatePlugin ||
+          server.detail == serverBridgeInstallPlugin);
   final email = usable.isEmpty ? '' : usable.first.email;
   final removable = accounts.isNotEmpty || named.isNotEmpty;
   return ConnectionCard(
@@ -565,7 +578,9 @@ ConnectionCard _serverBridgeCard(
     name: spec.label,
     logoKey: spec.provider.name,
     flow: ConnectionFlow.bridge,
-    state: !server.supported
+    state: needsPlugin
+        ? ConnectionCardState.disconnected
+        : !server.supported
         ? ConnectionCardState.error
         : connected
         ? ConnectionCardState.connected
@@ -584,6 +599,7 @@ ConnectionCard _serverBridgeCard(
     advanced: true,
     bridgeSpec: spec,
     onServer: true,
+    needsPlugin: needsPlugin,
   );
 }
 

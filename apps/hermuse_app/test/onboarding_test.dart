@@ -532,6 +532,41 @@ void main() {
       expect(find.text('Advanced'), findsWidgets);
     });
 
+    testWidgets('a server without the bridge plugin leads to its update', (
+      tester,
+    ) async {
+      final harness = _Harness(
+        bridgeHost: const _StoppedBridgeHost(),
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({'providers': []}),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async =>
+              _json({'endpoints': []}),
+          'GET /api/env': (_) async => _json({}),
+          // Plugin 0.2: no bridge routes, but the plugin answers.
+          'GET $hermuseBridgeRoute/status': (_) async =>
+              _json({'detail': 'Not Found'}, 404),
+          'GET $hermusePluginRoute/files': (_) async => _json({'files': []}),
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      var opened = 0;
+      await _pumpConnections(tester, harness, onServerSetup: () => opened++);
+
+      expect(find.text('Retry'), findsNothing);
+      expect(find.text('Update plugin'), findsNWidgets(2));
+      expect(find.text(serverBridgeUpdatePlugin), findsNWidgets(2));
+
+      await tester.tap(find.text('Sign in with Claude Code'));
+      await tester.pump();
+      await tester.tap(find.text('Update the plugin'));
+      expect(opened, 1);
+    });
+
     testWidgets('custom endpoint Add enables once filled in, then saves', (
       tester,
     ) async {
@@ -683,7 +718,11 @@ Future<void> _pumpOnboarding(
   await tester.pumpAndSettle();
 }
 
-Future<void> _pumpConnections(WidgetTester tester, _Harness harness) async {
+Future<void> _pumpConnections(
+  WidgetTester tester,
+  _Harness harness, {
+  VoidCallback? onServerSetup,
+}) async {
   await tester.pumpWidget(
     harness._scope(
       child: MediaQuery(
@@ -696,6 +735,7 @@ Future<void> _pumpConnections(WidgetTester tester, _Harness harness) async {
               child: ConnectionsScreen(
                 instance: harness.instance,
                 onBack: () {},
+                onServerSetup: onServerSetup,
               ),
             ),
           ),

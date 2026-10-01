@@ -539,10 +539,16 @@ final class _ChatRoute extends ConsumerWidget {
                           : active.openSetup(setup));
                     },
                     onSkipToChat: () => onRoute(_Route.chat),
+                    onServerSetup: instance.kind == InstanceKind.remote
+                        ? () => onRoute(_Route.components, instance.id)
+                        : null,
                   )
                 : ConnectionsScreen(
                     instance: instance,
                     onBack: () => onRoute(_Route.instances),
+                    onServerSetup: instance.kind == InstanceKind.remote
+                        ? () => onRoute(_Route.components, instance.id)
+                        : null,
                   ),
           );
         }

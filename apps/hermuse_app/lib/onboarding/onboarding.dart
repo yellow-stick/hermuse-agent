@@ -24,12 +24,17 @@ final class OnboardingScreen extends ConsumerStatefulWidget {
     required this.instance,
     required this.onDone,
     required this.onSkipToChat,
+    this.onServerSetup,
     super.key,
   });
 
   final HermesInstance instance;
   final ValueChanged<ThreadRef> onDone;
   final VoidCallback onSkipToChat;
+
+  /// Opens what is installed on the instance's server (remote only): the
+  /// subscription sign-ins need its Hermuse plugin up to date.
+  final VoidCallback? onServerSetup;
 
   @override
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -90,6 +95,7 @@ final class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           instance: widget.instance,
           onBack: widget.onSkipToChat,
           lead: const _StepDots(OnboardingStep.connections),
+          onServerSetup: widget.onServerSetup,
         ),
         OnboardingStep.defaultModel => _DefaultModel(
           instanceId: widget.instance.id,

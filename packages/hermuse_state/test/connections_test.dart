@@ -1310,7 +1310,8 @@ void main() {
           'files': ['FEED_PROMPT.md'],
         });
       final claude = card(await serverCards(), 'bridge:anthropic');
-      expect(claude.state, ConnectionCardState.error);
+      expect(claude.needsPlugin, isTrue);
+      expect(claude.state, ConnectionCardState.disconnected);
       expect(claude.detail, serverBridgeUpdatePlugin);
 
       final result = await signIn();

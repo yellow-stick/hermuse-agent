@@ -31,11 +31,16 @@ final class ConnectionsScreen extends ConsumerStatefulWidget {
     required this.instance,
     required this.onBack,
     this.lead,
+    this.onServerSetup,
     super.key,
   });
 
   final HermesInstance instance;
   final VoidCallback onBack;
+
+  /// Opens what is installed on the instance's server, where its Hermuse
+  /// plugin is installed or updated (subscription sign-ins need it there).
+  final VoidCallback? onServerSetup;
 
   /// Shown above the page head: the onboarding stepper when the page is the
   /// onboarding's Accounts step.
@@ -114,6 +119,7 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       signIn: signIn,
       pendingLogin: state?.pendingLogin,
       pendingBridgeLogin: state?.pendingBridgeLogin,
+      onServerSetup: widget.onServerSetup,
     );
     Widget group(String title, List<Widget> rows) => Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -280,6 +286,7 @@ final class _ConnectionCard extends ConsumerStatefulWidget {
     required this.pendingLogin,
     required this.pendingBridgeLogin,
     this.signIn,
+    this.onServerSetup,
     super.key,
   });
 
@@ -291,6 +298,8 @@ final class _ConnectionCard extends ConsumerStatefulWidget {
   /// Set on a featured subscription sign-in: a taller row naming its
   /// product and plan, without the Advanced chip.
   final _SignIn? signIn;
+
+  final VoidCallback? onServerSetup;
 
   @override
   ConsumerState<_ConnectionCard> createState() => _ConnectionCardState();
@@ -335,7 +344,8 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         : connected
         ? signIn.product
         : 'Sign in with ${signIn.product}';
-    final idle = card.state == ConnectionCardState.disconnected;
+    final idle =
+        card.state == ConnectionCardState.disconnected && !card.needsPlugin;
     final subtitle = signIn != null && (idle || card.detail.isEmpty)
         ? 'Use your ${signIn.plan} subscription'
         : card.detail;
@@ -346,6 +356,12 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         ? YsLayout.activityTileSize + YsSpace.md + 14
         : 48.0;
     final (action, actionColor) = switch ((card.state, card.flow)) {
+      _ when card.needsPlugin => (
+        card.detail == serverBridgeInstallPlugin
+            ? 'Install plugin'
+            : 'Update plugin',
+        palette.primary2Color,
+      ),
       (ConnectionCardState.connected, _) => (
         'Manage',
         palette.contentMutedColor,
@@ -642,6 +658,35 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
 
   Widget _bridgeBody(ConnectionCard card, BridgeLogin? login) {
     final palette = YsTheme.of(context);
+    if (card.needsPlugin) {
+      final install = card.detail == serverBridgeInstallPlugin;
+      final setup = widget.onServerSetup;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'The sign-in keeps your subscription on the server, which needs '
+            'the Hermuse plugin $hermusePluginVersion or later. '
+            '${install ? 'Install' : 'Update'} it from what is installed on '
+            'the server, then come back here.',
+            style: YsType.small.flutter.copyWith(
+              color: palette.contentMutedColor,
+            ),
+          ),
+          if (setup != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: YsButton.primary(
+                label: install ? 'Install the plugin' : 'Update the plugin',
+                onPressed: setup,
+              ),
+            ),
+          ],
+        ],
+      );
+    }
     if (login == null) {
       final connected = card.state == ConnectionCardState.connected;
       return Column(
