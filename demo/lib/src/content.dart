@@ -149,36 +149,29 @@ const _ava = DemoInstance(
             'Renewal up 29 %. Lumen Pure is the cheapest green offer with '
             'no exit fee, so switching beats negotiating.',
       ),
-      DemoRow.user('What did you put in my Feed this morning?'),
-      DemoRow.tool('memory', "Read this morning's feed (3 posts)"),
-      DemoRow.agent(
-        'Three things, written before you woke up:\n\n'
-        '- **Your morning recap** — 18 emails read overnight, switch '
-          'confirmed, school form pre-filled, dentist moved.\n'
-        '- **Annecy this weekend: sun, 19 °C** — good news for the trip.\n'
-        '- **Week 3 of your running plan** starts with an easy 6 km.\n\n'
-        'Say the word and I change what I follow.',
-      ),
     ],
   ),
   sideChats: [
     DemoChat(
       id: '20260930_021048_ava010',
-      title: 'Overnight inbox',
+      title: 'Night pass — emails + code',
       age: Duration(hours: 7),
       rows: [
         DemoRow.agent(
-          'Night shift done — I went through your emails while you slept '
-          '(Email: connected):\n\n'
+          'Night shift done — emails and code, while you slept '
+          '(Email: connected, GitHub: connected):\n\n'
           '- **Read 18 new emails**, answered 2, skipped 3 newsletters.\n'
+          '- **Reviewed 6 commits** on `lea/home-admin`: 1 failing test in '
+          'checkout (`cart_test.dart`), 2 TODOs left.\n'
           '- **Lumen Pure: switch confirmed** — €0.18/kWh from Friday.\n'
           '- **School trip form due Friday** — pre-filled, needs your '
           'signature.\n'
           '- **Dentist moved to Thursday 9:30** — calendar updated.\n\n'
-          'Nothing else needed you. The recap is in your Feed.',
+          'Nothing else needed you. Your to-do list is in your Feed.',
           reasoning:
-              'Nightly pass over the connected mailbox: triage, act on what '
-              'is actionable, report the rest in the morning feed.',
+              'Nightly pass over the connected mailbox and the day’s pushes: '
+              'triage, review, act on what is actionable, report the rest '
+              'in the morning feed.',
         ),
       ],
     ),
@@ -222,6 +215,27 @@ const _ava = DemoInstance(
       ],
     ),
     DemoChat(
+      id: '20260929_220412_ava011',
+      title: 'Nightly to-do list',
+      age: Duration(hours: 11),
+      rows: [
+        DemoRow.user(
+          "I'm swamped. Every night, go through my emails and what I "
+          'pushed today, and give me a clean to-do list for tomorrow at 7.',
+        ),
+        DemoRow.tool(
+          'cronjob',
+          'Nightly at 02:00: inbox + commits review, recap at 07:00',
+        ),
+        DemoRow.agent(
+          'Scheduled — every night at **02:00** I go through your emails '
+          'and what you pushed that day (Email: connected, GitHub: '
+          'connected), and your recap with the to-do list is in your Feed '
+          'at **07:00**.',
+        ),
+      ],
+    ),
+    DemoChat(
       id: '20260928_064418_ava002',
       title: 'Autumn half-marathon',
       age: Duration(days: 2),
@@ -259,13 +273,14 @@ const _ava = DemoInstance(
   feed: [
     {
       'id': 'feed-ava-0',
-      'title': 'Your morning recap',
+      'title': 'Your day — 4 things',
       'topic': 'Overnight',
       'body':
-          'While you slept I read 18 emails (Email: connected). Lumen Pure '
-          'confirmed the switch — €0.18/kWh from Friday. The school trip '
-          'form is pre-filled, it needs your signature. Dentist moved to '
-          'Thursday 9:30, calendar updated. Nothing else needed you.',
+          'From last night’s pass (18 emails, 6 commits reviewed):\n\n'
+          '☐ Sign the school trip form (pre-filled, due Friday)\n'
+          '☐ Fix the failing checkout test (`cart_test.dart`)\n'
+          '☐ Reply to Marc about the invoice\n'
+          '☐ Dentist moved to Thu 9:30 — nothing to do',
       'sources': <String>[],
       'age': Duration(hours: 1),
       'reactions': {'love': ''},

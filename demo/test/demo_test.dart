@@ -52,9 +52,10 @@ void main() {
       expect(chat.state.mainThread.messages, isNotEmpty);
       expect(chat.state.sideThreads.map((t) => t.title), [
         'Weekend in Annecy',
-        'Overnight inbox',
+        'Night pass — emails + code',
+        'Nightly to-do list',
         'Autumn half-marathon',
-      ], reason: 'pinned first, then by recency; the overnight run is new');
+      ], reason: 'pinned first, then by recency');
     },
   );
 
@@ -105,7 +106,7 @@ void main() {
     expect(posts.map((p) => p.title), [
       for (final post in ava.feed) post['title'],
     ]);
-    expect(posts.first.title, 'Your morning recap');
+    expect(posts.first.title, 'Your day — 4 things');
     expect(posts.first.createdAt, '2026-09-30 08:30');
     expect(
       (await container.read(goalsProvider(ava.id).future)).first.timeline,
