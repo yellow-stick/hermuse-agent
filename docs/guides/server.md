@@ -410,21 +410,23 @@ systemctl --user restart hermes-dashboard
 when Docker is installed but not running. The full reference is in the
 [plugin README](../../hermes-plugin/hermuse/README.md).
 
-## Use your Claude or ChatGPT subscription
+## Use your subscriptions
 
-In the desktop app, the **Connections** page of a server instance offers
-**Sign in with Claude Code** (Claude Pro/Max) and **Sign in with Codex**
-(ChatGPT). The sign-in opens your browser on this computer; Hermuse then hands
-the account to a subscription bridge (CLIProxyAPI) that the Hermuse plugin
+In the desktop app, the **Model accounts** page of a server instance opens on
+every sign-in the subscription bridge (CLIProxyAPI) offers: **Claude Code**
+(Claude Pro/Max), **Codex** (ChatGPT), **Muse Code** (Meta), **Antigravity**,
+**Kimi**, **Kimi.ai**, **Devin** and **Grok**. The sign-in opens your browser
+on this computer; Hermuse then hands the account to the bridge, which the
+Hermuse plugin
 runs next to Hermes on the server, and points Hermes at it. The bridge needs
 no root and listens on the server's `127.0.0.1` only; it is downloaded from
 GitHub on first use (a pinned, checksum-verified release, Linux x86-64 or
 ARM64). The account lives on the server: your computer keeps no copy of that
 sign-in, and **Disconnect** removes it from the server.
 
-This needs the Hermuse plugin 0.3.0 or later: an older one shows **Update the
-Hermuse plugin on this server** on these rows; update it from the instance's
-**What's installed**. The web app cannot offer these sign-ins (its browser cannot
+This needs the Hermuse plugin 0.3.0 or later: with an older one these rows
+offer **Update plugin**, which opens the instance's **What's installed** where
+the update runs. The web app cannot offer these sign-ins (its browser cannot
 receive the sign-in callback). Using a consumer subscription outside its
 official clients may breach the vendor's terms: personal use only.
 

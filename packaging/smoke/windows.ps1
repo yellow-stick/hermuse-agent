@@ -80,7 +80,7 @@ $UiBackToChat = 'Back to chat'
 # The instance row's button that opens its Connections.
 $UiConnections = 'Model accounts'
 $UiSearchConnections = 'Search connections'
-$UiBridgeCard = 'Meta (bridge)'
+$UiBridgeCard = 'Sign in with Muse Code'
 $UiConnect = 'Connect'
 $UiCancel = 'Cancel'
 $UiFeed = 'Feed'

@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:cliproxy_client/cliproxy_client.dart'
-    show BridgeConnection, BridgeHost;
+    show BridgeConnection, BridgeHost, bridgeCardSpecs;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -471,9 +471,7 @@ void main() {
       expect(find.text('Anthropic OAuth'), findsNothing);
     });
 
-    testWidgets('desktop features the Claude Code and Codex bridges', (
-      tester,
-    ) async {
+    testWidgets('desktop features every subscription bridge', (tester) async {
       final harness = _Harness(
         bridgeHost: const _StoppedBridgeHost(),
         // On this machine: the bridge stays on the desktop sidecar.
@@ -511,12 +509,11 @@ void main() {
       expect(find.text('Sign in with Claude Code'), findsOneWidget);
       expect(find.text('Use your Claude Pro/Max subscription'), findsOneWidget);
       expect(find.text('Sign in with Codex'), findsOneWidget);
+      expect(find.text('Sign in with Muse Code'), findsOneWidget);
+      expect(find.text('Sign in with Grok'), findsOneWidget);
       expect(find.text('Sign in with ChatGPT / Codex'), findsNothing);
-      // No Advanced chip on the featured sign-ins; the Hermes cards they
-      // replace and the other bridges wait under other providers.
-      expect(find.text('Advanced'), findsNothing);
+      // The Hermes cards the bridges replace wait under other providers.
       expect(find.text('Claude Code'), findsNothing);
-      expect(find.text('Meta (bridge)'), findsNothing);
 
       await tester.tap(find.text('Sign in with Claude Code'));
       await tester.pump();
@@ -524,12 +521,15 @@ void main() {
       await tester.tap(find.text('Sign in with Claude Code'));
       await tester.pump();
 
+      // Eight sign-ins: the toggle and the rest sit below the fold.
+      final page = find.byType(Scrollable).first;
+      Future<void> reveal(String text) =>
+          tester.scrollUntilVisible(find.text(text), 200, scrollable: page);
+      await reveal('Show other providers');
       await tester.tap(find.text('Show other providers'));
       await tester.pump();
-      expect(find.text('ChatGPT or Codex Subscription'), findsOneWidget);
-      expect(find.text('Claude Code'), findsOneWidget);
-      expect(find.text('Meta (bridge)'), findsOneWidget);
-      expect(find.text('Advanced'), findsWidgets);
+      await reveal('Claude Code');
+      await reveal('ChatGPT or Codex Subscription');
     });
 
     testWidgets('a server without the bridge plugin leads to its update', (
@@ -558,8 +558,9 @@ void main() {
       await _pumpConnections(tester, harness, onServerSetup: () => opened++);
 
       expect(find.text('Retry'), findsNothing);
-      expect(find.text('Update plugin'), findsNWidgets(2));
-      expect(find.text(serverBridgeUpdatePlugin), findsNWidgets(2));
+      final bridges = bridgeCardSpecs.length;
+      expect(find.text('Update plugin'), findsNWidgets(bridges));
+      expect(find.text(serverBridgeUpdatePlugin), findsNWidgets(bridges));
 
       await tester.tap(find.text('Sign in with Claude Code'));
       await tester.pump();

@@ -58,7 +58,7 @@ UI_BACK_TO_CHAT='Back to chat'
 # The instance row's button that opens its Connections.
 UI_CONNECTIONS='Model accounts'
 UI_SEARCH_CONNECTIONS='Search connections'
-UI_BRIDGE_CARD='Meta (bridge)'
+UI_BRIDGE_CARD='Sign in with Muse Code'
 UI_CONNECT='Connect'
 UI_CANCEL='Cancel'
 UI_FEED='Feed'

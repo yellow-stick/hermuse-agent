@@ -372,36 +372,52 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
 /// Plus/Pro subscription").
 typedef _SignIn = ({String product, String plan});
 
+/// What each subscription-bridge sign-in is called on its featured row, by
+/// provider name (the web app does not depend on `cliproxy_client`).
+const _bridgeSignIns = <String, _SignIn>{
+  'anthropic': (product: 'Claude Code', plan: 'Claude Pro/Max'),
+  'codex': (product: 'Codex', plan: 'ChatGPT Plus/Pro'),
+  'meta': (product: 'Muse Code', plan: 'Meta Muse Code'),
+  'antigravity': (product: 'Antigravity', plan: 'Google Antigravity'),
+  'kimi': (product: 'Kimi', plan: 'Kimi'),
+  'kimiAi': (product: 'Kimi.ai', plan: 'Kimi.ai'),
+  'devin': (product: 'Devin', plan: 'Devin'),
+  'xai': (product: 'Grok', plan: 'SuperGrok'),
+};
+
 /// The subscription sign-ins featured at the top of the page, then every
 /// other card (desktop `_featuredSignIns` parity: same rules).
 ///
-/// The Claude Code and Codex subscription-bridge cards are featured.
-/// Without bridge cards (the web: no sidecar) the Hermes `openai-codex`
-/// device-code card stands in for Codex and Claude is left out: its Hermes
-/// sign-in needs a terminal. The other bridges and the Hermes cards a
-/// featured bridge replaces (`hermesIds`: `anthropic`, `claude-code`,
-/// `openai-codex`) are other providers.
+/// Every subscription-bridge card is featured: each OAuth sign-in the
+/// CLIProxyAPI bridge offers. Without bridge cards (the web: no sidecar)
+/// the Hermes `openai-codex` device-code card stands in for Codex; the
+/// other subscriptions need the bridge. The Hermes cards a featured bridge
+/// replaces are other providers.
 (List<(ConnectionCard, _SignIn)>, List<ConnectionCard>) _featuredSignIns(
   List<ConnectionCard> cards,
 ) {
-  // Matched by name: the web app does not depend on `cliproxy_client`.
-  ConnectionCard? bridge(String provider) =>
-      cards.where((c) => c.bridgeSpec?.provider.name == provider).firstOrNull;
-  bool hermesCodex(ConnectionCard c) =>
-      c.id == 'openai-codex' && c.flow == ConnectionFlow.deviceCode;
-  final claude = bridge('anthropic');
-  final codexBridge = bridge('codex');
-  final codex = codexBridge ?? cards.where(hermesCodex).firstOrNull;
-  final codexProduct = codexBridge == null ? 'ChatGPT / Codex' : 'Codex';
   final featured = <(ConnectionCard, _SignIn)>[
-    if (claude != null)
-      (claude, (product: 'Claude Code', plan: 'Claude Pro/Max')),
-    if (codex != null)
-      (codex, (product: codexProduct, plan: 'ChatGPT Plus/Pro')),
+    for (final card in cards)
+      if (_bridgeSignIns[card.bridgeSpec?.provider.name] case final signIn?)
+        (card, signIn),
   ];
+  if (featured.isEmpty) {
+    final codex = cards
+        .where(
+          (c) => c.id == 'openai-codex' && c.flow == ConnectionFlow.deviceCode,
+        )
+        .firstOrNull;
+    if (codex != null) {
+      featured.add((
+        codex,
+        (product: 'ChatGPT / Codex', plan: 'ChatGPT Plus/Pro'),
+      ));
+    }
+  }
+  final ids = {for (final (card, _) in featured) card.id};
   final others = [
     for (final card in cards)
-      if (card.id != claude?.id && card.id != codex?.id) card,
+      if (!ids.contains(card.id)) card,
   ];
   return (featured, others);
 }
