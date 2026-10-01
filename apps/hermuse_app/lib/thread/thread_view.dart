@@ -577,8 +577,8 @@ final class _RoundAction extends StatelessWidget {
           color: state.disabled
               ? palette.neutralAmbientColor
               : state.hovered || state.pressed
-                  ? palette.primary2Color
-                  : palette.primaryColor,
+              ? palette.primary2Color
+              : palette.primaryColor,
           shape: BoxShape.circle,
         ),
         child: Center(
