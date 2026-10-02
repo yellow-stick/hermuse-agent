@@ -1,0 +1,434 @@
+# Smoke legs of an installed Hermuse Agent, on the packages build.yml made
+# earlier in the same run: fresh QEMU guests (ubuntu-22.04, debian-12) for each
+# scenario and format, newer distributions in containers (compat), the
+# GitHub-hosted macOS and Windows runners, then one report of every leg. The
+# legs are listed in packaging/smoke/proof_summary.py, which generates the
+# matrices.
+#
+#   legs -> smoke (QEMU guests) ---------+
+#        -> compat (containers) ---------+-> smoke-report (proof-summary artifact)
+#        -> smoke-macos (on the runner) -+
+#        -> smoke-windows (on the runner)+
+#
+# Callers (workflow_call only): release.yml (every leg, before the release
+# approval) and smoke.yml (a manual test run, every leg or those its `legs`
+# filter selects). Pull requests and the merge queue run no leg.
+#
+# A leg's verdict is its result files, not the scenario runner's exit status;
+# its evidence is uploaded even when it fails, and the report rolls up every
+# leg that ran.
+#
+# Actions are pinned by commit (tag in the trailing comment, resolved
+# 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
+# tools by URL + SHA-256 in tool/release/toolchain.lock.json and
+# tool/release/guest-images.lock.json. The macOS smoke tools (tesseract,
+# imagemagick, cliclick) come from Homebrew bottles, checked by their formula
+# and recorded in the leg's evidence; they never reach an artifact.
+name: Smoke legs
+
+on:
+  workflow_call:
+    inputs:
+      set:
+        description: Leg set of packaging/smoke/proof_summary.py (full, every leg)
+        type: string
+        required: true
+      filter:
+        description: Regex over the leg names; empty = every leg of the set
+        type: string
+        default: ''
+      commit:
+        description: The commit build.yml built (its `commit` output)
+        type: string
+        required: true
+      run_label:
+        description: Run id and attempt, labelling the results (build.yml's `run_label` output)
+        type: string
+        required: true
+      fixture_deb_file:
+        description: Upgrade fixture .deb of the lifecycle legs (build.yml's `fixture_deb_file` output)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  legs:
+    name: Legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      smoke_matrix: ${{ steps.legs.outputs.smoke }}
+      compat_matrix: ${{ steps.legs.outputs.compat }}
+      desktop_matrix: ${{ steps.legs.outputs.desktop }}
+      macos_matrix: ${{ steps.legs.outputs.macos_matrix }}
+      windows_matrix: ${{ steps.legs.outputs.windows_matrix }}
+      smoke_count: ${{ steps.legs.outputs.smoke_count }}
+      compat_count: ${{ steps.legs.outputs.compat_count }}
+      macos: ${{ steps.legs.outputs.macos }}
+      windows: ${{ steps.legs.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          sparse-checkout: packaging/smoke
+
+      - name: Matrices of the selected legs
+        id: legs
+        env:
+          SET: ${{ inputs.set }}
+          FILTER: ${{ inputs.filter }}
+        run: |
+          set -euo pipefail
+          smoke=$(python3 packaging/smoke/proof_summary.py matrix guests --set "$SET" --filter "$FILTER")
+          compat=$(python3 packaging/smoke/proof_summary.py matrix containers --set "$SET" --filter "$FILTER")
+          desktop=$(python3 packaging/smoke/proof_summary.py matrix desktop --set "$SET" --filter "$FILTER")
+          {
+            echo "smoke=$smoke"
+            echo "compat=$compat"
+            echo "desktop=$desktop"
+            echo "smoke_count=$(jq '.include | length' <<<"$smoke")"
+            echo "compat_count=$(jq '.include | length' <<<"$compat")"
+            echo "macos_matrix=$(jq -c '{include: [.include[] | select(.os == "macos")]}' <<<"$desktop")"
+            echo "windows_matrix=$(jq -c '{include: [.include[] | select(.os == "windows")]}' <<<"$desktop")"
+            echo "macos=$(jq '[.include[] | select(.os == "macos")] | length > 0' <<<"$desktop")"
+            echo "windows=$(jq '[.include[] | select(.os == "windows")] | length > 0' <<<"$desktop")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Smoke ${{ matrix.name }}
+    needs: legs
+    # Empty-matrix guard: a filtered test run may select no leg of this kind.
+    if: needs.legs.outputs.smoke_count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.legs.outputs.smoke_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      FORMAT: ${{ matrix.format }}
+      RUN_LABEL: ${{ inputs.run_label }}
+      FIXTURE_FILE: ${{ inputs.fixture_deb_file }}
+      WORK: /mnt/hermuse-smoke
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        # Runtime state of the leg: only the .deb lifecycle scenario upgrades from the fixture.
+        if: matrix.scenario == 'lifecycle' && matrix.format == 'deb'
+        with:
+          name: linux-upgrade-fixture
+          path: fixture
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && sha256sum -c --ignore-missing SHA256SUMS.txt
+
+      - name: QEMU, KVM when the runner exposes it
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils genisoimage ffmpeg
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+              sudo tee /etc/udev/rules.d/99-hermuse-kvm.rules >/dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          sudo install -d -o "$(id -u)" -g "$(id -g)" "$WORK"
+
+      - name: Boot a fresh ${{ matrix.target }} guest
+        run: |
+          set -euo pipefail
+          packaging/smoke/guest/guest.sh fetch "$TARGET" "$WORK/images"
+          packaging/smoke/guest/guest.sh up "$TARGET" "$WORK/images" "$WORK/run"
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }})
+        run: |
+          set -euo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          scale=1
+          [ "$(cat "$run/accel")" = kvm ] || scale=4
+          stage=$(mktemp -d)
+          cp -r packaging/smoke "$stage/hermuse-smoke"
+          "$guest" push "$run" "$stage/hermuse-smoke" /opt
+          "$guest" push "$run" dist /root/hermuse-release
+          "$guest" ssh "$run" 'install -d -m 0700 /root/hermuse-release/secrets'
+          "$guest" push "$run" "$run/tester-password" /root/hermuse-release/secrets
+          "$guest" push "$run" "$run/keyring-password" /root/hermuse-release/secrets
+          fixture=()
+          if [ -d fixture ]; then
+            "$guest" push "$run" fixture /root/hermuse-release
+            fixture=(--fixture-deb "/root/hermuse-release/fixture/$FIXTURE_FILE")
+          fi
+          # The verdict is the result files, not the runner's exit status.
+          "$guest" exec "$run" 17400 /opt/hermuse-smoke/linux.sh "$SCENARIO" --format "$FORMAT" \
+            --dist /root/hermuse-release/dist --out /root/hermuse-release/out --run-id "$RUN_LABEL" \
+            --guest "$TARGET" --secrets /root/hermuse-release/secrets --timeout-scale "$scale" \
+            "${fixture[@]}" || echo "::warning::scenario runner exited with $?"
+
+      - name: Collect the evidence
+        # Evidence: collected even when the scenario failed.
+        if: always()
+        run: |
+          set -uo pipefail
+          guest=packaging/smoke/guest/guest.sh
+          run="$WORK/run"
+          leg="$RUNNER_TEMP/legs/$LEG"
+          mkdir -p "$RUNNER_TEMP/legs"
+          if [ -f "$run/ssh-port" ] && "$guest" pull "$run" /root/hermuse-release/out "$RUNNER_TEMP/legs"; then
+            mv "$RUNNER_TEMP/legs/out" "$leg"
+          fi
+          mkdir -p "$leg/evidence"
+          cp "$run/console.log" "$leg/evidence/guest-console.log" 2>/dev/null || true
+          cp "$run/accel" "$leg/evidence/accel" 2>/dev/null || true
+          if compgen -G "$leg/evidence/frames/*.jpg" >/dev/null; then
+            ffmpeg -loglevel error -framerate 4 -pattern_type glob -i "$leg/evidence/frames/*.jpg" \
+              -vf 'scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libx264 -pix_fmt yuv420p "$leg/evidence/frames/run.mp4" &&
+              rm -f "$leg"/evidence/frames/*.jpg
+          fi
+          "$guest" down "$run" || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when the scenario failed.
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO"
+
+  compat:
+    name: Compat ${{ matrix.name }}
+    needs: legs
+    # Empty-matrix guard: a filtered test run may select no leg of this kind.
+    if: needs.legs.outputs.compat_count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.legs.outputs.compat_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      FORMAT: ${{ matrix.format }}
+      RUN_LABEL: ${{ inputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && sha256sum -c --ignore-missing SHA256SUMS.txt
+
+      - name: APT resolution, ELF resolution and window in ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          image=$(jq -er --arg t "$TARGET" '.containers[$t] | .image + "@" + .digest' tool/release/guest-images.lock.json)
+          out="$RUNNER_TEMP/legs/$LEG"
+          mkdir -p "$out"
+          docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/smoke:/opt/hermuse-smoke:ro" -v "$out:/out" \
+            "$image" bash -c 'apt-get update -q >/dev/null && apt-get install -y -q jq >/dev/null &&
+              exec /opt/hermuse-smoke/linux.sh compat --format "$0" --dist /dist --out /out --run-id "$1" --guest "$2"' \
+            "$FORMAT" "$RUN_LABEL" "$TARGET" || echo "::warning::compat runner exited with $?"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when the scenario failed.
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" compat
+
+  # The GitHub-hosted macOS arm64 runner is the test machine itself: a new VM
+  # for every job, the runner user's first login state, no nested
+  # virtualization (so no Docker: the computer stays a manual gate).
+  smoke-macos:
+    name: Smoke ${{ matrix.name }}
+    needs: legs
+    # Empty-matrix guard: a filtered test run may select no macOS leg.
+    if: needs.legs.outputs.macos == 'true'
+    runs-on: ${{ matrix.target }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.legs.outputs.macos_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      RUN_LABEL: ${{ inputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        run: cd dist && shasum -a 256 -c macos/SHA256SUMS.txt
+
+      - name: Smoke tools (OCR, image processing, pointer events)
+        run: brew install tesseract imagemagick cliclick
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }}) on the runner
+        run: |
+          # The verdict is the result files, not the runner's exit status.
+          packaging/smoke/macos.sh "$SCENARIO" --dist dist --out "$RUNNER_TEMP/legs/$LEG" \
+            --run-id "$RUN_LABEL" --runner "$TARGET" || echo "::warning::scenario runner exited with $?"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when the scenario failed.
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        run: python3 packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO" --target "$TARGET"
+
+  # Same on the Windows Server 2025 runner (interactive desktop of runneradmin).
+  smoke-windows:
+    name: Smoke ${{ matrix.name }}
+    needs: legs
+    # Empty-matrix guard: a filtered test run may select no Windows leg.
+    if: needs.legs.outputs.windows == 'true'
+    runs-on: ${{ matrix.target }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.legs.outputs.windows_matrix) }}
+    env:
+      LEG: ${{ matrix.name }}
+      TARGET: ${{ matrix.target }}
+      SCENARIO: ${{ matrix.scenario }}
+      RUN_LABEL: ${{ inputs.run_label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-dist
+          path: dist
+
+      - name: The tested bytes are the packaged bytes
+        shell: bash
+        run: cd dist && sha256sum -c windows/SHA256SUMS.txt
+
+      - name: Smoke tools (OCR from toolchain.lock.json)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $entry = (Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json).ci.tesseract_windows
+          $setup = Join-Path $env:RUNNER_TEMP tesseract-setup.exe
+          Invoke-WebRequest -Uri $entry.url -OutFile $setup
+          $sha = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+          if ($sha -ne $entry.sha256) { throw "tesseract installer sha256 $sha, toolchain.lock.json $($entry.sha256)" }
+          Start-Process -FilePath $setup -ArgumentList '/S' -Wait
+          & "$env:ProgramFiles\Tesseract-OCR\tesseract.exe" --version
+          if ($LASTEXITCODE) { throw "tesseract exited with $LASTEXITCODE" }
+
+      - name: Scenario ${{ matrix.scenario }} (${{ matrix.format }}) on the runner
+        shell: pwsh
+        run: |
+          # The verdict is the result files, not the runner's exit status.
+          pwsh -NoProfile -File packaging/smoke/windows.ps1 -Scenario $env:SCENARIO -Dist dist `
+            -Out (Join-Path $env:RUNNER_TEMP "legs\$env:LEG") -RunId $env:RUN_LABEL -Runner $env:TARGET
+          if ($LASTEXITCODE) { "::warning::scenario runner exited with $LASTEXITCODE" }
+          exit 0
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when the scenario failed.
+        if: always()
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/legs/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Verdict
+        shell: bash
+        run: python packaging/smoke/proof_summary.py leg "$RUNNER_TEMP/legs/$LEG" "$SCENARIO" --target "$TARGET"
+
+  smoke-report:
+    name: Smoke report
+    needs: [legs, smoke, compat, smoke-macos, smoke-windows]
+    # Report: rolls failed legs up too; not once cancelled, nor without the matrices of `legs`.
+    if: ${{ !cancelled() && needs.legs.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          sparse-checkout: packaging/smoke
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: smoke-*
+          path: legs
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: compat-*
+          path: legs
+
+      - name: Roll up every leg of this run
+        env:
+          SMOKE_MATRIX: ${{ needs.legs.outputs.smoke_matrix }}
+          COMPAT_MATRIX: ${{ needs.legs.outputs.compat_matrix }}
+          DESKTOP_MATRIX: ${{ needs.legs.outputs.desktop_matrix }}
+        run: |
+          set -uo pipefail
+          status=0
+          python3 packaging/smoke/proof_summary.py collect legs --matrix "$SMOKE_MATRIX" --matrix "$COMPAT_MATRIX" \
+            --matrix "$DESKTOP_MATRIX" --out proof-summary.json --markdown proof-summary.md || status=$?
+          cat proof-summary.md >>"$GITHUB_STEP_SUMMARY"
+          exit "$status"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when a leg failed.
+        if: always()
+        with:
+          name: proof-summary
+          path: |
+            proof-summary.json
+            proof-summary.md
+          if-no-files-found: error
+          retention-days: 90

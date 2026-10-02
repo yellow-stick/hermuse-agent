@@ -15,4 +15,7 @@ export 'src/linux_dependencies.dart';
 export 'src/linux_privilege.dart';
 export 'src/managed_runtime.dart';
 export 'src/plugin_installer.dart';
+export 'src/remote_install.dart';
+export 'src/remote_shell.dart';
+export 'src/remote_uninstall.dart';
 export 'src/supervisor.dart';

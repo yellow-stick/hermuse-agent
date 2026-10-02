@@ -1,6 +1,8 @@
 /// Shared Riverpod state of the Hermuse apps.
 library;
 
+export 'src/app_update.dart';
+
 export 'src/computer.dart';
 export 'src/connections.dart';
 export 'src/model_selection.dart';
@@ -9,3 +11,4 @@ export 'src/onboarding.dart';
 export 'src/product.dart';
 export 'src/providers.dart';
 export 'src/remote_setup.dart';
+export 'src/server_bridge.dart';

@@ -399,8 +399,10 @@ final class WelcomeScreen extends ConsumerWidget {
     final cards = [
       YsChoiceCard(
         art: YsArt.remote,
-        title: 'Connect to a Hermes',
-        body: 'A Hermes already running on a server or another computer.',
+        title: 'Connect to a machine',
+        body: onInstall == null
+            ? 'A Hermes already running on a server or another computer.'
+            : 'Use a server or another computer, with or without Hermes.',
         onPressed: onConnect,
       ),
       if (onInstall case final install?)

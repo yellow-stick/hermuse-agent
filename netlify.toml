@@ -1,17 +1,25 @@
-# Netlify project `hermuse-agent`, served at https://hermuse.app: the static
-# Jaspr build of apps/hermuse_web. GitHub Actions (.github/workflows/web.yml)
-# builds and deploys it with the Netlify CLI; Netlify's own Git builds are
-# stopped, so nothing here runs a build.
+# Netlify project `hermuse-demo`, served at https://demo.hermuse.app: the
+# read-only demo (demo/), the static Jaspr build of apps/hermuse_web compiled
+# with HERMUSE_DEMO=true, fictional chats answered in the browser. GitHub
+# Actions builds it (demo/build.sh) and deploys it with the Netlify CLI
+# (.github/workflows/web-deploy.yml for production, web-pr.yml for pull request
+# previews under the alias pr-<N>); the project has no Git builds, so nothing
+# here runs a build.
 #
 # Manual deploy from the repository root (after `netlify link --id <site id>`):
-#   (cd apps/hermuse_web && jaspr build)
-#   netlify deploy --no-build --dir=apps/hermuse_web/build/jaspr          # draft URL
-#   netlify deploy --no-build --dir=apps/hermuse_web/build/jaspr --prod   # hermuse.app
+#   demo/build.sh
+#   netlify deploy --no-build --dir=demo/build/web          # draft URL
+#   netlify deploy --no-build --dir=demo/build/web --prod   # demo.hermuse.app
 #
-# Netlify has no relay: the page loads and runs, but reaching a Hermes instance
-# needs apps/hermuse_relay serving the same build (docs/guides/web-app-and-relay.md).
+# Netlify hosts the demo only. The real web app reaches Hermes through
+# apps/hermuse_relay, which serves it on the user's own server
+# (docs/guides/web-app-and-relay.md); Netlify has no relay.
+#
+# The demo is indexable: no X-Robots-Tag here, and the demo build leaves out the
+# page's robots noindex meta (apps/hermuse_web/lib/main.server.dart). The
+# product homepage is https://hermuse.app (repository yellow-stick/hermuse-website).
 [build]
-  publish = "apps/hermuse_web/build/jaspr"
+  publish = "demo/build/web"
 
 [[headers]]
   for = "/*"

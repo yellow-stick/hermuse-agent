@@ -22,10 +22,24 @@ final class YsStepBadge extends StatefulWidget {
     this.progress,
     this.size = YsLayout.stepBadge,
     super.key,
-  });
+  }) : _passed = false;
+
+  /// A flow step the user has gone past (`YsStepper`): the calm tick of
+  /// [YsStepState.found] on a success disc rather than the info one, so the
+  /// trail behind the user reads as completed, not as already in place.
+  const YsStepBadge.passed({
+    required this.icon,
+    this.size = YsLayout.stepBadge,
+    super.key,
+  }) : state = YsStepState.found,
+       progress = null,
+       _passed = true;
 
   final YsStepState state;
   final YsIcon icon;
+
+  /// Whether this is a [YsStepBadge.passed] badge.
+  final bool _passed;
 
   /// Share of a [YsStepState.working] step done, 0..1; null when unknown.
   final double? progress;
@@ -82,10 +96,13 @@ final class _YsStepBadgeState extends State<YsStepBadge>
   @override
   void didUpdateWidget(YsStepBadge old) {
     super.didUpdateWidget(old);
-    if (old.state != widget.state || old.icon != widget.icon) {
+    if (old.state != widget.state ||
+        old.icon != widget.icon ||
+        old._passed != widget._passed) {
       _from = _Look(
         state: old.state,
         icon: old.icon,
+        passed: old._passed,
         cycle: _cycle.value,
         progress: old.progress == null ? null : _progress.value,
       );
@@ -178,6 +195,7 @@ final class _YsStepBadgeState extends State<YsStepBadge>
         look: _Look(
           state: widget.state,
           icon: widget.icon,
+          passed: widget._passed,
           cycle: 0,
           progress: widget.progress,
         ),
@@ -193,12 +211,16 @@ final class _Look {
   const _Look({
     required this.state,
     required this.icon,
+    required this.passed,
     required this.cycle,
     required this.progress,
   });
 
   final YsStepState state;
   final YsIcon icon;
+
+  /// A [YsStepBadge.passed] badge: its [YsStepState.found] tick is green.
+  final bool passed;
   final double cycle;
 
   /// Null: indeterminate.
@@ -348,16 +370,16 @@ final class _BadgePainter extends CustomPainter {
         glyph(palette.successColor);
       case YsStepState.found:
         final disc = mark!.ring!;
+        final (wash, tick) = look.passed
+            ? (palette.successMutedColor, palette.successColor)
+            : (palette.infoMutedColor, palette.infoColor);
         canvas.drawCircle(
           size.center(Offset.zero),
           size.shortestSide / 2 * disc.valueAt(YsMotionProperty.scale, frame),
           Paint()
-            ..color = fade(
-              palette.successMutedColor,
-              disc.valueAt(YsMotionProperty.opacity, frame),
-            ),
+            ..color = fade(wash, disc.valueAt(YsMotionProperty.opacity, frame)),
         );
-        glyph(palette.successColor);
+        glyph(tick);
       case YsStepState.failed:
         canvas.drawOval(
           rect,
@@ -425,6 +447,7 @@ final class _BadgePainter extends CustomPainter {
       old.palette != palette ||
       old.look.state != look.state ||
       old.look.icon != look.icon ||
+      old.look.passed != look.passed ||
       old.look.progress != look.progress ||
       old.from != from;
 }

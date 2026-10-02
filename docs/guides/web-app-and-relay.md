@@ -11,6 +11,11 @@ server side and never hands it to the browser.
 
 The desktop apps do not need the relay; they connect to Hermes directly.
 
+Yellow Stick does not host the web app for you: you serve it from your own
+server, at your own address or domain, with the relay below. To look around
+first, the read-only demo at https://demo.hermuse.app runs the same web app
+with fictional chats, without any Hermes.
+
 ## 1. Build the web app
 
 ```bash
@@ -38,7 +43,9 @@ dart run bin/server.dart          # or: dart compile exe bin/server.dart -o serv
 | `HERMUSE_RELAY_DB` | SQLite file with the registered Hermes instances. |
 
 In production, put the relay behind HTTPS (Caddy, nginx, your platform's
-ingress) at the address given in `HERMUSE_RELAY_ORIGIN`.
+ingress) at the address given in `HERMUSE_RELAY_ORIGIN`: your server's address
+or a domain of your own pointing to it. The web app it serves stays out of
+search engines (a `noindex` robots meta).
 
 ## 3. Register your Hermes
 
@@ -57,15 +64,18 @@ registered on this relay**.
 
 ## 4. Open the web app
 
-Open `https://chat.example.com`, choose **Add a Hermes**, enter the Hermes URL,
-a name and the dashboard user name and password. Once it is saved, the web app
-shows **What's on** that Hermes: Hermes itself, the Hermuse plugin, its
-background jobs, Docker, the agent's computer and a model provider, each found
-or missing. Click **Install** on what is missing (or **Install everything
+Open `https://chat.example.com`, choose **Connect to a machine**, enter the
+Hermes URL, a name and the dashboard user name and password. Once it is saved,
+the web app shows **What's on** that Hermes: Hermes itself, the Hermuse plugin,
+its background jobs, Docker, the agent's computer and a model provider, each
+found or missing. Click **Install** on what is missing (or **Install everything
 missing**), then **Continue**; where only the server can act, the row gives the
-command to copy and **Check again**. The list opens again from **Components**
-in **Instances**. [Set up Hermuse with Hermes on a server](server.md) explains
-each part from step 4.
+command to copy and **Check again**. The list opens again from **What's
+installed** on its row in **Instances**.
+[Install Hermuse on your Hermes](server.md#4-install-hermuse-on-your-hermes-one-click)
+explains each part. SSH server provisioning is available in the desktop app,
+not the web app; provision the server first, then register its HTTPS URL on
+the relay.
 
 To install the web app, use the install icon in the address bar
 (Chrome, Edge) or **Share → Add to Home Screen** (Safari).

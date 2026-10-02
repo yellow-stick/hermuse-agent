@@ -176,6 +176,8 @@ Finder _button(RemotePart part, String label) => find.descendant(
 bool _enabled(WidgetTester tester, Finder button) =>
     tester.widget<YsButton>(button).onPressed != null;
 
+final _continue = find.widgetWithText(YsButton, 'Continue');
+
 void main() {
   testWidgets('installing the plugin shows it working, then done, and frees '
       'the parts that wait for it', (tester) async {
@@ -196,6 +198,8 @@ void main() {
     await tester.pump();
     expect(_state(tester, RemotePart.plugin), YsStepState.working);
     expect(find.text('Hermuse plugin: Installing…'), findsOneWidget);
+    // Nothing leaves the checklist while the install runs.
+    expect(_enabled(tester, _continue), isFalse);
 
     hermes.installing!.complete();
     await tester.pumpAndSettle();
@@ -207,6 +211,7 @@ void main() {
       find.widgetWithText(YsButton, 'Install everything missing'),
       findsOneWidget,
     );
+    expect(_enabled(tester, _continue), isTrue);
   });
 
   testWidgets('a failed install says why and its Try again installs', (

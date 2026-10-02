@@ -9,6 +9,7 @@ import 'connections.dart';
 import 'model_tiers.dart';
 import 'onboarding.dart';
 import 'providers.dart';
+import 'server_bridge.dart';
 
 part 'model_selection.g.dart';
 
@@ -16,9 +17,10 @@ part 'model_selection.g.dart';
 ///
 /// [providerId] is the Hermes slug (`anthropic`, `zai`, `kimi-coding`, …)
 /// or a bridge card id (`bridge:meta`, …). [allModels] is the full discovered
-/// list (native: `model.options` row; bridge: sidecar `/v1/models` filtered to
-/// the spec owners); [large]/[small] hold at most one id each — the current
-/// selection, defaulting to the newest large + newest small.
+/// list (native: `model.options` row; bridge: `/v1/models` of the bridge
+/// serving the instance, filtered to the spec owners); [large]/[small] hold at
+/// most one id each — the current selection, defaulting to the newest large +
+/// newest small.
 final class ModelSelection {
   const ModelSelection({
     required this.providerId,
@@ -100,14 +102,16 @@ final class AvailableModel {
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
 /// Discovery: native providers read their `model.options` row over the live
-/// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-/// to the spec owners. The selection persists in the settings table under
+/// connection; bridge cards read the `/v1/models` catalogue of the bridge
+/// serving the instance (this desktop's sidecar, or the bridge of the
+/// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+/// owners. The selection persists in the settings table under
 /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
 /// stored id that vanished from discovery is dropped (never offered), and an
 /// empty slot reverts to the newest discovered id of that tier on next load.
 ///
 /// Only *connected* providers resolve: native cards in `connected` state,
-/// bridge cards with usable sidecar credentials. Anything else throws
+/// bridge cards with usable bridge credentials. Anything else throws
 /// [StateError].
 @Riverpod(name: 'modelSelectionProvider')
 class ModelSelectionState extends _$ModelSelectionState {
@@ -181,7 +185,7 @@ class ModelSelectionState extends _$ModelSelectionState {
   /// (`POST /api/model/set`, scope `main`), small → every auxiliary slot
   /// (scope `auxiliary`, empty task = all slots). For bridge cards the
   /// Hermes custom endpoint is first re-registered with exactly the ≤2
-  /// selected models.
+  /// selected models, at the bridge serving the instance.
   Future<void> makeDefault() async {
     final current = state.value;
     if (current == null) throw StateError('selection is still loading');
@@ -189,17 +193,15 @@ class ModelSelectionState extends _$ModelSelectionState {
     if (large == null) throw StateError('no large model selected');
     final rest = await ref.read(restClientProvider(instanceId).future);
     final spec = bridgeSpecForCard(providerId);
+    Uri? bridgeUrl;
     if (spec != null) {
-      final host = ref.read(bridgeHostProvider);
-      if (host == null) {
-        throw UnsupportedError('no subscription-bridge host on this platform');
-      }
-      final sidecar = await host.ensureStarted();
+      final bridge = await _bridge(rest);
+      bridgeUrl = bridge.baseUrl.replace(path: '/v1');
       await rest.postJson(
         '/api/providers/custom-endpoints',
         hermesCustomEndpoint(
-          cliproxyBaseUrl: sidecar.baseUrl,
-          apiKey: sidecar.apiKey,
+          cliproxyBaseUrl: bridge.baseUrl,
+          apiKey: bridge.apiKey,
           name: spec.label,
           model: large,
           models: current.selected,
@@ -210,8 +212,8 @@ class ModelSelectionState extends _$ModelSelectionState {
         'scope': 'main',
         'provider': 'custom:${spec.label}',
         'model': large,
-        'base_url': sidecar.baseUrl.replace(path: '/v1').toString(),
-        'api_key': sidecar.apiKey,
+        'base_url': bridgeUrl.toString(),
+        'api_key': bridge.apiKey,
       });
     } else {
       await rest.postJson('/api/model/set', {
@@ -226,11 +228,7 @@ class ModelSelectionState extends _$ModelSelectionState {
         'scope': 'auxiliary',
         'provider': spec == null ? providerId : 'custom:${spec.label}',
         'model': small,
-        if (spec != null)
-          'base_url': (await ref.read(bridgeHostProvider)!.ensureStarted())
-              .baseUrl
-              .replace(path: '/v1')
-              .toString(),
+        if (bridgeUrl != null) 'base_url': bridgeUrl.toString(),
       });
     }
     unawaited(
@@ -241,17 +239,43 @@ class ModelSelectionState extends _$ModelSelectionState {
     );
   }
 
+  /// Whether the instance's bridge cards use the bridge on its server.
+  Future<bool> _bridgeOnServer() async => bridgeOnServer(
+    (await ref.read(registryProvider.future)).byId(instanceId),
+  );
+
+  /// Where Hermes reaches the bridge serving this instance: the bridge of
+  /// the Hermuse plugin on its server, or this desktop's sidecar.
+  Future<({Uri baseUrl, String apiKey})> _bridge(HermesRestClient rest) async {
+    if (await _bridgeOnServer()) {
+      final bridge = await ServerBridgeClient(rest).ensure();
+      return (baseUrl: bridge.baseUrl, apiKey: bridge.apiKey);
+    }
+    final host = ref.read(bridgeHostProvider);
+    if (host == null) {
+      throw UnsupportedError('no subscription-bridge host on this platform');
+    }
+    final sidecar = await host.ensureStarted();
+    return (baseUrl: sidecar.baseUrl, apiKey: sidecar.apiKey);
+  }
+
   Future<List<String>> _discoverModels(ConnectionCard card) async {
     final spec = card.bridgeSpec ?? bridgeSpecForCard(card.id);
     if (spec != null) {
-      final host = ref.read(bridgeHostProvider);
-      if (host == null) return const [];
-      final sidecar = await host.ensureStarted();
-      final catalogue = await CliproxyManagement(
-        ref.read(httpClientProvider),
-        baseUrl: sidecar.baseUrl,
-        managementKey: sidecar.managementKey,
-      ).listModels(apiKey: sidecar.apiKey);
+      final List<SidecarModel> catalogue;
+      if (await _bridgeOnServer()) {
+        final rest = await ref.read(restClientProvider(instanceId).future);
+        catalogue = await ServerBridgeClient(rest).models();
+      } else {
+        final host = ref.read(bridgeHostProvider);
+        if (host == null) return const [];
+        final sidecar = await host.ensureStarted();
+        catalogue = await CliproxyManagement(
+          ref.read(httpClientProvider),
+          baseUrl: sidecar.baseUrl,
+          managementKey: sidecar.managementKey,
+        ).listModels(apiKey: sidecar.apiKey);
+      }
       return {
         for (final model in catalogue)
           if (model.id.isNotEmpty &&
