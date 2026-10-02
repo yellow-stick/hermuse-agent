@@ -1,6 +1,7 @@
 """Subscription bridge: pinned download and checksums, private files, a detached
-CLIProxyAPI (a fake one here) on a persisted loopback port, accounts and models
-through the dashboard routes. No network: the release download is mocked."""
+CLIProxyAPI (a fake one here) on a persisted loopback port, sign-ins finished
+with the pasted redirect address, accounts and models through the dashboard
+routes. No network: the release download is mocked."""
 
 from __future__ import annotations
 
@@ -30,8 +31,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DESKTOP_LOCK = PLUGIN_ROOT.parent.parent / "packages" / "hermuse_host" / "cliproxy.lock"
 BASE = "/api/plugins/hermuse/bridge"
 NAME = "claude-dev@shop.com.json"
-ACCOUNT = json.dumps({"type": "claude", "email": "dev@shop.com", "access_token": "at-1",
-                      "refresh_token": "rt-1"})
+REDIRECT = "http://localhost:54545/callback?code=c-1&state={state}"
 
 # The routes of CLIProxyAPI the bridge uses, with its auth and file semantics.
 FAKE_CLIPROXY = '''#!{python}
@@ -52,6 +52,7 @@ with open(sys.argv[sys.argv.index("-config") + 1]) as fh:
             config[name] = value
 auth_dir = json.loads(config["auth-dir"])
 management = json.loads(config["secret-key"])
+sessions = {}
 
 
 def accounts():
@@ -83,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"id": "claude-opus-9", "object": "model", "owned_by": "anthropic"}
                     for _, account in accounts() if account.get("type") == "claude"]})
             return
-        path, _ = self.route(management)
+        path, query = self.route(management)
         if path == "/v0/management/config":
             self.reply(200, {"debug": False})
         elif path == "/v0/management/auth-files":
@@ -91,25 +92,40 @@ class Handler(BaseHTTPRequestHandler):
                 {"name": name, "provider": account.get("type"), "email": account.get("email"),
                  "status": "active", "disabled": False, "unavailable": False}
                 for name, account in accounts()]})
+        elif path == "/v0/management/anthropic-auth-url":
+            state = "s-%d" % (len(sessions) + 1)
+            sessions[state] = "wait"
+            self.reply(200, {"status": "ok", "state": state,
+                             "url": "https://claude.ai/oauth/authorize?state=" + state})
+        elif path == "/v0/management/get-auth-status":
+            if query.get("state") not in sessions:
+                self.reply(200, {"status": "error", "error": "unknown or expired state"})
+            else:
+                self.reply(200, {"status": sessions[query["state"]]})
         elif path is not None:
             self.reply(404, {"error": "not found"})
 
     def do_POST(self):
-        path, query = self.route(management)
-        if path != "/v0/management/auth-files":
+        path, _ = self.route(management)
+        if path != "/v0/management/oauth-callback":
             return
-        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-        try:
-            json.loads(body)
-        except ValueError:
-            return self.reply(400, {"error": "invalid auth file"})
-        target = os.path.join(auth_dir, os.path.basename(query["name"]))
-        with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:
-            fh.write(body)
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        query = parse_qs(urlparse(body.get("redirect_url", "")).query)
+        state = query.get("state", [""])[0]
+        if sessions.get(state) != "wait":
+            return self.reply(404, {"status": "error", "error": "unknown or expired state"})
+        account = {"type": "claude", "email": "dev@shop.com", "code": query["code"][0]}
+        target = os.path.join(auth_dir, "claude-dev@shop.com.json")
+        with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+            json.dump(account, fh)
+        sessions[state] = "ok"
         self.reply(200, {"status": "ok"})
 
     def do_DELETE(self):
         path, query = self.route(management)
+        if path == "/v0/management/oauth-session":
+            cancelled = sessions.pop(query.get("state"), None) is not None
+            return self.reply(200, {"status": "ok", "cancelled": cancelled})
         if path != "/v0/management/auth-files":
             return
         target = os.path.join(auth_dir, os.path.basename(query.get("name", "")))
@@ -246,7 +262,7 @@ def test_plugin_load_brings_a_stopped_bridge_back_on_its_port(hermes_home, relea
 
 def test_a_stopped_bridge_lists_its_accounts_and_restarts(hermes_home, release):
     bridge.ensure(hermes_home)
-    bridge.upload_account(hermes_home, NAME, ACCOUNT)
+    _sign_in(hermes_home)
     bridge.stop(hermes_home)
 
     stopped = bridge.status(hermes_home)
@@ -290,28 +306,59 @@ def test_a_taken_port_moves_the_bridge_and_keeps_its_key(hermes_home, release):
     assert bridge.load_keys(hermes_home)["port"] != port
 
 
-def test_accounts_and_models_through_the_routes(hermes_home, release, client):
-    upload = {"name": NAME, "content": ACCOUNT}
-    not_set_up = client.post(f"{BASE}/accounts", json=upload)
+def _sign_in(home) -> None:
+    started = bridge.start_login(home, "anthropic")
+    bridge.submit_callback(home, REDIRECT.format(state=started["state"]))
+
+
+def test_a_pasted_redirect_signs_in_on_the_server(hermes_home, release, client):
+    not_set_up = client.post(f"{BASE}/login", json={"provider": "anthropic"})
     assert (not_set_up.status_code, not_set_up.json()["detail"]) == (409, bridge.NOT_SET_UP_DETAIL)
 
     ensured = client.post(f"{BASE}/ensure").json()
     assert ensured["base_url"].startswith("http://127.0.0.1:") and ensured["api_key"]
-    assert client.post(f"{BASE}/accounts", json=upload).json() == {"ok": True, "name": NAME}
+    started = client.post(f"{BASE}/login", json={"provider": "anthropic"}).json()
+    state = started["state"]
+    assert started["url"].startswith("https://claude.ai/")
+    assert client.get(f"{BASE}/login/status", params={"state": state}).json() == {
+        "status": "wait"}
 
+    pasted = client.post(f"{BASE}/login/callback",
+                         json={"redirect_url": REDIRECT.format(state=state)})
+    assert pasted.json() == {"ok": True}
+    assert client.get(f"{BASE}/login/status", params={"state": state}).json() == {"status": "ok"}
     stored = bridge.auth_dir(hermes_home) / NAME
-    assert (stored.read_text(), _mode(stored)) == (ACCOUNT, 0o600)
+    assert json.loads(stored.read_text())["code"] == "c-1" and _mode(stored) == 0o600
     status = client.get(f"{BASE}/status").json()
     assert status["running"] is True and status["base_url"] == ensured["base_url"]
+    assert status["sign_in"] is True
     assert status["accounts"] == [{"name": NAME, "provider": "claude", "email": "dev@shop.com",
                                    "usable": True, "status": "active", "status_message": ""}]
     assert client.get(f"{BASE}/models").json() == {"object": "list", "data": [
         {"id": "claude-opus-9", "object": "model", "owned_by": "anthropic"}]}
 
+    # The address only finishes its own sign-in, once.
+    again = client.post(f"{BASE}/login/callback",
+                        json={"redirect_url": REDIRECT.format(state=state)})
+    assert (again.status_code, again.json()["detail"]) == (400, "unknown or expired state")
+
     assert client.delete(f"{BASE}/accounts/{NAME}").json() == {"ok": True, "name": NAME}
     assert not stored.exists()
     assert client.delete(f"{BASE}/accounts/{NAME}").status_code == 404
     assert client.get(f"{BASE}/models").json()["data"] == []
+
+
+def test_a_cancelled_sign_in_takes_no_address(hermes_home, release, client):
+    client.post(f"{BASE}/ensure")
+    state = client.post(f"{BASE}/login", json={"provider": "anthropic"}).json()["state"]
+
+    assert client.post(f"{BASE}/login/cancel", json={"state": state}).json() == {"cancelled": True}
+    assert client.get(f"{BASE}/login/status", params={"state": state}).json() == {
+        "status": "error", "error": "unknown or expired state"}
+    pasted = client.post(f"{BASE}/login/callback",
+                         json={"redirect_url": REDIRECT.format(state=state)})
+    assert pasted.status_code == 400
+    assert not (bridge.auth_dir(hermes_home) / NAME).exists()
 
 
 @pytest.mark.parametrize("name", [
@@ -323,17 +370,16 @@ def test_account_names_are_one_plain_json_file(name):
         bridge.check_account_name(name)
 
 
-def test_routes_refuse_traversal_and_bad_account_files(hermes_home, client):
+def test_routes_refuse_traversal_and_bad_sign_ins(hermes_home, client):
     assert client.delete(f"{BASE}/accounts/..%2Fkeys.json").status_code == 400
     bad = [
-        ({"name": "../keys.json", "content": ACCOUNT}, 400),
-        ({"name": "x.json", "content": "not json"}, 400),
-        ({"name": "x.json", "content": json.dumps({"email": "dev@shop.com"})}, 400),
-        ({"name": "x.json", "content": json.dumps(
-            {"type": "claude", "pad": "x" * bridge.MAX_ACCOUNT_BYTES})}, 422),
+        ("login", {"provider": "anthropic-auth-url?is_webui=true"}, 400),
+        ("login", {"provider": "../config"}, 400),
+        ("login/callback", {"redirect_url": "   "}, 400),
+        ("login/callback", {"redirect_url": "x" * (bridge.MAX_REDIRECT_URL_CHARS + 1)}, 422),
     ]
-    for body, code in bad:
-        assert client.post(f"{BASE}/accounts", json=body).status_code == code, body
+    for route, body, code in bad:
+        assert client.post(f"{BASE}/{route}", json=body).status_code == code, body
     assert not bridge.bridge_root(hermes_home).exists()
 
 

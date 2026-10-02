@@ -173,9 +173,12 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | `GET` | `/computer/snapshots/{tool_call_id}` | → JPEG saved after that browser call / `400` bad id / `404` |
 | `POST` | `/computer/ticket` | → `{"ticket": …}` (30 s, single use) |
 | `WS` | `/computer/ws?ticket=&fps=1..10` | live stream + Take control (see below); closes `4403` bad origin, `4401` bad ticket, `4001` computer unavailable / stream ended |
-| `GET` | `/bridge/status` | → `{supported, platform, version, installed, running, base_url, accounts: [{name, provider, email, usable, status, status_message}], detail}` |
+| `GET` | `/bridge/status` | → `{supported, platform, version, installed, running, base_url, accounts: [{name, provider, email, usable, status, status_message}], detail, sign_in}` (`sign_in`: subscriptions sign in here, plugin 0.4.0 and later) |
 | `POST` | `/bridge/ensure` | download (pinned, checksummed) + start the bridge → `{base_url, api_key, version}`; `409` unsupported host / busy, `502` download or start failure |
-| `POST` | `/bridge/accounts` | `{name, content}` (account file name + JSON text, ≤ 128 KiB) → `{ok, name}`; `400` bad name/content, `409` not set up |
+| `POST` | `/bridge/login` | `{provider}` (`anthropic`, `codex`, `meta`, `antigravity`, `xai`, `kimi`, `kimi-ai`, `devin`) → `{status, url, state}`, plus `flow: "device"`, `user_code`, `expires_in` for device-code sign-ins; `400` unknown provider, `409` not set up |
+| `GET` | `/bridge/login/status?state=` | → `{status: "wait" \| "ok" \| "error", error?}` |
+| `POST` | `/bridge/login/callback` | `{redirect_url}` (the address the browser landed on after the sign-in, ≤ 8192 chars) → `{ok}`; `400` with CLIProxyAPI's reason when no sign-in waits for its `state` |
+| `POST` | `/bridge/login/cancel` | `{state}` → `{cancelled}` |
 | `DELETE` | `/bridge/accounts/{name}` | → `{ok, name}` / `404`; `400` bad name (traversal impossible: one `[A-Za-z0-9@._+=-]` segment ending `.json`, never hidden) |
 | `GET` | `/bridge/models` | → `{object: "list", data: [{id, object, owned_by}]}` (models of usable accounts); `409` not set up |
 | `GET` | `/dashboard` | → `{"boot": …}`: this start of the dashboard process (another value once it restarted) |
@@ -266,21 +269,25 @@ service of the server guide.
 
 ## Subscription bridge
 
-Claude Pro/Max and ChatGPT subscriptions reach a Hermes on a server through a
+Subscriptions (Claude Pro/Max, ChatGPT, …) reach a Hermes on a server through a
 CLIProxyAPI next to it (`subscription_bridge.py`), the same pinned release the
 desktop app bundles as its sidecar (v7.3.18, `packages/hermuse_host/cliproxy.lock`).
-The Hermuse desktop app signs the subscription in with its own sidecar — the
-OAuth browser callback must reach the user's machine — then:
+The sign-in itself runs on that CLIProxyAPI, so the account exists on the
+server only and the Hermuse app (desktop, web or mobile) installs nothing on
+the user's machine:
 
 1. `POST /bridge/ensure` downloads the Linux x86-64 or ARM64 release from
    GitHub, checks the archive and binary sha256 against the pins, and starts it
    detached (no root) on `127.0.0.1:<port>`; the port, the `/v1` API key and
    the management key are generated once and kept in `bridge/keys.json`
    (0600), so the endpoint registered in Hermes stays valid across restarts;
-2. `POST /bridge/accounts` hands it the account file (written through the
-   CLIProxyAPI management API on loopback, applied at once); the desktop puts
-   its sidecar's own accounts back as they were before the sign-in, so only
-   one CLIProxyAPI refreshes each grant;
+2. `POST /bridge/login` starts the sign-in and returns the link the user opens
+   in their browser. A device-code sign-in (Meta, xAI, Kimi) only needs the
+   code typed there. A browser sign-in ends on a `http://localhost:<port>/…`
+   address that cannot reach the server: the user pastes it into the app,
+   which posts it to `POST /bridge/login/callback`; CLIProxyAPI reads `state`
+   and `code` from it and saves the account. No callback port is ever opened
+   on the server. The app polls `GET /bridge/login/status` meanwhile;
 3. `GET /bridge/models` lists what the account can serve, and the app
    registers `<base_url>/v1` with the API key as a Hermes custom endpoint.
 

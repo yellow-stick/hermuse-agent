@@ -250,6 +250,25 @@ final class CliproxyManagement {
     return AuthStatus.fromJson(json);
   }
 
+  /// Finishes a browser login with the address the browser was sent to
+  /// (`POST /v0/management/oauth-callback` `{redirect_url}`): CLIProxyAPI
+  /// reads `state` and `code` from it, so the OAuth redirect needs no
+  /// listener on this machine. A [CliproxyHttpError] 404 when no login waits
+  /// for that state.
+  Future<void> submitCallback(String redirectUrl) async {
+    final http.Response response;
+    try {
+      response = await _client.post(
+        _resolve('/v0/management/oauth-callback'),
+        headers: {..._headers, 'Content-Type': 'application/json'},
+        body: jsonEncode({'redirect_url': redirectUrl}),
+      );
+    } on http.ClientException catch (e) {
+      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
+    }
+    _decode(response);
+  }
+
   /// Cancels a pending login (`DELETE /v0/management/oauth-session`).
   /// Returns whether a session was actually cancelled.
   Future<bool> cancelLogin(String state) async {
@@ -281,56 +300,6 @@ final class CliproxyManagement {
       for (final file in files)
         if (file is Map<String, Object?>) AuthFile.fromJson(file),
     ];
-  }
-
-  /// Raw JSON text of credential file [name]
-  /// (`GET /v0/management/auth-files/download?name=`, read from `auth-dir`).
-  Future<String> downloadAuthFile(String name) async {
-    final http.Response response;
-    try {
-      response = await _client.get(
-        _resolve('/v0/management/auth-files/download', {'name': name}),
-        headers: _headers,
-      );
-    } on http.ClientException catch (e) {
-      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
-    }
-    final status = response.statusCode;
-    // Errors are `{error}` objects: [_decode] throws the mapped exception.
-    if (status < 200 || status >= 300) _decode(response);
-    // JSON is UTF-8 whatever the headers say.
-    return utf8.decode(response.bodyBytes);
-  }
-
-  /// Saves [content] (credential JSON) as file [name] and registers it at once
-  /// (`POST /v0/management/auth-files?name=` with the raw JSON body).
-  Future<void> uploadAuthFile(String name, String content) async {
-    final http.Response response;
-    try {
-      response = await _client.post(
-        _resolve('/v0/management/auth-files', {'name': name}),
-        headers: {..._headers, 'Content-Type': 'application/json'},
-        body: content,
-      );
-    } on http.ClientException catch (e) {
-      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
-    }
-    _decode(response);
-  }
-
-  /// Removes credential file [name] (`DELETE /v0/management/auth-files?name=`);
-  /// a missing file is a [CliproxyHttpError] 404.
-  Future<void> deleteAuthFile(String name) async {
-    final http.Response response;
-    try {
-      response = await _client.delete(
-        _resolve('/v0/management/auth-files', {'name': name}),
-        headers: _headers,
-      );
-    } on http.ClientException catch (e) {
-      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
-    }
-    _decode(response);
   }
 
   /// Lists models the sidecar can serve right now (`GET /v1/models`, the

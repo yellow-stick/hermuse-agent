@@ -363,9 +363,16 @@ def restart_dashboard():
 # --- Subscription bridge ---------------------------------------------------
 
 
-class BridgeAccountBody(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=2, max_length=subscription_bridge.MAX_ACCOUNT_BYTES)
+class BridgeLoginBody(BaseModel):
+    provider: str = Field(min_length=1, max_length=40)
+
+
+class BridgeCallbackBody(BaseModel):
+    redirect_url: str = Field(min_length=1, max_length=subscription_bridge.MAX_REDIRECT_URL_CHARS)
+
+
+class BridgeStateBody(BaseModel):
+    state: str = Field(min_length=1, max_length=200)
 
 
 def _bridge_call(action: Callable[..., Any], *args: Any) -> Any:
@@ -390,9 +397,24 @@ def bridge_ensure():
     return _bridge_call(subscription_bridge.ensure)
 
 
-@router.post("/bridge/accounts")
-def bridge_upload_account(payload: BridgeAccountBody):
-    return _bridge_call(subscription_bridge.upload_account, payload.name, payload.content)
+@router.post("/bridge/login")
+def bridge_start_login(payload: BridgeLoginBody):
+    return _bridge_call(subscription_bridge.start_login, payload.provider)
+
+
+@router.get("/bridge/login/status")
+def bridge_login_status(state: str = Query(min_length=1, max_length=200)):
+    return _bridge_call(subscription_bridge.login_status, state)
+
+
+@router.post("/bridge/login/callback")
+def bridge_login_callback(payload: BridgeCallbackBody):
+    return _bridge_call(subscription_bridge.submit_callback, payload.redirect_url)
+
+
+@router.post("/bridge/login/cancel")
+def bridge_cancel_login(payload: BridgeStateBody):
+    return _bridge_call(subscription_bridge.cancel_login, payload.state)
 
 
 # ``:path`` so a name with "/" (``..%2Fx.json``) reaches the validation (400)
