@@ -636,30 +636,118 @@ void main() {
         );
     });
 
-    test('addCustomEndpoint persists the resolved base url', () async {
+    test('check probes with api_mode, add saves the chosen model', () async {
       rest.routes['POST /api/providers/custom-endpoints/validate'] =
           ScriptedRest.json({
             'ok': true,
             'reachable': true,
             'message': '',
-            'models': ['llama-3.1-8b'],
-            'resolved_base_url': 'http://127.0.0.1:8000/v1',
+            'models': ['claude-opus-5', 'glm-5.3', 'muse-spark-1.3'],
+            'resolved_base_url': 'https://llm.example/v1',
           });
-      rest.routes['POST /api/providers/custom-endpoints'] = (request) async {
-        final body = jsonDecode(request.body) as Map<String, Object?>;
-        expect(body['base_url'], 'http://127.0.0.1:8000/v1');
-        expect(body['model'], 'llama-3.1-8b');
-        return http.Response.bytes(
-          utf8.encode(jsonEncode({'ok': true, 'id': 'local-llama'})),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      };
+      rest.routes['POST /api/providers/custom-endpoints'] = ScriptedRest.json({
+        'ok': true,
+        'id': 'my-llm',
+      });
       await cards();
-      final id = await container
-          .read(connectionCardsProvider('vps').notifier)
-          .addCustomEndpoint(name: 'Local', baseUrl: 'http://127.0.0.1:8000');
-      expect(id, 'local-llama');
+      final notifier = container.read(connectionCardsProvider('vps').notifier);
+      final probe = await notifier.checkCustomEndpoint(
+        name: 'My LLM',
+        baseUrl: 'https://llm.example',
+        apiKey: 'sk-test',
+        apiMode: 'anthropic_messages',
+      );
+      expect(probe.resolvedBaseUrl, 'https://llm.example/v1');
+      expect(probe.models, ['claude-opus-5', 'glm-5.3', 'muse-spark-1.3']);
+      final id = await notifier.addCustomEndpoint(
+        name: 'My LLM',
+        baseUrl: probe.resolvedBaseUrl,
+        apiKey: 'sk-test',
+        apiMode: 'anthropic_messages',
+        model: 'muse-spark-1.3',
+        models: probe.models,
+      );
+      expect(id, 'my-llm');
+      final posts = [
+        for (final c in rest.calls)
+          if (c.method == 'POST') {'path': c.path, 'body': c.body},
+      ];
+      expect(posts, [
+        {
+          'path': '/api/providers/custom-endpoints/validate',
+          'body': {
+            'name': 'My LLM',
+            'base_url': 'https://llm.example',
+            'model': '',
+            'api_mode': 'anthropic_messages',
+            'api_key': 'sk-test',
+          },
+        },
+        {
+          'path': '/api/providers/custom-endpoints',
+          'body': {
+            'name': 'My LLM',
+            'base_url': 'https://llm.example/v1',
+            'model': 'muse-spark-1.3',
+            'api_mode': 'anthropic_messages',
+            'api_key': 'sk-test',
+            'models': ['muse-spark-1.3', 'claude-opus-5', 'glm-5.3'],
+          },
+        },
+      ]);
+    });
+
+    test('a refused check throws the server sentence', () async {
+      rest.routes['POST /api/providers/custom-endpoints/validate'] =
+          ScriptedRest.json({
+            'ok': false,
+            'reachable': true,
+            'message': 'HTTP 401 from https://llm.example/v1/models',
+            'models': <Object?>[],
+          });
+      await cards();
+      await expectLater(
+        container
+            .read(connectionCardsProvider('vps').notifier)
+            .checkCustomEndpoint(
+              name: 'My LLM',
+              baseUrl: 'https://llm.example',
+            ),
+        throwsA(
+          isA<ConnectionRejected>().having(
+            (e) => e.message,
+            'message',
+            'HTTP 401 from https://llm.example/v1/models',
+          ),
+        ),
+      );
+    });
+
+    test('a saved endpoint card carries its api type and models', () async {
+      rest.routes['GET /api/providers/custom-endpoints'] = ScriptedRest.json({
+        'endpoints': [
+          {
+            'id': 'spideros-llm',
+            'name': 'SpiderOS LLM',
+            'base_url': 'https://llm.example/v1',
+            'model': 'muse-spark-1.3-contributor',
+            'api_mode': 'chat_completions',
+            'models': ['claude-opus-5', 'muse-spark-1.3-contributor'],
+          },
+        ],
+      });
+      final card = (await cards()).cards.singleWhere(
+        (c) => c.flow == ConnectionFlow.customEndpoint,
+      );
+      expect(card.id, 'custom:spideros-llm');
+      expect(card.hermesProvider, 'spideros-llm');
+      expect(card.apiMode, 'chat_completions');
+      expect(card.defaultModel, 'muse-spark-1.3-contributor');
+      expect(card.baseUrl, 'https://llm.example/v1');
+      expect(
+        card.detail,
+        'OpenAI-compatible · muse-spark-1.3-contributor · 2 models',
+      );
     });
 
     test('disconnect routes oauth, pool and env-var cards', () async {

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import 'onboarding.dart' show setupChatTitle;
+import 'saved_sign_in.dart';
 
 part 'providers.g.dart';
 
@@ -108,7 +109,9 @@ final class InstanceAuth {
     final secrets = _ref.read(secretStoreProvider);
     await secrets.write(instanceId, SecretKeys.username, username);
     await secrets.write(instanceId, SecretKeys.password, password);
-    _ref.invalidate(connectionProvider(instanceId));
+    _ref
+      ..invalidate(savedSignInProvider(instanceId))
+      ..invalidate(connectionProvider(instanceId));
   }
 
   /// Registers [candidate] once [secrets] (keyed by [SecretKeys]: the
@@ -607,6 +610,19 @@ final class _DatabaseObserver implements ChatObserver {
   @override
   void sessionDeleted(ThreadRef ref) {
     unawaited(_db.deleteSession(ref.instanceId, ref.sessionId));
+  }
+
+  @override
+  void toolCompleted(ThreadRef ref, ActivityItem item) {
+    unawaited(
+      _db.addActivity(
+        instanceId: ref.instanceId,
+        sessionId: item.sessionId,
+        tool: item.tool,
+        summary: item.summary,
+        at: item.at,
+      ),
+    );
   }
 
   /// Caches messages that carry a transcript row id (`row-<n>`); local

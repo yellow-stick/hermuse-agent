@@ -445,15 +445,14 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Sign in with Claude Code'), findsNothing);
-      // A connected provider never folds away.
+      // A connected provider never folds away, nor does your own endpoint.
       expect(find.text('Nous Portal'), findsOneWidget);
       expect(find.text('Anthropic OAuth'), findsNothing);
-      expect(find.text('Add custom endpoint'), findsNothing);
+      expect(find.text('Add a connection'), findsOneWidget);
 
       await tester.tap(find.text('Show other providers'));
       await tester.pump();
       expect(find.text('Anthropic OAuth'), findsOneWidget);
-      expect(find.text('Add custom endpoint'), findsOneWidget);
       await tester.tap(find.text('Hide other providers'));
       await tester.pump();
       expect(find.text('Anthropic OAuth'), findsNothing);
@@ -568,10 +567,11 @@ void main() {
       expect(opened, 1);
     });
 
-    testWidgets('custom endpoint Add enables once filled in, then saves', (
+    testWidgets('custom endpoint checks, then adds the picked model', (
       tester,
     ) async {
       final calls = <String>[];
+      Map<String, Object?>? saved;
       final harness = _Harness(
         rpc: {
           'model.options': (_) => {'providers': []},
@@ -590,8 +590,9 @@ void main() {
               'models': ['local-model'],
             });
           },
-          'POST /api/providers/custom-endpoints': (_) async {
+          'POST /api/providers/custom-endpoints': (request) async {
             calls.add('save');
+            saved = jsonDecode(request.body) as Map<String, Object?>;
             return _json({'id': 'local'});
           },
         },
@@ -600,19 +601,112 @@ void main() {
       addTearDown(harness.dispose);
       await _pumpConnections(tester, harness);
 
-      // Nothing to feature: the other providers show without unfolding.
-      await tester.tap(find.widgetWithText(YsButton, 'Add custom endpoint'));
+      // The endpoint form sits above the provider list, never folded.
+      expect(find.text('Your own endpoint'), findsOneWidget);
+      await tester.tap(find.widgetWithText(YsButton, 'Add a connection'));
       await tester.pump();
       final fields = find.byType(EditableText);
       await tester.enterText(fields.at(1), 'Local model');
       await tester.enterText(fields.at(2), 'http://localhost:1234');
       await tester.pump();
+      final check = find.widgetWithText(YsButton, 'Check');
+      await tester.ensureVisible(check);
+      await tester.pump();
+      await tester.tap(check);
+      await tester.pumpAndSettle();
+      expect(find.text('Found 1 model. Pick the default one.'), findsOneWidget);
+
       final add = find.widgetWithText(YsButton, 'Add');
       await tester.ensureVisible(add);
       await tester.pump();
       await tester.tap(add);
       await tester.pumpAndSettle();
       expect(calls, ['validate', 'save']);
+      expect(saved, {
+        'name': 'Local model',
+        'base_url': 'http://localhost:1234/v1',
+        'model': 'local-model',
+        'api_mode': 'chat_completions',
+        'models': ['local-model'],
+      });
+    });
+
+    testWidgets('a guarded default model asks before Hermes switches', (
+      tester,
+    ) async {
+      final sets = <Map<String, Object?>>[];
+      final harness = _Harness(
+        rpc: {
+          'model.options': (_) => {
+            'providers': [
+              {
+                'slug': 'my-llm',
+                'name': 'My LLM',
+                'is_user_defined': true,
+                'models': ['spark-1.3-contributor'],
+                'authenticated': true,
+              },
+            ],
+          },
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({'providers': []}),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async => _json({
+            'endpoints': [
+              {
+                'id': 'my-llm',
+                'name': 'My LLM',
+                'base_url': 'https://llm.example/v1',
+                'model': 'spark-1.3-contributor',
+                'api_mode': 'anthropic_messages',
+                'models': ['spark-1.3-contributor'],
+              },
+            ],
+          }),
+          'GET /api/env': (_) async => _json({}),
+          'POST /api/model/set': (request) async {
+            final body = jsonDecode(request.body) as Map<String, Object?>;
+            sets.add(body);
+            return _json(
+              body['confirm_expensive_model'] == true
+                  ? {'ok': true}
+                  : {
+                      'ok': false,
+                      'confirm_required': true,
+                      'confirm_message': 'Trains on your data.',
+                    },
+            );
+          },
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      await _pumpConnections(tester, harness);
+
+      expect(
+        find.text('Anthropic-compatible · spark-1.3-contributor · 1 model'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('My LLM'));
+      await tester.pumpAndSettle();
+      final use = find.widgetWithText(YsButton, 'Use as default');
+      await tester.ensureVisible(use);
+      await tester.pump();
+      await tester.tap(use);
+      await tester.pumpAndSettle();
+      expect(find.text('Trains on your data.'), findsOneWidget);
+      expect(sets.single['provider'], 'my-llm');
+
+      await tester.tap(find.widgetWithText(YsButton, 'Use it anyway'));
+      await tester.pumpAndSettle();
+      expect(find.text('Trains on your data.'), findsNothing);
+      expect(sets.last, {
+        'scope': 'main',
+        'provider': 'my-llm',
+        'model': 'spark-1.3-contributor',
+        'confirm_expensive_model': true,
+      });
     });
   });
 }

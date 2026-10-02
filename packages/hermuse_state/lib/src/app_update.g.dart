@@ -68,7 +68,7 @@ final class AppUpdateProvider
   }
 }
 
-String _$appUpdateHash() => r'd1b0fa00a3ecad46f12fcf986cf383187f3f1b18';
+String _$appUpdateHash() => r'771a301d2098db7046626c0d6fb03f51d4495a36';
 
 /// App-update check state: one cached feed result plus its persistence.
 ///

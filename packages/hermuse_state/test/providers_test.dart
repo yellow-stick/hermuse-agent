@@ -118,7 +118,6 @@ void main() {
         Thread(id: 'draft-1', title: '', startedAt: '', messages: []),
       ],
       activeThreadId: 'm',
-      activity: const [],
     );
     final entries = sideChatEntries(state, [
       row('b', 5, pinned: 1),

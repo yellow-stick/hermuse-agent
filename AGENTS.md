@@ -47,6 +47,7 @@ Running:
 
 ```bash
 cd apps/hermuse_app && flutter run -d linux   # or macos / windows / device
+tool/remote-app.sh                            # same on a headless KasmVNC display (VPS); http://<worktree>.localhost:6901, main checkout `main`
 tool/serve-web.sh                             # jaspr serve; http://localhost:8080 in the main checkout
 cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
@@ -103,7 +104,7 @@ Pull requests: target `main`. Title in the commit style, summarizing the whole b
 
 ## References
 
-- User docs: `docs/guides/` (`server.md`, `desktop.md`, `web-app-and-relay.md`, `agent-computer.md`).
+- User docs: `docs/guides/` (`server.md`, `desktop.md`, `web-app-and-relay.md`, `agent-computer.md`, `profile-panel.md`).
 - Plans: `docs/plans/` (`hermes-backend.md`, `computer-surface.md`).
 - Plugin install/test flow: `hermes-plugin/hermuse/README.md`.
 - AGENTS.md conventions followed here: [GitHub docs on custom instructions](https://docs.github.com/en/copilot/concepts/prompting/response-customization), [VS Code guide to customizing agents](https://code.visualstudio.com/docs/agents/guides/customize-copilot-guide).

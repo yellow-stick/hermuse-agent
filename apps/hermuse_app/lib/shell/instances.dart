@@ -397,6 +397,8 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
         connection.error is HermesAuthFailed ||
         (state.value == ConnectionState.error &&
             connection.value?.transport.lastError is HermesAuthFailed);
+    // The dashboard account this app holds, to sign in elsewhere.
+    final saved = ref.watch(savedSignInProvider(instance.id)).value;
     // Outlined, not filled: the neutral buttons and the monogram disc share
     // the neutral fill and would vanish on it (web `.hermuse-instance-row`).
     return OverlayPortal(
@@ -414,6 +416,14 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
             mainAxisSize: MainAxisSize.min,
             children: [
               _head(palette, signedOut: signedOut),
+              if (saved != null && !_signingIn) ...[
+                const SizedBox(height: YsSpace.md),
+                SignInBox(
+                  username: saved.username,
+                  password: saved.password,
+                  onPaper: true,
+                ),
+              ],
               // The sign-in's line: an empty box while it runs, ticked with
               // sparks once signed in; it stays until another action starts.
               if (_signCheck case final check?) ...[

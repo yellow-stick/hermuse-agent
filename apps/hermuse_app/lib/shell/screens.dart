@@ -250,6 +250,96 @@ final class _CommandBoxState extends State<CommandBox> {
   }
 }
 
+/// A dashboard account to keep: its username, and its password hidden until
+/// "Show", with a Copy button. On a paper card ([onPaper]) the box takes the
+/// canvas colour, elsewhere the paper one.
+final class SignInBox extends StatefulWidget {
+  const SignInBox({
+    required this.username,
+    required this.password,
+    this.onPaper = false,
+    super.key,
+  });
+
+  final String username;
+  final String password;
+  final bool onPaper;
+
+  @override
+  State<SignInBox> createState() => _SignInBoxState();
+}
+
+final class _SignInBoxState extends State<SignInBox> {
+  var _shown = false;
+  var _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.password));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _copied = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final caption = YsType.caption.flutter.copyWith(
+      color: palette.contentMutedColor,
+    );
+    final value = YsType.small.flutter.copyWith(
+      fontFamily: YsType.monoFamily,
+      color: palette.contentColor,
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: widget.onPaper ? palette.canvasColor : palette.paperColor,
+        borderRadius: BorderRadius.circular(YsRadius.row),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(YsSpace.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Username', style: caption),
+            SelectableText(widget.username, style: value),
+            const SizedBox(height: YsSpace.sm),
+            Text('Password', style: caption),
+            Row(
+              children: [
+                Expanded(
+                  child: _shown
+                      ? SelectableText(widget.password, style: value)
+                      // Fixed width: the hidden value does not tell its length.
+                      : Semantics(
+                          label: 'Password hidden',
+                          child: ExcludeSemantics(
+                            child: Text('••••••••••••', style: value),
+                          ),
+                        ),
+                ),
+                const SizedBox(width: YsSpace.sm),
+                YsButton.neutral(
+                  label: _shown ? 'Hide' : 'Show',
+                  onPressed: () => setState(() => _shown = !_shown),
+                  textStyle: YsType.small,
+                ),
+                const SizedBox(width: YsSpace.sm),
+                YsButton.neutral(
+                  label: _copied ? 'Copied' : 'Copy',
+                  onPressed: _copy,
+                  textStyle: YsType.small,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Full-screen wait: [art] loops in the middle of the canvas until what
 /// the screen waits for arrives; [label] is announced.
 final class LoadingScreen extends StatelessWidget {
