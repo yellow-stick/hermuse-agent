@@ -25,7 +25,8 @@ class HermusePanel extends StatelessComponent {
   final VoidCallback onClose;
 
   /// Shows the agent's computer (its browser and desktop) at will; null
-  /// hides the button (the read-only demo has no computer).
+  /// hides the button. The read-only demo shows its fake computer too:
+  /// its stream is replayed frames, input stays inert.
   final VoidCallback? onOpenComputer;
 
   @override
