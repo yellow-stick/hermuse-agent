@@ -26,6 +26,7 @@ Or compiled: `dart compile exe bin/server.dart -o server && ./server`.
 | `HERMUSE_RELAY_DB`            | no       | `hermuse_relay.db`  | sqlite path holding the upstream registry.                     |
 | `HERMUSE_RELAY_ORIGIN`        | yes      | —                   | Public origin of the web app (e.g. `https://chat.example.com`, or `http://127.0.0.1:8787` locally). Used for the CSRF `Origin` check on state-changing requests and the WS origin check. The relay refuses to start without it. |
 | `HERMUSE_RELAY_STATIC_DIR`    | no       | —                   | Directory with the built Jaspr site; served same-origin with an `index.html` SPA fallback. |
+| `HERMUSE_RELAY_UPSTREAMS`     | no       | —                   | Comma-separated Hermes base URLs registered at startup (normalised, idempotent, no label). A malformed entry makes the relay refuse to start. |
 
 ## Registering an upstream
 
@@ -64,3 +65,31 @@ and WebSocket traffic never cross origins. Keep
 `HERMUSE_RELAY_ADMIN_TOKEN` in the environment (or secret store) only;
 upstream Hermes credentials stay in the server-side cookie jar, never in
 browser storage.
+
+### Container image
+
+`ghcr.io/yellow-stick/hermuse-web:<version>` (linux/amd64, linux/arm64) bundles
+the relay with the `jaspr build` output of `apps/hermuse_web`. `<version>` is
+the `version:` of `hermes-plugin/hermuse/plugin.yaml`: the web app ships with
+the plugin version it works with. Published by
+`.github/workflows/web-image.yml` from [`Dockerfile`](Dockerfile), which only
+copies prebuilt artifacts. Layout and defaults:
+
+- relay bundle in `/opt/hermuse-relay/` (`bin/server`, the entrypoint), site in
+  `/opt/hermuse-relay/web` (`HERMUSE_RELAY_STATIC_DIR`);
+- `HERMUSE_RELAY_DB=/tmp/hermuse_relay.db`, `HERMUSE_RELAY_PORT=8787`
+  (exposed); runs as `65532:65532`.
+
+The registry is declared through `HERMUSE_RELAY_UPSTREAMS`, so the container
+needs no volume and runs with a read-only root:
+
+```sh
+docker run -d -p 127.0.0.1:9120:8787 --read-only --tmpfs /tmp:rw,size=16m \
+  --cap-drop ALL --security-opt no-new-privileges \
+  -e HERMUSE_RELAY_ADMIN_TOKEN=… \
+  -e HERMUSE_RELAY_ORIGIN=https://app.hermuse.203-0-113-10.sslip.io \
+  -e HERMUSE_RELAY_UPSTREAMS=https://hermuse.203-0-113-10.sslip.io \
+  ghcr.io/yellow-stick/hermuse-web:0.3.0
+```
+
+The desktop app's SSH installer runs it this way (its `web` step) behind Caddy.

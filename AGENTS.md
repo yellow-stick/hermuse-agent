@@ -77,6 +77,7 @@ overrides). Jaspr always binds the Dart VM service to 8181: a second concurrent
 
 - `packages/hermes_contract/lib/src/contract.g.dart` (`// GENERATED … do not edit`). Regenerate from `packages/hermes_contract`: `dart run tool/gen_hermes_contract.dart`. `test/drift_test.dart` fails when the committed output is stale.
 - Desktop app bundles a copy of the plugin. After changing `hermes-plugin/hermuse`, refresh it from `apps/hermuse_app`: `dart run tool/sync_plugin_assets.dart` (covered by `plugin_assets_test.dart`).
+- Native app icons (Android `mipmap-*` + adaptive icon, iOS/macOS `AppIcon.appiconset`, Windows `app_icon.ico`, Linux `runner/resources/app_icon.png`) are rendered from `packaging/icon/icon.svg`: `packaging/icon/render-app-icons.sh` (rsvg-convert + ImageMagick). The `.deb`/AppImage render their hicolor icons from the same SVG.
 - `jaspr_builder` 0.23.5 wants `analyzer ^12`, capped at `build_runner` 2.15.1 / `build_web_compilers` 4.8.5. The root `dependency_overrides` pins `analyzer ^13.3.0` (jaspr builds fine on 13.x). Bump these together with Jaspr.
 
 ## Commits, branches and PRs

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:hermuse_data/hermuse_data.dart';
@@ -49,9 +51,11 @@ void main() {
       expect(chat.state.activeThreadId, ava.main.id);
       expect(chat.state.mainThread.messages, isNotEmpty);
       expect(chat.state.sideThreads.map((t) => t.title), [
-        for (final side in ava.sideChats)
-          if (!side.archived) side.title,
-      ], reason: 'archived side chats stay in the archive');
+        'Weekend in Annecy',
+        'Night pass — emails + code',
+        'Nightly to-do list',
+        'Autumn half-marathon',
+      ], reason: 'pinned first, then by recency');
     },
   );
 
@@ -102,10 +106,11 @@ void main() {
     expect(posts.map((p) => p.title), [
       for (final post in ava.feed) post['title'],
     ]);
-    expect(posts.first.createdAt, '2026-09-30 07:30');
+    expect(posts.first.title, 'Your day — 4 things');
+    expect(posts.first.createdAt, '2026-09-30 08:30');
     expect(
       (await container.read(goalsProvider(ava.id).future)).first.timeline,
-      hasLength(2),
+      hasLength(3),
     );
     expect(
       await container.read(
@@ -117,8 +122,36 @@ void main() {
         ava.files[preferencesFileName],
       ),
     );
+    // The fake computer: running, stills per browser step, ticket allowed.
+    final computer = await container.read(
+      computerClientProvider(ava.id).future,
+    );
+    final status = await computer.status();
+    expect(status.state, ComputerState.running);
+    final shot = await computer.snapshot('${ava.main.id}-tool-2');
+    expect(shot, isNotEmpty);
+    expect(shot!.first, 0xFF);
+    expect(await computer.thumbnail(), isNotEmpty);
+    final session = await computer.open();
+    final views = <ComputerViewState>[];
+    final frames = <Uint8List>[];
+    session.states.listen(views.add);
+    session.frames.listen(frames.add);
+    await pumpEventQueue();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(views, isNotEmpty);
+    expect(frames, isNotEmpty);
+    expect(frames.first.first, 0xFF);
+    // Take control answers but hands over nothing; mode flips the frame.
+    session.take();
+    await pumpEventQueue();
+    expect(views.last.inControl, isFalse);
+    session.setMode(ComputerMode.desktop);
+    await pumpEventQueue();
+    expect(views.last.mode, ComputerMode.desktop);
+    await session.close();
     await expectLater(
-      rest.postJson('$hermusePluginRoute/feed/feed-ava-1/react', {
+      rest.postJson('$hermusePluginRoute/feed/feed-ava-0/react', {
         'reaction': 'love',
       }),
       throwsA(

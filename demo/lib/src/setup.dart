@@ -5,6 +5,7 @@ import 'package:hermuse_data/hermuse_data.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:riverpod/misc.dart';
 
+import 'computer_stream.dart';
 import 'content.dart';
 import 'plugin_api.dart';
 import 'transport.dart';
@@ -20,12 +21,64 @@ List<Override> demoOverrides({DateTime? now}) {
     ),
     for (final instance in demoInstances)
       restClientProvider(instance.id).overrideWith((ref) async {
-        final client = demoPluginClient(instance, now: loaded);
+        final computer = _computerFor(instance);
+        final client = demoPluginClient(
+          instance,
+          now: loaded,
+          computer: computer,
+        );
         ref.onDispose(client.close);
         return HermesRestClient(client, baseUrl: Uri.parse(instance.baseUrl));
       }),
+    // The fake computer's live stream: replayed frames and state, nothing
+    // leaves the browser. Take control shows but stays inert (read-only).
+    for (final instance in demoInstances)
+      computerClientProvider(instance.id).overrideWith((ref) async {
+        final rest = await ref.watch(restClientProvider(instance.id).future);
+        final computer = _computerFor(instance);
+        return ComputerClient(
+          rest,
+          connect: demoComputerConnector(
+            browserFrame: computer.thumbnail,
+            tabs: _tabsFor(instance),
+          ),
+        );
+      }),
   ];
 }
+
+/// Which fake screen each demo instance shows.
+DemoComputer _computerFor(DemoInstance instance) => instance.label == 'Otto'
+    ? const DemoComputer(thumbnail: 'annecy')
+    : const DemoComputer(
+        thumbnail: 'energy-form',
+        // Row index → frame of the electricity journey (main chat rows 1-3).
+        // The Annecy booking is served by chat title (see plugin_api).
+        snapshots: {1: 'energy', 2: 'energy', 3: 'energy-form'},
+      );
+
+/// Chromium tabs the fake stream reports: same three pages for both
+/// instances, the viewer selects the one matching the open thread.
+List<Map<String, Object?>> _tabsFor(DemoInstance instance) => const [
+  {
+    'id': 'compare',
+    'url': 'https://compare.watto.example/energy-lyon',
+    'title': 'Watto Compare — Green electricity in Lyon',
+    'active': false,
+  },
+  {
+    'id': 'switch',
+    'url': 'https://switch.lumenpure.example/form',
+    'title': 'Lumen Pure — Switch form',
+    'active': true,
+  },
+  {
+    'id': 'stay',
+    'url': 'https://stay.watto.example/annecy-lac',
+    'title': 'Watto Stay — Annecy by the lake',
+    'active': false,
+  },
+];
 
 DemoInstance _byId(String id) => demoInstances.firstWhere((i) => i.id == id);
 

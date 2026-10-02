@@ -281,6 +281,133 @@ exec /usr/bin/install "${args[@]}"
         'saved browser login',
       );
     });
+
+    group('web app', () {
+      const dashboard = 'hermuse.217-76-55-191.sslip.io';
+      final web = webAppDomain(dashboard);
+      final image = webImageReference('0.3.0');
+      setUp(() => fixture.seedWebDocker());
+      tearDown(() async {
+        final pid = fixture.file('web/server.pid');
+        if (await pid.exists()) {
+          Process.killPid(int.parse((await pid.readAsString()).trim()));
+        }
+      });
+
+      Future<String> inventory({required bool publish}) async {
+        final result = await fixture.run(
+          webInventoryScript(web, dashboard, image, publish: publish),
+        );
+        expect(result.exitCode, 0, reason: '${result.stderr}');
+        return '${result.stdout}'.trim();
+      }
+
+      test('a foreign hermuse-web container blocks publishing without being changed', () async {
+        final foreign = jsonEncode([
+          {
+            'Id': 'foreign',
+            'Config': {'Image': image, 'Labels': <String, String>{}},
+            'State': {'Running': true},
+          },
+        ]);
+        await fixture.file('web/container.json').writeAsString(foreign);
+        final blocked = await fixture.run(
+          webInventoryScript(web, dashboard, image, publish: true),
+        );
+        expect(blocked.exitCode, isNot(0));
+        expect(await inventory(publish: false), 'HERMUSE_HEALTH_V1:absent');
+        final deploy = await fixture.run(
+          "printf %s ${shellQuote('t' * 32)} | "
+          '${webDeployScript(web, dashboard, image)}',
+        );
+        expect(deploy.exitCode, isNot(0));
+        expect(await fixture.file('web/mutations').exists(), isFalse);
+        expect(
+          await fixture.file('web/container.json').readAsString(),
+          foreign,
+        );
+      });
+
+      test('another loopback listener blocks publishing only', () async {
+        ServerSocket? listener;
+        try {
+          listener = await ServerSocket.bind(
+            InternetAddress.loopbackIPv4,
+            webLoopbackPort,
+          );
+        } on SocketException {
+          // Already held by something else on this host: equally busy.
+        }
+        addTearDown(() => listener?.close());
+        final blocked = await fixture.run(
+          webInventoryScript(web, dashboard, image, publish: true),
+        );
+        expect(blocked.exitCode, isNot(0));
+        expect(await inventory(publish: false), 'HERMUSE_HEALTH_V1:absent');
+      });
+
+      test('deployment replaces an owned stale container with the hardened version-matched one', () async {
+        try {
+          await (await ServerSocket.bind(
+            InternetAddress.loopbackIPv4,
+            webLoopbackPort,
+          )).close();
+        } on SocketException {
+          markTestSkipped('Port $webLoopbackPort is in use on this host.');
+          return;
+        }
+        await fixture
+            .file('web/container.json')
+            .writeAsString(
+              jsonEncode([
+                {
+                  'Id': 'stale',
+                  'Config': {
+                    'Image': webImageReference('0.2.0'),
+                    'Labels': {'org.hermuse.remote-installer': 'web-v1'},
+                  },
+                  'State': {'Running': false},
+                },
+              ]),
+            );
+        expect(await inventory(publish: true), 'HERMUSE_HEALTH_V1:repair');
+        final token = 'T' * 32;
+        final deploy = await fixture.run(
+          'printf %s ${shellQuote(token)} | '
+          '${webDeployScript(web, dashboard, image)}',
+        );
+        expect(deploy.exitCode, 0, reason: '${deploy.stderr}');
+        final mutations = await fixture.file('web/mutations').readAsLines();
+        expect(mutations.first, 'rm -f stale');
+        expect(
+          mutations.last,
+          matches(
+            RegExp(
+              r'^run -d --name hermuse-web --label org\.hermuse\.remote-installer=web-v1 '
+              r'--restart unless-stopped -p 127\.0\.0\.1:9120:8787 --read-only '
+              r'--tmpfs /tmp:rw,size=16m --cap-drop ALL --security-opt no-new-privileges '
+              r'--env-file \S+ ghcr\.io/yellow-stick/hermuse-web:0\.3\.0$',
+            ),
+          ),
+        );
+        expect(mutations.join('\n'), isNot(contains(token)));
+        expect(
+          await fixture.file('web/env').readAsString(),
+          'HERMUSE_RELAY_ADMIN_TOKEN=$token\n'
+          'HERMUSE_RELAY_ORIGIN=https://$web\n'
+          'HERMUSE_RELAY_UPSTREAMS=https://$dashboard\n',
+        );
+        expect(
+          (await fixture.file('web/env-mode').readAsString()).trim(),
+          '600',
+        );
+        final envPath = (await fixture.file('web/env-path').readAsString())
+            .trim();
+        expect(await File(envPath).exists(), isFalse);
+        expect(await inventory(publish: true), 'HERMUSE_HEALTH_V1:ready');
+        expect(await inventory(publish: false), 'HERMUSE_HEALTH_V1:ready');
+      });
+    });
   }, skip: Platform.isLinux ? false : 'Linux remote shell recipes');
 }
 
@@ -538,4 +665,65 @@ def read_runtime(home): return json.loads((home / "hermuse/computer/runtime.json
     ],
     environment: {'PATH': '${root.path}/bin:${Platform.environment['PATH']}'},
   );
+}
+
+extension on _Fixture {
+  /// Docker boundary for the web app recipes; `run` starts a stand-in relay
+  /// health endpoint on the loopback port like the published container would.
+  Future<void> seedWebDocker() async {
+    await Directory('${root.path}/web').create();
+    await file('web/server.py').writeAsString('''
+import http.server, json
+class Health(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"ok": self.path == "/relay/health"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+http.server.HTTPServer(("127.0.0.1", $webLoopbackPort), Health).serve_forever()
+''');
+    final state = shellQuote('${root.path}/web');
+    await executable('bin/docker', '''
+state=$state
+case "\$1" in
+  inspect)
+    if [ -f "\$state/container.json" ]; then cat "\$state/container.json"
+    else echo 'No such container' >&2; exit 1; fi ;;
+  image) echo sha256:current-web-image ;;
+  ps) ;;
+  rm)
+    printf '%s\\n' "\$*" >> "\$state/mutations"
+    rm -f "\$state/container.json" ;;
+  run)
+    printf '%s\\n' "\$*" >> "\$state/mutations"
+    previous=
+    for arg in "\$@"; do
+      if [ "\$previous" = --env-file ]; then
+        cp "\$arg" "\$state/env"
+        stat -c %a "\$arg" > "\$state/env-mode"
+        printf '%s' "\$arg" > "\$state/env-path"
+      fi
+      previous=\$arg
+    done
+    # What Docker records for exactly the asserted flags.
+    /usr/bin/python3 -c '
+import json, sys
+state, image = sys.argv[1:]
+env = open(state + "/env").read().splitlines()
+json.dump([{"Id": "created", "Image": "sha256:current-web-image", "State": {"Running": True},
+            "Config": {"Image": image, "Env": env,
+                       "Labels": {"org.hermuse.remote-installer": "web-v1"}},
+            "HostConfig": {"PortBindings": {"8787/tcp": [{"HostIp": "127.0.0.1", "HostPort": "9120"}]},
+                           "RestartPolicy": {"Name": "unless-stopped"}, "ReadonlyRootfs": True}}],
+          open(state + "/container.json", "w"))
+' "\$state" "\${@: -1}"
+    setsid /usr/bin/python3 "\$state/server.py" </dev/null >/dev/null 2>&1 &
+    echo \$! > "\$state/server.pid" ;;
+  *) echo 'unexpected Docker action' >&2; exit 47 ;;
+esac
+''');
+  }
 }

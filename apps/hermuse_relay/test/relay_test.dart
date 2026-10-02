@@ -361,6 +361,31 @@ void main() {
         throwsStateError,
       );
     });
+    test('parses declared upstreams, normalised and deduplicated', () {
+      Map<String, String> env(String? upstreams) => {
+        'HERMUSE_RELAY_ADMIN_TOKEN': 'tok',
+        'HERMUSE_RELAY_ORIGIN': _origin,
+        'HERMUSE_RELAY_UPSTREAMS': ?upstreams,
+      };
+      expect(RelayConfig.fromEnv(env(null)).upstreams, isEmpty);
+      expect(RelayConfig.fromEnv(env(' , ')).upstreams, isEmpty);
+      expect(
+        RelayConfig.fromEnv(
+          env(
+            ' HTTPS://Hermuse.203-0-113-10.sslip.io/ ,,http://h:8080/x/,'
+            'https://hermuse.203-0-113-10.sslip.io:443',
+          ),
+        ).upstreams,
+        ['https://hermuse.203-0-113-10.sslip.io', 'http://h:8080/x'],
+      );
+      for (final bad in ['hermuse.example.com', 'ftp://h', 'https://ok,/rel']) {
+        expect(
+          () => RelayConfig.fromEnv(env(bad)),
+          throwsStateError,
+          reason: bad,
+        );
+      }
+    });
     test('refuses to start without a valid web app origin', () {
       for (final origin in [null, '', 'chat.example.com', 'https://a/b']) {
         expect(

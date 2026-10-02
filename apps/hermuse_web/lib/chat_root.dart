@@ -672,7 +672,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           tab: _tab,
           onTab: (t) => setState(() => _tab = t),
           onClose: () => setState(() => _panelOverride = false),
-          onOpenComputer: hermuseDemo ? null : controller.openComputer,
+          onOpenComputer: controller.openComputer,
         ),
       if (profileOpen)
         div(

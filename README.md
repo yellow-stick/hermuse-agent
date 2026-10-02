@@ -259,8 +259,9 @@ Netlify publishes only the read-only demo (`demo/`) at https://demo.hermuse.app;
 the product homepage is https://hermuse.app.
 
 - `web/manifest.webmanifest` — "Hermuse Agent", standalone, `#181819` theme,
-  icons in `web/icons/` (192/512, maskable 512, Apple touch 180, SVG) drawn
-  from the Yellow Stick logo with the stick in yellow.
+  icons in `web/icons/` (192/512, maskable 512, Apple touch 180, SVG): the
+  Hermuse mark, a yellow Bricolage Grotesque "h" on an ink `#15130A` tile
+  (source: `docs/assets/hermuse-logo/` in yellow-stick/hermuse-website).
 - `web/sw.js` — network-first service worker: online users always get the
   latest deploy, and everything fetched is cached so the app opens offline after
   one visit (the shell is precached at install). Bump `CACHE` in `sw.js` to drop
@@ -274,6 +275,21 @@ the product homepage is https://hermuse.app.
 Install from Chrome/Edge (install icon in the address bar) or Safari (Share →
 Add to Home Screen). Service workers need HTTPS in production (localhost is
 exempt).
+
+### App icons
+
+`packaging/icon/icon.svg` is the native app icon: the Hermuse mark on a 512
+grid, a copy of `docs/assets/hermuse-logo/icon.svg` in
+yellow-stick/hermuse-website. `packaging/icon/render-app-icons.sh` renders
+every committed native icon from it (rsvg-convert and ImageMagick): Android
+legacy and adaptive icons (vector foreground and monochrome layer), iOS
+(opaque, full bleed), macOS (Apple's grid), Windows `app_icon.ico` and the
+Linux window icon. The `.deb` and AppImage render their hicolor icons from the
+same SVG when packaging. Run the script again after changing the icon:
+
+```bash
+packaging/icon/render-app-icons.sh
+```
 
 ### Version notes
 

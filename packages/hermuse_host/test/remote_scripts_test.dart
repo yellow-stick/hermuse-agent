@@ -464,6 +464,110 @@ void main() {
         isFalse,
       );
     });
+
+    test('an owned dashboard fragment gains the web app site and is classified ready with both routes', () async {
+      await machine.seedCaddy();
+      const domain = 'hermuse.217-76-55-191.sslip.io';
+      final web = webAppDomain(domain);
+      final main = machine.file('etc/caddy/Caddyfile');
+      final site = machine.file('etc/caddy/hermuse-remote.caddy');
+      final first = '${machine.root.path}/first';
+      expect(
+        (await machine.run(caddyConfigureScript(first, domain))).exitCode,
+        0,
+      );
+      await machine.run(commitRollbackScript(first, 'hermuse-caddy-rollback'));
+      final imported = await main.readAsString();
+      await main.copy(machine.file('state/original-caddy').path);
+      final before = await machine.run(
+        caddyHealthScript(domain, webDomain: web),
+      );
+      expect(before.exitCode, 0, reason: '${before.stderr}');
+      expect('${before.stdout}'.trim(), 'HERMUSE_HEALTH_V1:repair');
+      final directory = '${machine.root.path}/web';
+      final configured = await machine.run(
+        caddyConfigureScript(directory, domain, webDomain: web),
+      );
+      expect(configured.exitCode, 0, reason: '${configured.stderr}');
+      expect(await site.readAsString(), caddySite(domain, webDomain: web));
+      expect(await main.readAsString(), imported);
+      await machine.run(
+        commitRollbackScript(directory, 'hermuse-caddy-rollback'),
+      );
+      final healthy = await machine.run(
+        caddyHealthScript(domain, webDomain: web),
+      );
+      expect(healthy.exitCode, 0, reason: '${healthy.stderr}');
+      expect('${healthy.stdout}'.trim(), 'HERMUSE_HEALTH_V1:ready');
+      // The owned web block is recognized, not foreign, when it is not wanted.
+      final dashboardOnly = await machine.run(caddyHealthScript(domain));
+      expect(dashboardOnly.exitCode, 0, reason: '${dashboardOnly.stderr}');
+      expect('${dashboardOnly.stdout}'.trim(), 'HERMUSE_HEALTH_V1:repair');
+    });
+
+    test(
+      'refuses a foreign route on the web app host before any transaction',
+      () async {
+        await machine.seedCaddy();
+        const domain = 'hermuse.217-76-55-191.sslip.io';
+        final web = webAppDomain(domain);
+        final main = machine.file('etc/caddy/Caddyfile');
+        final original = '$web {\n  reverse_proxy 127.0.0.1:9120\n}\n';
+        await main.writeAsString(original);
+        await main.copy(machine.file('state/original-caddy').path);
+        expect(
+          (await machine.run(caddyHealthScript(domain, webDomain: web)))
+              .exitCode,
+          isNot(0),
+        );
+        final repair = await machine.run(
+          caddyConfigureScript(
+            '${machine.root.path}/blocked',
+            domain,
+            webDomain: web,
+          ),
+        );
+        expect(repair.exitCode, isNot(0));
+        expect(await main.readAsString(), original);
+        expect(
+          await machine.file('etc/caddy/hermuse-remote.caddy').exists(),
+          isFalse,
+        );
+        expect(
+          await machine.file('state/hermuse-caddy-rollback.timer').exists(),
+          isFalse,
+        );
+        // Without the web app, that host is irrelevant to the dashboard route.
+        final dashboard = await machine.run(
+          caddyConfigureScript('${machine.root.path}/dashboard', domain),
+        );
+        expect(dashboard.exitCode, 0, reason: '${dashboard.stderr}');
+      },
+    );
+
+    test(
+      'a managed fragment with an extra unrelated host is foreign',
+      () async {
+        await machine.seedCaddy();
+        const domain = 'hermuse.217-76-55-191.sslip.io';
+        final site = machine.file('etc/caddy/hermuse-remote.caddy');
+        final original = caddySite(
+          domain,
+          webDomain: 'other.217-76-55-191.sslip.io',
+        );
+        await site.writeAsString(original);
+        await Process.run('chmod', ['0644', site.path]);
+        final configured = await machine.run(
+          caddyConfigureScript(
+            '${machine.root.path}/extra',
+            domain,
+            webDomain: webAppDomain(domain),
+          ),
+        );
+        expect(configured.exitCode, isNot(0));
+        expect(await site.readAsString(), original);
+      },
+    );
   }, skip: Platform.isLinux ? false : 'Linux remote shell recipes');
 }
 
