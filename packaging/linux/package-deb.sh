@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds hermuse-agent_<debver>_amd64.deb from a complete release bundle
+# Builds hermuse-agent_<version>-<build>_amd64.deb (Debian version <debver>,
+# see hermuse_load_versions) from a complete release bundle
 # (hermuse_app, data/, lib/ with lib/cliproxy, libexec/hermuse-linux-setup).
 #
 #   packaging/linux/package-deb.sh <bundle-dir> <out-dir>
@@ -10,7 +11,8 @@
 # (Ubuntu 22.04) so the computed minimum versions match the glibc 2.35 floor.
 #
 # HERMUSE_DEB_VERSION_OVERRIDE=<debian version> is for packaging fixtures only
-# (e.g. the 0.1.0~rc.1-1 upgrade fixture); release builds refuse it.
+# (e.g. the 0.1.0~rc.1-1 upgrade fixture, in hermuse-agent_<debver>_amd64.deb);
+# release builds refuse it.
 set -euo pipefail
 # shellcheck source=lib/common.sh
 . "$(dirname "$0")/lib/common.sh"
@@ -38,13 +40,14 @@ base_depends='libc6 (>= 2.35), libstdc++6, libgcc-s1, libgtk-3-0t64 | libgtk-3-0
 t64_renamed='libglib2.0-0 libgtk-3-0 libatk1.0-0'
 
 deb_version="$HERMUSE_DEB_VERSION"
+deb_file="$out/$HERMUSE_DEB_FILE"
 if [ -n "${HERMUSE_DEB_VERSION_OVERRIDE:-}" ]; then
   [[ "$HERMUSE_DEB_VERSION_OVERRIDE" =~ ^[0-9][0-9A-Za-z.+~]*-[0-9A-Za-z.+~]+$ ]] ||
     hermuse_die "HERMUSE_DEB_VERSION_OVERRIDE '$HERMUSE_DEB_VERSION_OVERRIDE' is not a Debian version"
   deb_version="$HERMUSE_DEB_VERSION_OVERRIDE"
+  deb_file="$out/${HERMUSE_DEB_PACKAGE}_${deb_version}_amd64.deb"
   hermuse_warn "PACKAGING FIXTURE: building $HERMUSE_DEB_PACKAGE $deb_version from the $HERMUSE_PUBSPEC_VERSION bundle; never publish it"
 fi
-deb_file="$out/${HERMUSE_DEB_PACKAGE}_${deb_version}_amd64.deb"
 
 check_bundle "$bundle"
 check_elf_tree "$bundle" "$bundle/lib"
