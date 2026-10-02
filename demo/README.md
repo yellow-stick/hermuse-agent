@@ -1,5 +1,7 @@
 # Hermuse Agent web demo
 
+Live at https://demo.hermuse.app.
+
 A read-only build of the web app (`apps/hermuse_web`) that runs on any static
 host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
 
@@ -72,10 +74,13 @@ recent.
 ```bash
 demo/build.sh                                        # → demo/build/web
 python3 -m http.server -d demo/build/web 8090        # preview on http://localhost:8090
-netlify deploy --no-build --dir=demo/build/web --prod
 ```
 
-`netlify.toml` holds the headers of the Netlify site (base directory `demo`).
+GitHub Actions deploys it to the Netlify project `hermuse-demo`
+(https://demo.hermuse.app): production from `web-deploy.yml` on every push to
+`main` that touches the web app or this folder, a `pr-<N>` preview from
+`web-pr.yml` on pull requests. The root `netlify.toml` holds the project's
+headers and the manual deploy commands (run from the repository root).
 
 To change the content, edit `lib/src/content.dart`, then run the tests:
 
