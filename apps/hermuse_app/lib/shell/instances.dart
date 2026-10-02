@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
@@ -8,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../platform/open_url.dart';
 import 'screens.dart';
 
 /// One-line state dot + label of an instance's connection; [signedOut] names
@@ -746,6 +748,7 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
     this.initialUsername,
     this.initialPassword,
     this.autoProbe = false,
+    this.webUrl,
     super.key,
   });
 
@@ -764,6 +767,9 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
   final String? initialUsername;
   final String? initialPassword;
   final bool autoProbe;
+
+  /// The web app SSH setup published on the same server, if any.
+  final String? webUrl;
 
   @override
   ConsumerState<AddInstanceScreen> createState() => AddInstanceScreenState();
@@ -1100,6 +1106,21 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                       ],
                     ),
                   ),
+                  if (widget.webUrl case final webUrl?) ...[
+                    const SizedBox(height: YsSpace.lg),
+                    SelectableText(
+                      'Web app: $webUrl',
+                      textAlign: TextAlign.center,
+                      style: YsType.body.flutter.copyWith(
+                        color: palette.contentMutedColor,
+                      ),
+                    ),
+                    const SizedBox(height: YsSpace.sm),
+                    YsButton.neutral(
+                      label: 'Open web app',
+                      onPressed: () => unawaited(openExternalUrl(webUrl)),
+                    ),
+                  ],
                   if (widget.onSsh case final onSsh?) ...[
                     const SizedBox(height: YsSpace.lg),
                     YsButton.neutral(

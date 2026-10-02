@@ -61,11 +61,17 @@ directory. Use the existing-server path for installations you already manage.
 2. Enter **Host or IP address** (not a dashboard URL), **SSH port** (default
    `22`) and **SSH user** (default `root`). **SSH password (optional)** can be
    left blank if an SSH key is already set up for this machine.
-3. Choose **Review setup**. Read **Allow server setup?** before choosing
+3. Answer **Publish the web app on this server?** with **Yes** or **No**; there
+   is no default. **Yes** also serves the [web app](web-app-and-relay.md) at
+   its own HTTPS address, `https://app.hermuse.<public-ip-with-dashes>.sslip.io`,
+   so you can open Hermuse in any browser on your phone or computer. It adds a
+   second address and one more certificate to the server.
+4. Choose **Review setup**. Read **Allow server setup?** before choosing
    **Agree and connect**: this authorizes system package installation, a
    dedicated Hermes account, Docker access, firewall changes and publication
-   of a password-protected dashboard on the internet.
-4. At **Verify the SSH host key**, compare the displayed **SHA-256
+   of a password-protected dashboard on the internet (and of the web app, if
+   you answered **Yes**).
+5. At **Verify the SSH host key**, compare the displayed **SHA-256
    fingerprint** with the server console or your administrator through a
    separate trusted channel. Choose **Accept fingerprint** only if it matches.
    No SSH credentials have been sent yet; declining installs nothing.
@@ -114,8 +120,9 @@ technical output under **Show details**:
 | Hermuse plugin and jobs | Upload the plugin bundled with the desktop app, enable it, and register the daily feed, weekly ideas, weekly goals check-in and nightly reflection jobs. |
 | Docker and agent's computer | Install the distribution's `docker.io` if Docker is missing; start its system service and add `hermes` to the `docker` group. Download the computer image, or build it on the server if the pull fails, then start the computer and check that it is ready. |
 | Dashboard account | Generate a new random password for dashboard user `admin`, store its hash in Hermes configuration, and start `hermuse-dashboard.service` as the `hermes` user. The dashboard binds only to `127.0.0.1:9119`. |
-| Caddy and public HTTPS | Install Caddy if missing, add a dedicated reverse-proxy site, and obtain HTTPS for `https://hermuse.<public-ip-with-dashes>.sslip.io`. The `hermuse.` prefix keeps other services on the bare IP hostname separate. No domain purchase is needed. |
-| Final readiness checks | From your desktop, verify HTTPS, Hermes compatibility, password login, protected plugin access, all four jobs and the running computer before reporting success. |
+| Web app | Only when you answered **Yes**, or kept from an earlier setup. Download `ghcr.io/yellow-stick/hermuse-web:<plugin version>` (the web app and its relay, matching the bundled plugin) and run it as container `hermuse-web`, read-only, bound to `127.0.0.1:9120`. The relay allows only this server's dashboard. Answering **No** on a rerun keeps a healthy existing web app; **Uninstall** removes it. |
+| Caddy and public HTTPS | Install Caddy if missing, add a dedicated reverse-proxy site, and obtain HTTPS for `https://hermuse.<public-ip-with-dashes>.sslip.io`, plus `https://app.hermuse.<public-ip-with-dashes>.sslip.io` for the web app. The `hermuse.` prefix keeps other services on the bare IP hostname separate. No domain purchase is needed. |
+| Final readiness checks | From your desktop, verify HTTPS, Hermes compatibility, password login, protected plugin access, all four jobs and the running computer, and, with the web app, that its relay reaches the dashboard, before reporting success. |
 
 Each attempt first checks the **actual server**, not a saved local checklist.
 Healthy installer-managed steps are marked **Already installed** together, before
@@ -154,8 +161,9 @@ committed only after the desktop verifies the public dashboard. Unsupported
 custom Caddy configuration paths, symlinked configuration or an unrelated
 file at the Hermuse site path stop setup instead of being overwritten.
 The managed fragment is adapted independently and must contain only the dedicated
-Hermuse host. Adding an unrelated site to that file makes setup stop without
-changing it, even when the original Hermuse block and managed header remain.
+Hermuse hosts (the dashboard and, when published, the web app). Adding an
+unrelated site to that file makes setup stop without changing it, even when the
+original Hermuse blocks and managed header remain.
 
 Setup and server uninstall share a kernel-held operation lock, so they cannot
 change the same installation concurrently. A root-owned, nonsecret
@@ -171,7 +179,9 @@ its account: user **`admin`** and the generated **dashboard password**, hidden
 until you choose **Show**, with **Copy**. Keep it: you need it to connect to
 this Hermes from another computer or from the web app. **Continue** opens the
 normal connection form with the **HTTPS URL**, user and password filled
-in. Give the instance a name and choose **Save and connect**. Hermuse verifies
+in. Give the instance a name and choose **Save and connect**. When the server
+publishes the web app, the form also shows its address under **Web app**, with
+**Open web app**. Hermuse verifies
 the login before storing these dashboard credentials in the operating system's
 secure credential store (the system keyring on Linux), not in the app database or a
 plaintext fallback. If secure storage is unavailable or locked, resolve that
@@ -219,6 +229,11 @@ check the provider firewall, router/NAT, public IPv4 address and `sslip.io`
 DNS—not just UFW. For the automatic install's dashboard logs, use
 `sudo journalctl -u hermuse-dashboard`; computer image logs are in
 `/home/hermes/.hermes/hermuse/computer/build.log`.
+
+A failure at **Web app** is usually the image download from `ghcr.io`
+(`sudo docker logs hermuse-web` once it runs); for the web address, check
+`sslip.io` DNS and the certificate of `app.hermuse.<public-ip-with-dashes>.sslip.io`
+like the dashboard's.
 
 ## Connect an existing Hermes server
 

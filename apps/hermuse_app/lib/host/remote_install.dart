@@ -87,6 +87,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   var _retrying = false;
   var _checkingExisting = false;
 
+  /// Whether to publish the web app on the server; null until answered.
+  bool? _webApp;
+
   bool _current(int attempt) => mounted && attempt == _attempt && !_completed;
 
   /// Invalidate callbacks before closing the stream or resolving its prompt.
@@ -138,6 +141,8 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
         ? 'Enter an SSH port between 1 and 65535.'
         : _username.text.trim().isEmpty
         ? 'Enter the SSH user name.'
+        : !_removing && _webApp == null
+        ? 'Choose whether to publish the web app on this server.'
         : null;
     setState(() {
       _error = error;
@@ -196,6 +201,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
             username: username,
             password: password,
             pluginBundle: plugin,
+            webApp: _webApp ?? false,
             onHostKey: (key) => _verifyHostKey(key, attempt),
           )
           .listen(
@@ -476,6 +482,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       const YsDialogBody(
         'Your SSH password is never saved. You will verify the server fingerprint before any SSH credentials are sent.',
       ),
+      if (!_removing) ..._webAppChoice(),
       if (_error case final error?) YsDialogError(error),
       YsButton.primary(
         label: _removing ? 'Review inspection' : 'Review setup',
@@ -514,6 +521,52 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       onSubmitted: (_) => _review(),
     ),
   );
+
+  List<Widget> _webAppChoice() => [
+    YsField(
+      label: 'Publish the web app on this server?',
+      child: Row(
+        children: [
+          for (final (value, label) in const [
+            (true, 'Yes'),
+            (false, 'No'),
+          ]) ...[
+            if (!value) const SizedBox(width: YsSpace.sm),
+            Expanded(
+              child: Semantics(
+                inMutuallyExclusiveGroup: true,
+                selected: _webApp == value,
+                child: _webApp == value
+                    ? YsButton.primary(
+                        label: label,
+                        icon: YsIcon.check,
+                        onPressed: () => setState(() => _webApp = value),
+                      )
+                    : YsButton.neutral(
+                        label: label,
+                        onPressed: () => setState(() => _webApp = value),
+                      ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    ),
+    const YsDialogBody(
+      'Open Hermuse in any browser, on your phone or computer, at its own HTTPS sslip.io address. '
+      'This adds a second address to the server and one more certificate.',
+    ),
+  ];
+
+  /// Where the web app will answer: the server's sslip.io name when the
+  /// typed host is its public IPv4 address, else the pattern.
+  String get _webAppUrl {
+    try {
+      return 'https://${webAppDomain(sslipDomain(_host.text.trim()))}';
+    } on RemoteInstallFailed {
+      return 'https://app.hermuse.<server-ip-with-dashes>.sslip.io';
+    }
+  }
 
   Widget _consent() => _removing
       ? YsDialogCard(
@@ -556,6 +609,11 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
               'at a public sslip.io address. Existing unrelated Caddy configuration '
               'and firewall rules are preserved.',
             ),
+            if (_webApp ?? false)
+              YsDialogBody(
+                'Serve the Hermuse web app from a container at $_webAppUrl, '
+                'behind the same Caddy.',
+              ),
             YsDialogBody(
               'Allow SSH port ${_port.text.trim()} and TCP 80/443 through UFW. '
               'A rollback is armed before firewall changes, then a fresh SSH login '
@@ -802,7 +860,14 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       ),
     ],
     log: _log,
-    items: [for (final step in RemoteInstallStep.values) _step(step)],
+    items: [
+      for (final step in RemoteInstallStep.values)
+        if (step != RemoteInstallStep.web ||
+            (_webApp ?? false) ||
+            _running == step ||
+            _finished.contains(step))
+          _step(step),
+    ],
     actions: [
       if (_phase == _Phase.failed)
         YsButton.primary(label: 'Try again', onPressed: _retry),
@@ -859,6 +924,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   RemoteInstallStep.plugin => (YsIcon.puzzle, 'Hermuse plugin and jobs'),
   RemoteInstallStep.computer => (YsIcon.monitor, 'Docker and agent’s computer'),
   RemoteInstallStep.dashboard => (YsIcon.keyRound, 'Dashboard account'),
+  RemoteInstallStep.web => (YsIcon.globe, 'Web app'),
   RemoteInstallStep.https => (YsIcon.lock, 'Caddy and public HTTPS'),
   RemoteInstallStep.verify => (YsIcon.check, 'Final readiness checks'),
 };

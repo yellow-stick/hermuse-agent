@@ -24,6 +24,7 @@ enum RemoteInstallStep {
   plugin,
   computer,
   dashboard,
+  web,
   https,
   verify,
 }
@@ -64,10 +65,15 @@ final class RemoteInstallOutcome {
     required this.baseUrl,
     required this.username,
     required this.password,
+    this.webUrl,
   });
   final String baseUrl;
   final String username;
   final String password;
+
+  /// HTTPS address of the web app published on this server, or null when the
+  /// server publishes none.
+  final String? webUrl;
 }
 
 typedef RemoteDashboardVerifier = Future<void> Function(
@@ -101,6 +107,10 @@ class RemoteInstaller {
   Completer<void>? _stopped;
 
   /// Uses [password] when supplied; otherwise uses this machine's existing keys.
+  ///
+  /// [webApp] publishes the web app and relay on their own sslip.io address.
+  /// When false, none is added, but an existing healthy one is kept and
+  /// reported; removal only happens through uninstall.
   Stream<RemoteInstallProgress> run({
     required String host,
     int port = 22,
@@ -108,6 +118,7 @@ class RemoteInstaller {
     String password = '',
     required Map<String, Uint8List> pluginBundle,
     required Future<bool> Function(RemoteHostKey) onHostKey,
+    bool webApp = false,
   }) {
     if (_active != null) {
       throw StateError('A remote installation is already running.');
@@ -125,6 +136,7 @@ class RemoteInstaller {
           username: username,
           password: password,
           pluginBundle: pluginBundle,
+          webApp: webApp,
           onHostKey: onHostKey,
           cancellation: cancellation,
           emit: (event) {
@@ -154,7 +166,7 @@ class RemoteInstaller {
   }
 }
 
-enum _RemoteHealth { ready, repair, deferred }
+enum _RemoteHealth { ready, repair, deferred, absent }
 
 final class _RemoteAttempt {
   _RemoteAttempt({
@@ -164,6 +176,7 @@ final class _RemoteAttempt {
     required this.username,
     required this.password,
     required this.pluginBundle,
+    required this.webApp,
     required this.onHostKey,
     required this.cancellation,
     required this.emit,
@@ -175,6 +188,7 @@ final class _RemoteAttempt {
   final String username;
   final String password;
   final Map<String, Uint8List> pluginBundle;
+  final bool webApp;
   final Future<bool> Function(RemoteHostKey) onHostKey;
   final RemoteCancellation cancellation;
   final void Function(RemoteInstallProgress) emit;
@@ -190,6 +204,8 @@ final class _RemoteAttempt {
   String? _caddyRollback;
   final _healthy = <RemoteInstallStep>{};
   String? _domain;
+  String? _webToken;
+  _RemoteHealth? _web;
   var _dashboardInstalled = false;
   var _ownershipCaptured = false;
   var _completed = false;
@@ -198,7 +214,7 @@ final class _RemoteAttempt {
 
   String _redact(String value) {
     var clean = stripAnsi(value);
-    for (final secret in [password, _dashboardPassword]) {
+    for (final secret in [password, _dashboardPassword, _webToken]) {
       if (secret != null && secret.isNotEmpty) {
         clean = clean.replaceAll(secret, '[redacted]');
       }
@@ -279,6 +295,7 @@ final class _RemoteAttempt {
       'HERMUSE_HEALTH_V1:ready' => _RemoteHealth.ready,
       'HERMUSE_HEALTH_V1:repair' => _RemoteHealth.repair,
       'HERMUSE_HEALTH_V1:deferred' => _RemoteHealth.deferred,
+      'HERMUSE_HEALTH_V1:absent' => _RemoteHealth.absent,
       _ => throw RemoteInstallFailed(
         _step.name,
         'The server returned an invalid installation health frame.',
@@ -308,6 +325,31 @@ final class _RemoteAttempt {
   };
   late final String _pluginHealth = pluginHealthScript(_pluginHashes);
   late final String _ownershipCheckpoint = remoteOwnershipCheckpointScript;
+
+  /// The web app image matching the bundled plugin, or null without a version.
+  late final String? _webImage = switch (_bundledPluginVersion(pluginBundle)) {
+    final version? => webImageReference(version),
+    null => null,
+  };
+
+  String _webInventory({required bool publish}) => webInventoryScript(
+    webAppDomain(_domain!),
+    _domain!,
+    _webImage,
+    publish: publish,
+  );
+
+  /// An owned deployment keeps its route even when publishing is not chosen.
+  String? get _caddyWebDomain =>
+      webApp || _web == _RemoteHealth.ready || _web == _RemoteHealth.repair
+      ? webAppDomain(_domain!)
+      : null;
+
+  Future<void> _inspectWeb() async {
+    _step = RemoteInstallStep.web;
+    _web = await _health(_webInventory(publish: webApp));
+    if (_web == _RemoteHealth.ready) _healthy.add(RemoteInstallStep.web);
+  }
 
   Future<bool> _inventory(Set<int> ports) async {
     _log('Checking existing server setup…');
@@ -355,9 +397,13 @@ final class _RemoteAttempt {
           await _health(dashboardHealthScript(_domain!, authenticate: false)) ==
           _RemoteHealth.ready;
     }
+    if (_domain != null) await _inspectWeb();
     _step = RemoteInstallStep.https;
     if (_domain != null) {
-      if (await _health(caddyHealthScript(_domain!)) == _RemoteHealth.ready) {
+      if (await _health(
+            caddyHealthScript(_domain!, webDomain: _caddyWebDomain),
+          ) ==
+          _RemoteHealth.ready) {
         _healthy.add(RemoteInstallStep.https);
       }
     } else {
@@ -487,18 +533,53 @@ final class _RemoteAttempt {
       await _stage(RemoteInstallStep.computer, _installComputer);
       await _stage(RemoteInstallStep.dashboard, _dashboard);
       final domain = _domain!;
+      final webDomain = webAppDomain(domain);
+      if (_web == null) {
+        // The public address was unknown during inventory; inspect read-only
+        // now, before the web or Caddy steps can change anything.
+        await _inspectWeb();
+        if (_web == _RemoteHealth.ready) {
+          emit(
+            const RemoteInstallStepFinished(
+              RemoteInstallStep.web,
+              previouslyCompleted: true,
+            ),
+          );
+        }
+      }
+      if (webApp) {
+        await _stage(RemoteInstallStep.web, _installWeb);
+      } else if (_web == _RemoteHealth.repair) {
+        _log(
+          'The existing web app at https://$webDomain is not healthy and was '
+          'left unchanged. Choose to publish the web app to repair it, or '
+          'uninstall to remove it.',
+        );
+      }
+      final caddyWebDomain = _caddyWebDomain;
       await _stage(RemoteInstallStep.https, () async {
         await _run(installCaddyScript);
-        await _run(caddyOwnershipScript(domain), log: false);
+        await _run(
+          caddyOwnershipScript(domain, webDomain: caddyWebDomain),
+          log: false,
+        );
         await _run(remoteOwnershipMutationScript({}, caddy: true), log: false);
         _caddyRollback = '$_directory/caddy';
-        await _run(caddyConfigureScript(_caddyRollback!, domain));
-        await _prove(caddyHealthScript(domain));
+        await _run(
+          caddyConfigureScript(
+            _caddyRollback!,
+            domain,
+            webDomain: caddyWebDomain,
+          ),
+        );
+        await _prove(caddyHealthScript(domain, webDomain: caddyWebDomain));
       });
+      final webPublished = _web == _RemoteHealth.ready;
       final outcome = RemoteInstallOutcome(
         baseUrl: 'https://$domain',
         username: 'admin',
         password: _dashboardPassword!,
+        webUrl: webPublished ? 'https://$webDomain' : null,
       );
       await _stage(RemoteInstallStep.verify, () async {
         try {
@@ -510,9 +591,11 @@ final class _RemoteAttempt {
         } catch (error) {
           throw RemoteInstallFailed(
             'verify',
-            'The HTTPS dashboard could not be verified from this computer. '
+            'The HTTPS ${webPublished ? 'dashboard and web app' : 'dashboard'} '
+                'could not be verified from this computer. '
                 'Ports 80 and 443 must be reachable from the internet, including '
-                'the provider firewall; $domain must resolve to the server. '
+                'the provider firewall; $domain${webPublished ? ' and $webDomain' : ''} '
+                'must resolve to the server. '
                 '${_redact('$error')}',
           );
         }
@@ -566,6 +649,7 @@ final class _RemoteAttempt {
       _operation?.release();
       _shell?.close();
       _dashboardPassword = null;
+      _webToken = null;
     }
   }
 
@@ -599,6 +683,13 @@ final class _RemoteAttempt {
           'The plugin bundle contains an unsafe relative path.',
         );
       }
+    }
+    if (webApp && _webImage == null) {
+      throw const RemoteInstallFailed(
+        'web',
+        'The bundled Hermuse plugin has no valid version, so the matching web '
+            'app image cannot be selected.',
+      );
     }
   }
 
@@ -840,6 +931,57 @@ rm -rf -- $target.previous-$_id
     await _prove(computerHealthScript);
     await _run(_ownershipCheckpoint, log: false);
   }
+
+  Future<void> _installWeb() async {
+    final domain = _domain!;
+    final webDomain = webAppDomain(domain);
+    final image = _webImage!;
+    // Docker and Python may only exist now; foreign containers and port
+    // conflicts still stop before the first web mutation.
+    _web = await _health(_webInventory(publish: true));
+    if (_web == _RemoteHealth.ready) return;
+    await _run(remoteOwnershipMutationScript({}, web: true), log: false);
+    final pulled = await _run(
+      'docker pull ${shellQuote(image)}',
+      required: false,
+      timeout: const Duration(minutes: 20),
+    );
+    if (pulled.exitCode != 0) {
+      throw RemoteInstallFailed(
+        'web',
+        'The web app image $image could not be downloaded from ghcr.io. '
+            'The server needs outbound HTTPS access to ghcr.io; retry once it '
+            'is reachable.',
+      );
+    }
+    _webToken = _randomSecret(32);
+    await _run(
+      webDeployScript(webDomain, domain, image),
+      stdin: _webToken,
+      timeout: const Duration(minutes: 5),
+    );
+    await _prove(_webInventory(publish: true));
+    _web = _RemoteHealth.ready;
+    await _run(_ownershipCheckpoint, log: false);
+  }
+}
+
+/// The `version:` of the bundled plugin.yaml when it is a valid image tag.
+/// The web app image is published under the plugin version it works with.
+String? _bundledPluginVersion(Map<String, Uint8List> bundle) {
+  final manifest = bundle['plugin.yaml'];
+  if (manifest == null) return null;
+  for (final line in const LineSplitter().convert(
+    utf8.decode(manifest, allowMalformed: true),
+  )) {
+    final match = RegExp(r'^version:\s*(.*?)\s*$').firstMatch(line);
+    if (match == null) continue;
+    final version = match[1]!.replaceAll(RegExp(r'''["'\s]'''), '');
+    return RegExp(r'^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$').hasMatch(version)
+        ? version
+        : null;
+  }
+  return null;
 }
 
 String _randomSecret(int length) {
@@ -940,6 +1082,8 @@ Map<String, Object?> parseRemoteComputerStatus(String stdout) {
 
 /// Checks real TLS, Hermes compatibility, authentication, plugin and computer
 /// readiness from the installing computer, not merely from the server itself.
+/// A published web app must also answer, know the dashboard and reach it
+/// through its relay; it never receives the dashboard credential.
 Future<void> verifyRemoteDashboard(
   RemoteInstallOutcome outcome,
   RemoteCancellation cancellation, {
@@ -950,12 +1094,18 @@ Future<void> verifyRemoteDashboard(
   final connection = _NoRedirectClient(client ?? http.Client());
   cancellation.addListener(connection.close);
   final base = Uri.parse(outcome.baseUrl);
-  if (base.scheme != 'https' || base.userInfo.isNotEmpty) {
+  final web = outcome.webUrl == null ? null : Uri.parse(outcome.webUrl!);
+  if (base.scheme != 'https' ||
+      base.userInfo.isNotEmpty ||
+      (web != null &&
+          (web.scheme != 'https' ||
+              web.userInfo.isNotEmpty ||
+              !web.hasAuthority))) {
     connection.close();
     cancellation.removeListener(connection.close);
     throw const RemoteInstallFailed(
       'verify',
-      'Remote dashboards must use HTTPS.',
+      'Remote dashboards and web apps must use HTTPS.',
     );
   }
   final rest = HermesRestClient(connection, baseUrl: base);
@@ -1030,10 +1180,97 @@ Future<void> verifyRemoteDashboard(
         'The remote computer is not ready through the dashboard.',
       );
     }
+    if (web != null) {
+      await _verifyWebApp(
+        connection,
+        web,
+        outcome.baseUrl,
+        bounded,
+        cancellation,
+        readyTimeout: readyTimeout,
+        sleep: sleep,
+      );
+    }
   } finally {
     cancellation.removeListener(connection.close);
     connection.close();
   }
+}
+
+Future<void> _verifyWebApp(
+  http.Client connection,
+  Uri web,
+  String dashboardUrl,
+  Future<T> Function<T>(Future<T>) bounded,
+  RemoteCancellation cancellation, {
+  required Duration readyTimeout,
+  required Future<void> Function(Duration) sleep,
+}) async {
+  final address = 'https://${web.authority}';
+  Uri at(List<String> segments, [Map<String, String>? query]) => Uri(
+    scheme: 'https',
+    host: web.host,
+    port: web.hasPort ? web.port : null,
+    pathSegments: segments,
+    queryParameters: query,
+  );
+  Future<Map<String, Object?>> json(Uri uri, String failure) async {
+    final response = await bounded(connection.get(uri));
+    final Object? body;
+    try {
+      body = response.statusCode == 200 ? jsonDecode(response.body) : null;
+    } on FormatException {
+      throw RemoteInstallFailed(
+        'verify',
+        'The web app at $address $failure (invalid response).',
+      );
+    }
+    if (body is! Map<String, Object?>) {
+      throw RemoteInstallFailed(
+        'verify',
+        'The web app at $address $failure (HTTP ${response.statusCode}).',
+      );
+    }
+    return body;
+  }
+
+  // Its certificate is issued independently of the dashboard's.
+  final watch = Stopwatch()..start();
+  while (true) {
+    cancellation.check();
+    try {
+      final health = await json(
+        at(['relay', 'health']),
+        'did not report healthy',
+      );
+      if (health['ok'] != true) {
+        throw RemoteInstallFailed(
+          'verify',
+          'The web app at $address did not report healthy.',
+        );
+      }
+      break;
+    } catch (_) {
+      cancellation.check();
+      if (watch.elapsed >= readyTimeout) rethrow;
+      await cancellation.bind(sleep(const Duration(seconds: 3)));
+    }
+  }
+  final resolved = await json(
+    at(['relay', 'resolve'], {'url': dashboardUrl}),
+    'does not know the dashboard $dashboardUrl',
+  );
+  final id = resolved['id'];
+  if (id is! String || id.isEmpty) {
+    throw RemoteInstallFailed(
+      'verify',
+      'The web app at $address does not know the dashboard $dashboardUrl.',
+    );
+  }
+  await json(
+    at(['hermes', id, 'api', 'status']),
+    'could not reach the dashboard through its relay',
+  );
 }
 
 /// A provisioning credential is never forwarded to a redirect target.

@@ -43,7 +43,8 @@ class HermusePanel extends StatelessComponent {
   final ValueChanged<String> onOpenApproval;
 
   /// Shows the agent's computer (its browser and desktop) at will; null
-  /// hides the button (the read-only demo has no computer).
+  /// hides the button. The read-only demo shows its fake computer too:
+  /// its stream is replayed frames, input stays inert.
   final VoidCallback? onOpenComputer;
 
   @override
@@ -73,7 +74,7 @@ class HermusePanel extends StatelessComponent {
           YsPing(
             live: true,
             color: YsTheme.success,
-            child: RawText(ysConnectedSvg(YsPalette.dark.success.css)),
+            child: RawText(ysConnectedSvg('currentColor')),
           ),
         ]),
         span(classes: 'hermuse-panel-status-text', [.text('Connected')]),
@@ -213,7 +214,8 @@ class HermusePanel extends StatelessComponent {
         gap: .all(5.px),
         margin: .only(top: 2.px),
       ),
-      css('.hermuse-panel-status-icon').styles(display: .inlineFlex),
+      css('.hermuse-panel-status-icon')
+          .styles(display: .inlineFlex, color: YsTheme.success),
       css('.hermuse-panel-status-text').styles(
         fontSize: 17.px,
         lineHeight: 22.px,

@@ -682,7 +682,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
               setState(() => _panelOverride = false);
             }
           },
-          onOpenComputer: hermuseDemo ? null : controller.openComputer,
+          onOpenComputer: controller.openComputer,
         ),
       if (profileOpen)
         div(

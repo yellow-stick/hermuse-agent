@@ -301,7 +301,12 @@ void main() {
         final server = _Server();
         final events = await server.install(server.installer()).toList();
         final finished = events.whereType<RemoteInstallStepFinished>().toList();
-        expect(finished.map((event) => event.step), RemoteInstallStep.values);
+        expect(
+          finished.map((event) => event.step),
+          RemoteInstallStep.values.where(
+            (step) => step != RemoteInstallStep.web,
+          ),
+        );
         expect(finished.where((event) => event.previouslyCompleted), isEmpty);
         expect(server.packageInstalls, 1);
         expect(server.passwordChanges, 1);
@@ -340,7 +345,7 @@ void main() {
             .whereType<RemoteInstallStepFinished>()
             .map((event) => event.step)
             .toSet(),
-        RemoteInstallStep.values.toSet(),
+        RemoteInstallStep.values.toSet()..remove(RemoteInstallStep.web),
       );
       expect(server.packageInstalls, 0);
       expect(server.hermesStarted, isFalse);
@@ -589,6 +594,184 @@ void main() {
     });
   });
 
+  group('Remote web app publishing', () {
+    test('selected on a fresh server deploys the version-matched image between dashboard and HTTPS', () async {
+      final server = _Server();
+      final events = await server
+          .install(server.installer(), webApp: true)
+          .toList();
+      final started = events
+          .whereType<RemoteInstallStepStarted>()
+          .map((event) => event.step)
+          .toList();
+      expect(
+        started.indexOf(RemoteInstallStep.web),
+        started.indexOf(RemoteInstallStep.dashboard) + 1,
+      );
+      expect(
+        started.indexOf(RemoteInstallStep.https),
+        started.indexOf(RemoteInstallStep.web) + 1,
+      );
+      final outcome = events.whereType<RemoteInstallCompleted>().single.outcome;
+      expect(outcome.webUrl, _webUrl);
+      expect(server.verifiedWebUrl, _webUrl);
+      expect(server.webPulls, 1);
+      expect(server.webDeploys, 1);
+      expect(
+        server.commands.where((command) => command.contains('docker pull')),
+        everyElement(contains('ghcr.io/yellow-stick/hermuse-web:0.3.0')),
+      );
+      expect(
+        server.caddyConfigurations.single,
+        allOf(
+          contains('app.hermuse.8-8-4-4.sslip.io {'),
+          contains('reverse_proxy 127.0.0.1:9120'),
+        ),
+      );
+      final token = server.webToken!;
+      expect(token.length, greaterThanOrEqualTo(24));
+      expect(
+        server.commands.any((command) => command.contains(token)),
+        isFalse,
+      );
+      expect(
+        events.whereType<RemoteInstallLog>().any(
+          (event) => event.line.contains(token),
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'not selected on a fresh server adds no container, route or address',
+      () async {
+        final server = _Server();
+        final events = await server.install(server.installer()).toList();
+        expect(
+          events.whereType<RemoteInstallStepStarted>().map(
+            (event) => event.step,
+          ),
+          isNot(contains(RemoteInstallStep.web)),
+        );
+        expect(
+          events.whereType<RemoteInstallStepFinished>().map(
+            (event) => event.step,
+          ),
+          isNot(contains(RemoteInstallStep.web)),
+        );
+        expect(server.webPulls, 0);
+        expect(server.webDeploys, 0);
+        expect(
+          server.caddyConfigurations.single,
+          isNot(contains('reverse_proxy 127.0.0.1:9120')),
+        );
+        expect(
+          events.whereType<RemoteInstallCompleted>().single.outcome.webUrl,
+          isNull,
+        );
+      },
+    );
+
+    test('not selected keeps and reports an owned healthy deployment without touching it', () async {
+      final server = _Server()
+        ..seedHealthy()
+        ..webState = 'ready';
+      final events = await server.install(server.installer()).toList();
+      expect(
+        events
+            .whereType<RemoteInstallStepFinished>()
+            .singleWhere((event) => event.step == RemoteInstallStep.web)
+            .previouslyCompleted,
+        isTrue,
+      );
+      expect(
+        events.whereType<RemoteInstallStepStarted>().map((event) => event.step),
+        isNot(contains(RemoteInstallStep.web)),
+      );
+      expect(server.webPulls, 0);
+      expect(server.webDeploys, 0);
+      expect(server.caddyConfigurations, isEmpty);
+      expect(
+        server.caddyHealthChecks,
+        everyElement(contains('reverse_proxy 127.0.0.1:9120')),
+      );
+      expect(
+        events.whereType<RemoteInstallCompleted>().single.outcome.webUrl,
+        _webUrl,
+      );
+    });
+
+    test('not selected leaves an unhealthy owned deployment and its route unchanged and unreported', () async {
+      final server = _Server()..webState = 'repair';
+      final events = await server.install(server.installer()).toList();
+      expect(server.webDeploys, 0);
+      expect(
+        server.caddyConfigurations.single,
+        contains('reverse_proxy 127.0.0.1:9120'),
+      );
+      expect(
+        events.whereType<RemoteInstallCompleted>().single.outcome.webUrl,
+        isNull,
+      );
+    });
+
+    test(
+      'selected with a foreign hermuse-web container fails before any mutation',
+      () async {
+        final server = _Server()..webForeign = true;
+        await expectLater(
+          server.install(server.installer(), webApp: true).toList(),
+          throwsA(
+            isA<RemoteInstallFailed>().having((e) => e.step, 'step', 'web'),
+          ),
+        );
+        expect(server.packageInstalls, 0);
+        expect(server.hermesStarted, isFalse);
+        expect(server.passwordChanges, 0);
+        expect(server.writes, isEmpty);
+        expect(server.webPulls, 0);
+        expect(server.webDeploys, 0);
+      },
+    );
+
+    test(
+      'selected with an unreachable registry stops before replacing anything',
+      () async {
+        final server = _Server()..webPullFails = true;
+        await expectLater(
+          server.install(server.installer(), webApp: true).toList(),
+          throwsA(
+            isA<RemoteInstallFailed>()
+                .having((e) => e.step, 'step', 'web')
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('ghcr.io/yellow-stick/hermuse-web:0.3.0'),
+                ),
+          ),
+        );
+        expect(server.webDeploys, 0);
+        expect(server.caddyConfigurations, isEmpty);
+      },
+    );
+
+    test(
+      'selected without a bundled plugin version fails before SSH',
+      () async {
+        final server = _Server();
+        await expectLater(
+          server
+              .install(server.installer(), webApp: true, bundle: _bundle)
+              .toList(),
+          throwsA(
+            isA<RemoteInstallFailed>().having((e) => e.step, 'step', 'web'),
+          ),
+        );
+        expect(server.authenticated, 0);
+      },
+    );
+  });
+
   group('UFW additive rule detection', () {
     test('should preserve unrelated rules when both address families already allow required ports', () {
       expect(ufwAllowsPorts(_activeFirewall, {22, 80, 443}), isTrue);
@@ -753,13 +936,105 @@ void main() {
         );
       },
     );
+
+    const published = RemoteInstallOutcome(
+      baseUrl: 'https://hermuse.8-8-4-4.sslip.io',
+      username: 'admin',
+      password: 'dashboard-secret',
+      webUrl: _webUrl,
+    );
+
+    test('should prove the web app relay reaches the dashboard without its credential', () async {
+      final web = <http.Request>[];
+      final client = MockClient((request) async {
+        if (request.url.host != 'app.hermuse.8-8-4-4.sslip.io') {
+          return _dashboardResponse(request);
+        }
+        web.add(request);
+        return _webResponse(request);
+      });
+      await verifyRemoteDashboard(
+        published,
+        RemoteCancellation(),
+        client: client,
+      );
+      expect(web.map((request) => request.url.path), [
+        '/relay/health',
+        '/relay/resolve',
+        '/hermes/up-1/api/status',
+      ]);
+      expect(
+        web[1].url.queryParameters['url'],
+        'https://hermuse.8-8-4-4.sslip.io',
+      );
+      for (final request in web) {
+        expect(request.url.scheme, 'https');
+        expect(request.followRedirects, isFalse);
+        expect(request.headers.containsKey('cookie'), isFalse);
+        expect(request.headers.containsKey('authorization'), isFalse);
+        expect(request.body, isNot(contains('dashboard-secret')));
+      }
+    });
+
+    for (final (path, status) in [
+      ('/relay/resolve', 404),
+      ('/hermes/up-1/api/status', 502),
+    ]) {
+      test(
+        'should fail naming the web address when $path answers $status',
+        () async {
+          final client = MockClient((request) async {
+            if (request.url.host != 'app.hermuse.8-8-4-4.sslip.io') {
+              return _dashboardResponse(request);
+            }
+            if (request.url.path == path) {
+              return http.Response('{"error":"not registered"}', status);
+            }
+            return _webResponse(request);
+          });
+          await expectLater(
+            verifyRemoteDashboard(
+              published,
+              RemoteCancellation(),
+              client: client,
+            ),
+            throwsA(
+              isA<RemoteInstallFailed>().having(
+                (e) => e.message,
+                'message',
+                contains(_webUrl),
+              ),
+            ),
+          );
+        },
+      );
+    }
   });
 }
+
+http.Response _webResponse(http.Request request) => switch (request.url.path) {
+  '/relay/health' => http.Response('{"ok":true}', 200),
+  '/relay/resolve' => http.Response('{"id":"up-1","label":null}', 200),
+  '/hermes/up-1/api/status' => http.Response(
+    '{"version":"0.21.5","auth_required":true}',
+    200,
+  ),
+  _ => throw StateError('Unexpected web app request: ${request.url}'),
+};
 
 final _bundle = <String, Uint8List>{
   'plugin.yaml': Uint8List.fromList(utf8.encode('name: hermuse\n')),
   '__init__.py': Uint8List.fromList(utf8.encode('# bundled plugin\n')),
 };
+
+final _versionedBundle = <String, Uint8List>{
+  ..._bundle,
+  'plugin.yaml': Uint8List.fromList(
+    utf8.encode('name: hermuse\nversion: "0.3.0"\n'),
+  ),
+};
+
+const _webUrl = 'https://app.hermuse.8-8-4-4.sslip.io';
 
 RemoteResult _ok([String stdout = '']) =>
     RemoteResult(stdout: stdout, stderr: '', exitCode: 0);
@@ -812,6 +1087,17 @@ final class _Server implements RemoteShell {
   RemoteInstallStep? failedRepair;
   final health = <RemoteInstallStep, bool>{};
 
+  /// Inventory frame of the web app container: absent, repair or ready.
+  String webState = 'absent';
+  bool webForeign = false;
+  bool webPullFails = false;
+  int webPulls = 0;
+  int webDeploys = 0;
+  String? webToken;
+  String? verifiedWebUrl;
+  final caddyHealthChecks = <String>[];
+  final caddyConfigurations = <String>[];
+
   void seedHealthy() {
     prerequisitesReady = true;
     firewallActive = true;
@@ -836,6 +1122,7 @@ final class _Server implements RemoteShell {
           if (verifyFailure case final failure?) throw failure;
           verified = true;
           verifiedPassword = outcome.password;
+          verifiedWebUrl = outcome.webUrl;
         },
         sleep: sleep ?? (_) async {},
       );
@@ -844,11 +1131,14 @@ final class _Server implements RemoteShell {
     RemoteInstaller installer, {
     Future<bool> Function(RemoteHostKey)? confirm,
     String password = 'ssh-secret',
+    bool webApp = false,
+    Map<String, Uint8List>? bundle,
   }) => installer.run(
     host: 'server',
     password: password,
-    pluginBundle: _bundle,
+    pluginBundle: bundle ?? (webApp ? _versionedBundle : _bundle),
     onHostKey: confirm ?? (_) async => true,
+    webApp: webApp,
   );
 
   Future<RemoteShell> connect({
@@ -897,6 +1187,36 @@ final class _Server implements RemoteShell {
         stderr: 'An unrelated plugin occupies the managed path.',
         exitCode: 1,
       );
+    }
+    if (command.contains('HERMUSE_HEALTH_V1') &&
+        command.contains('org.hermuse.remote-installer')) {
+      if (webForeign && command.contains(' publish\n')) {
+        return const RemoteResult(
+          stdout: '',
+          stderr: 'A Docker container named hermuse-web exists.',
+          exitCode: 1,
+        );
+      }
+      return _ok('HERMUSE_HEALTH_V1:$webState');
+    }
+    if (command.contains('docker pull')) {
+      webPulls++;
+      if (webPullFails) {
+        return const RemoteResult(stdout: '', stderr: 'denied', exitCode: 1);
+      }
+    }
+    if (command.contains('tempfile.mkstemp') && stdin != null) {
+      webDeploys++;
+      webToken = stdin;
+      webState = 'ready';
+    }
+    if (command.contains('HERMUSE_HEALTH_V1') &&
+        command.contains('caddy adapt')) {
+      caddyHealthChecks.add(command);
+    }
+    if (command.contains('systemd-run') &&
+        command.contains('hermuse-caddy-rollback')) {
+      caddyConfigurations.add(command);
     }
     if (command.contains('HERMUSE_HEALTH_V1')) {
       if (command.contains('dpkg-query')) {

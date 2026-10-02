@@ -51,7 +51,8 @@ ran ([Validation per area](AGENTS.md#validation-per-area)):
 
 - Dart/Flutter: `melos run analyze` and the package's tests
   (`melos run test:dart`, `melos run test:flutter`);
-- Web: also `jaspr build` in `apps/hermuse_web`;
+- Web: also `jaspr build` in `apps/hermuse_web`, and `demo/build.sh` when the
+  chat shell, the app scope or `demo/` changes;
 - Plugin: `pytest tests/ -q` in `hermes-plugin/hermuse`, then
   `plugin_assets_test.dart` after `dart run tool/sync_plugin_assets.dart` in
   `apps/hermuse_app`;
@@ -81,9 +82,9 @@ One workflow per scenario, in `.github/workflows/`:
 | When | Workflow | What runs |
 | --- | --- | --- |
 | Draft pull request | `ci.yml`, `web-pr.yml` | Nothing |
-| Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web build and its preview |
+| Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web app and demo builds, and a demo preview |
 | Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview |
-| Push to `main` touching the web app | `web-deploy.yml` | The web app deployed to https://hermuse.app |
+| Push to `main` touching the web app or the demo | `web-deploy.yml` | The read-only demo deployed to https://demo.hermuse.app |
 | Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below |
 | Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |
 

@@ -311,7 +311,8 @@ void main() {
             {'role': 'assistant', 'text': 'Looking.', 'row_id': 2},
             {
               'role': 'tool',
-              'name': 'browser_snapshot',
+              'name': 'browser_navigate',
+              'args': {'url': 'https://example.com/nantes'},
               'tool_call_id': 's1',
               'row_id': 3,
             },
@@ -329,6 +330,7 @@ void main() {
       final blocks = chat.state.activeThread.messages.last.blocks;
       final card = blocks.first as BrowserBlock;
       expect((card.lastToolId, card.running), ('s2', false));
+      expect(card.host, 'example.com');
       expect(blocks.whereType<BrowserBlock>(), hasLength(1));
       expect(blocks.whereType<ToolCallBlock>(), isEmpty);
       expect(

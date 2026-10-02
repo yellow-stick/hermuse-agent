@@ -26,7 +26,11 @@ void main() {
       meta: {
         'theme-color': '#181819',
         'description': 'Hermuse — your personal agent',
-        'color-scheme': 'dark',
+        'color-scheme': 'light dark',
+        // The web app is not a landing page: search engines index the product
+        // homepage (https://hermuse.app) and the public demo, never the web app
+        // on a user's own relay.
+        if (!hermuseDemo) 'robots': 'noindex, nofollow',
         // Installed on iOS: standalone window, opaque status bar (the layout
         // does not handle safe-area insets, so content stays below it).
         'apple-mobile-web-app-capable': 'yes',

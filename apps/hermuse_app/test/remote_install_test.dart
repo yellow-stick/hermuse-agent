@@ -3,10 +3,13 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermuse_app/host/remote_install.dart';
 import 'package:hermuse_app/host/setup_view.dart';
 import 'package:hermuse_app/platform/plugin_bundle.dart';
+import 'package:hermuse_app/shell/instances.dart';
+import 'package:hermuse_app/shell/screens.dart';
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
@@ -74,6 +77,9 @@ final class _Installer extends RemoteInstaller {
   bool? accepted;
   Completer<void>? stopRelease;
 
+  /// The web app choice of each attempt.
+  final webApps = <bool>[];
+
   @override
   Stream<RemoteInstallProgress> run({
     required String host,
@@ -81,8 +87,10 @@ final class _Installer extends RemoteInstaller {
     String username = 'root',
     String password = '',
     required Map<String, Uint8List> pluginBundle,
+    bool webApp = false,
     required Future<bool> Function(RemoteHostKey) onHostKey,
   }) {
+    webApps.add(webApp);
     late final StreamController<RemoteInstallProgress> events;
     events = StreamController<RemoteInstallProgress>(
       onListen: () async {
@@ -295,9 +303,12 @@ Future<void> _pump(
 Future<void> _review(
   WidgetTester tester, {
   String password = 'ssh-secret',
+  String webApp = 'No',
 }) async {
   await tester.enterText(_input('Host or IP address'), _key.host);
   await tester.enterText(_input('SSH password (optional)'), password);
+  await tester.tap(_button(webApp));
+  await tester.pump();
   await tester.tap(_button('Review setup'));
   await tester.pumpAndSettle();
 }
@@ -1103,6 +1114,117 @@ void main() {
         await tester.pumpWidget(const SizedBox());
       },
     );
+
+    testWidgets(
+      'should require the web app choice and forward it to the installer',
+      (tester) async {
+        final installer = _Installer();
+        await _pump(tester, installer);
+        await tester.enterText(_input('Host or IP address'), _key.host);
+        await tester.tap(_button('Review setup'));
+        await tester.pumpAndSettle();
+        expect(find.byType(YsDialogError), findsOneWidget);
+        expect(_button('Agree and connect'), findsNothing);
+
+        await _review(tester, webApp: 'Yes');
+        expect(
+          find.textContaining('https://app.hermuse.203-0-113-10.sslip.io'),
+          findsOneWidget,
+        );
+        // The answer survives going back to the form.
+        await tester.tap(_button('Back'));
+        await tester.pumpAndSettle();
+        await tester.tap(_button('Review setup'));
+        await tester.pumpAndSettle();
+        await tester.tap(_button('Agree and connect'));
+        await tester.pumpAndSettle();
+        await tester.tap(_button('Accept fingerprint'));
+        await tester.pumpAndSettle();
+
+        expect(installer.webApps, [true]);
+        expect(_step(tester, RemoteInstallStep.web).state, YsStepState.pending);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets(
+      'should list the web step after No only once the installer reports it',
+      (tester) async {
+        final installer = _Installer();
+        await _pump(tester, installer);
+        await _connect(tester);
+        expect(
+          find.textContaining('https://app.hermuse.'),
+          findsNothing,
+          reason: 'Consent mentions no web app after No.',
+        );
+        await tester.tap(_button('Accept fingerprint'));
+        await tester.pumpAndSettle();
+        expect(installer.webApps, [false]);
+        bool listed() => tester
+            .widget<YsChecklist>(find.byType(YsChecklist))
+            .items
+            .any((item) => item.id == RemoteInstallStep.web);
+        expect(listed(), isFalse);
+
+        // An existing deployment is kept and reported.
+        installer.attempts.single.add(
+          const RemoteInstallStepFinished(
+            RemoteInstallStep.web,
+            previouslyCompleted: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(_step(tester, RemoteInstallStep.web).state, YsStepState.found);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  });
+
+  group('AddInstanceScreen', () {
+    Future<void> pumpAdd(WidgetTester tester, {String? webUrl}) async {
+      tester.view
+        ..physicalSize = const Size(900, 1500)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MediaQuery(
+            data: MediaQueryData.fromView(tester.view)
+                .copyWith(disableAnimations: true),
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: YsTheme(
+                palette: YsPalette.dark,
+                child: Overlay.wrap(
+                  child: AddInstanceScreen(
+                    initialUrl: _outcome.baseUrl,
+                    webUrl: webUrl,
+                    onDone: (_) {},
+                    onCancel: () {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    const webUrl = 'https://app.hermuse.203-0-113-10.sslip.io';
+
+    testWidgets('should show the web app address handed over by SSH setup', (
+      tester,
+    ) async {
+      await pumpAdd(tester, webUrl: webUrl);
+      expect(find.textContaining(webUrl), findsOneWidget);
+    });
+
+    testWidgets('should show no web app without one', (tester) async {
+      await pumpAdd(tester);
+      expect(find.textContaining('https://app.hermuse.'), findsNothing);
+    });
   });
 }
 

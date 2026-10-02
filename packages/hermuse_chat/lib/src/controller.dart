@@ -504,23 +504,21 @@ final class ChatController {
         case 'tool' when isBrowserTool(m.name ?? ''):
           // Browser calls fold into one card, first in the turn's bubble.
           final toolId = m.toolCallId ?? id;
+          final host = _urlHost(m.args?['url']);
+          BrowserBlock update(BrowserBlock? current) {
+            final kept = host.isEmpty ? current?.host ?? '' : host;
+            return current?.copyWith(lastToolId: toolId, host: kept) ??
+                BrowserBlock(lastToolId: toolId, running: false, host: kept);
+          }
+
           if (out.lastOrNull case final last?
               when last.author == Author.agent) {
             out[out.length - 1] = last.copyWith(
-              blocks: _upsertBrowser(
-                last.blocks,
-                (current) =>
-                    current?.copyWith(lastToolId: toolId) ??
-                    BrowserBlock(lastToolId: toolId, running: false),
-              ),
+              blocks: _upsertBrowser(last.blocks, update),
             );
           } else {
             out.add(
-              Message(
-                id: id,
-                author: Author.agent,
-                blocks: [BrowserBlock(lastToolId: toolId, running: false)],
-              ),
+              Message(id: id, author: Author.agent, blocks: [update(null)]),
             );
           }
         case 'tool':

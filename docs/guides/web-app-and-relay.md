@@ -11,6 +11,31 @@ server side and never hands it to the browser.
 
 The desktop apps do not need the relay; they connect to Hermes directly.
 
+Yellow Stick does not host the web app for you: you serve it from your own
+server, at your own address or domain, with the relay below. To look around
+first, the read-only demo at https://demo.hermuse.app runs the same web app
+with fictional chats, without any Hermes.
+
+## On a server set up by the desktop app
+
+When the desktop app [sets up your server over SSH](server.md#install-on-a-server-from-the-desktop-app),
+answer **Yes** to **Publish the web app on this server?**. The server then runs
+the web app and its relay in a container, behind the same Caddy as the
+dashboard, at its own address:
+
+```text
+https://app.hermuse.<public-ip-with-dashes>.sslip.io
+```
+
+Open it in any browser, choose **Connect to a machine** and enter the server's
+dashboard URL, `https://hermuse.<public-ip-with-dashes>.sslip.io`, with the
+dashboard user name and password. That Hermes is already registered on this
+relay; no admin step is needed. Only sslip.io addresses are supported here, no
+custom domain. Rerunning setup with **No** keeps the web app; **Uninstall**
+removes it.
+
+For any other setup, build and run the relay yourself as below.
+
 ## 1. Build the web app
 
 ```bash
@@ -36,9 +61,12 @@ dart run bin/server.dart          # or: dart compile exe bin/server.dart -o serv
 | `HERMUSE_RELAY_STATIC_DIR` | The built web app, served on the same address. |
 | `HERMUSE_RELAY_PORT` | Port, default `8787`. |
 | `HERMUSE_RELAY_DB` | SQLite file with the registered Hermes instances. |
+| `HERMUSE_RELAY_UPSTREAMS` | Optional. Comma-separated Hermes base URLs registered at startup, for example `https://hermes.example.com`. A malformed entry stops the relay. |
 
 In production, put the relay behind HTTPS (Caddy, nginx, your platform's
-ingress) at the address given in `HERMUSE_RELAY_ORIGIN`.
+ingress) at the address given in `HERMUSE_RELAY_ORIGIN`: your server's address
+or a domain of your own pointing to it. The web app it serves stays out of
+search engines (a `noindex` robots meta).
 
 ## 3. Register your Hermes
 

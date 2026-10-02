@@ -723,6 +723,86 @@ void main() {
         );
       },
     );
+
+    test('should remove the owned web app container, its new image tag and both routes with keep-data uninstall', () async {
+      await machine.install(web: true);
+      final journal = await machine
+          .file('var/lib/hermuse-provision/ownership.json')
+          .readAsString();
+      expect(journal, isNot(contains('never-journal-this')));
+      final inventory = await machine.inventory();
+      expect(_resource(inventory, 'web', machine)['removable'], isTrue);
+      expect(_resource(inventory, 'web', machine)['purgeOnly'], isFalse);
+      final image = 'image:$webImageRepository:0.3.0';
+      expect(_resource(inventory, image, machine)['removable'], isTrue);
+      expect(_resource(inventory, 'caddy-route', machine)['removable'], isTrue);
+      final outcome = await machine.remove(inventory, purge: false);
+      expect(outcome['complete'], isTrue, reason: jsonEncode(outcome));
+      expect(outcome['removed'], containsAll(['web', image, 'caddy-route']));
+      final docker = await machine.dockerState();
+      expect(docker['web'], isNull);
+      expect(
+        docker['images'] as Map,
+        isNot(contains('$webImageRepository:0.3.0')),
+      );
+      expect(docker['unrelated'], 'never touched');
+      expect(
+        await machine.file('etc/caddy/hermuse-remote.caddy').exists(),
+        isFalse,
+      );
+      expect(
+        await machine.file('etc/caddy/unrelated.caddy').readAsString(),
+        'untouched site',
+      );
+    });
+
+    test('should preserve an unrecorded hermuse-web container and preexisting web image even when labelled', () async {
+      final docker = await machine.dockerState();
+      final foreign = {
+        'Id': 'foreign-web-id',
+        'Name': '/hermuse-web',
+        'Image': 'foreign-web-image',
+        'Config': {
+          'Image': '$webImageRepository:0.3.0',
+          'Labels': {'org.hermuse.remote-installer': 'web-v1'},
+        },
+        'Mounts': [],
+        'HostConfig': {'PortBindings': {}},
+      };
+      docker['web'] = foreign;
+      docker['images'] = {
+        '$webImageRepository:0.3.0': {
+          'Id': 'foreign-web-image',
+          'RepoTags': ['$webImageRepository:0.3.0'],
+        },
+      };
+      await machine.put('state/docker.json', jsonEncode(docker));
+      await machine.install(web: true);
+      // install(web:) replaced the fixture container with the owned identity;
+      // restore the preexisting one so only its name and label remain.
+      final current = await machine.dockerState();
+      current['web'] = foreign;
+      (current['images'] as Map)['$webImageRepository:0.3.0'] = {
+        'Id': 'foreign-web-image',
+        'RepoTags': ['$webImageRepository:0.3.0'],
+      };
+      await machine.put('state/docker.json', jsonEncode(current));
+      final inventory = await machine.inventory();
+      expect(_resource(inventory, 'web', machine)['removable'], isFalse);
+      expect(
+        _resource(
+          inventory,
+          'image:$webImageRepository:0.3.0',
+          machine,
+        )['removable'],
+        isFalse,
+      );
+      final outcome = await machine.remove(inventory, purge: true);
+      final after = await machine.dockerState();
+      expect(after['web'], foreign);
+      expect(after['images'] as Map, contains('$webImageRepository:0.3.0'));
+      expect(outcome['removed'], isNot(contains('web')));
+    });
   }, skip: Platform.isLinux ? false : 'Linux shell fixture');
 }
 
@@ -846,7 +926,7 @@ os.execv("/usr/bin/ps", ["/usr/bin/ps", *sys.argv[1:]])''');
     await Process.run('chmod', ['0755', file('bin/$name').path]);
   }
 
-  Future<void> install({bool partial = false}) async {
+  Future<void> install({bool partial = false, bool web = false}) async {
     await checked(remoteOwnershipCaptureScript);
     await checked(
       remoteOwnershipMutationScript({remoteHermesHome}, account: true),
@@ -983,7 +1063,13 @@ os.execv("/usr/bin/ps", ["/usr/bin/ps", *sys.argv[1:]])''');
     );
     await put('state/hermuse-dashboard.service.active', '');
     await put('state/caddy.active', '');
-    await put('etc/caddy/hermuse-remote.caddy', caddySite('8-8-4-4.sslip.io'));
+    await put(
+      'etc/caddy/hermuse-remote.caddy',
+      caddySite(
+        '8-8-4-4.sslip.io',
+        webDomain: web ? webAppDomain('8-8-4-4.sslip.io') : null,
+      ),
+    );
     await put(
       'etc/caddy/Caddyfile',
       '# preexisting empty shared configuration\nimport /etc/caddy/hermuse-remote.caddy\n',
@@ -1019,6 +1105,27 @@ os.execv("/usr/bin/ps", ["/usr/bin/ps", *sys.argv[1:]])''');
     };
     docker['references'] = ['owned-container-id'];
     await put('state/docker.json', jsonEncode(docker));
+    if (web) {
+      await checked(remoteOwnershipMutationScript({}, web: true));
+      final withWeb = await dockerState();
+      withWeb['web'] = {
+        'Id': 'owned-web-id',
+        'Name': '/hermuse-web',
+        'Image': 'owned-web-image-id',
+        'Config': {
+          'Image': '$webImageRepository:0.3.0',
+          'Labels': {'org.hermuse.remote-installer': 'web-v1'},
+          'Env': ['HERMUSE_RELAY_ADMIN_TOKEN=never-journal-this'],
+        },
+        'Mounts': [],
+        'HostConfig': {'PortBindings': {}},
+      };
+      (withWeb['images'] as Map)['$webImageRepository:0.3.0'] = {
+        'Id': 'owned-web-image-id',
+        'RepoTags': ['$webImageRepository:0.3.0'],
+      };
+      await put('state/docker.json', jsonEncode(withWeb));
+    }
     final ufw = await firewallState();
     ufw['active'] = true;
     (ufw['rules'] as List).addAll([
@@ -1202,7 +1309,12 @@ state = json.loads(path.read_text())
 args = sys.argv[1:]
 if args[:2] == ["inspect", "--type"]:
     kind, name = args[2:]
-    value = state.get(kind) if kind != "image" else state["images"].get(name)
+    if kind == "image":
+        value = state["images"].get(name)
+    elif kind == "container":
+        value = state.get("web") if name == "hermuse-web" else state.get("container")
+    else:
+        value = state.get(kind)
     if value is None:
         print("No such " + kind, file=sys.stderr)
         raise SystemExit(1)
@@ -1213,9 +1325,10 @@ elif args[0] == "ps":
     for reference in state["references"]:
         print(reference)
 elif args[:2] == ["rm", "-f"]:
-    assert args[2] == state["container"]["Id"]
+    key = "web" if (state.get("web") or {}).get("Id") == args[2] else "container"
+    assert args[2] == state[key]["Id"]
     state["references"] = [reference for reference in state["references"] if reference != args[2]]
-    state["container"] = None
+    state[key] = None
     changed = root / "state/change-caddy-on-rm"
     if changed.exists():
         (root / "etc/caddy/hermuse-remote.caddy").write_text(changed.read_text())
