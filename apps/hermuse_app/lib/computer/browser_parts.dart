@@ -121,7 +121,7 @@ final class BrowserPill extends StatelessWidget {
           final background = this.background;
           final fill = background == null
               ? (state.hovered || state.pressed
-                    ? palette.neutralFilmColor.withValues(alpha: 0.4)
+                    ? palette.neutralWashColor
                     : const Color(0x00000000))
               : _brightness(
                   background,

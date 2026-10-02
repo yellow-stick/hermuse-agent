@@ -12,6 +12,7 @@ extension YsFlutterPalette on YsPalette {
   Color get paperShadowColor => Color(paperShadow.value);
   Color get neutralAmbientColor => Color(neutralAmbient.value);
   Color get neutralFilmColor => Color(neutralFilm.value);
+  Color get neutralWashColor => Color(neutralWash.value);
   Color get contentColor => Color(content.value);
   Color get contentMutedColor => Color(contentMuted.value);
   Color get contentSubtleColor => Color(contentSubtle.value);
@@ -29,6 +30,7 @@ extension YsFlutterPalette on YsPalette {
   Color get infoMutedColor => Color(infoMuted.value);
   Color get errorColor => Color(error.value);
   Color get errorWashColor => Color(errorWash.value);
+  Color get errorContentColor => Color(errorContent.value);
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
   Color get shadowColor => Color(shadow.value);

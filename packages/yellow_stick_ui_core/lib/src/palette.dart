@@ -26,6 +26,7 @@ final class YsPalette {
     required this.paperShadow,
     required this.neutralAmbient,
     required this.neutralFilm,
+    required this.neutralWash,
     required this.content,
     required this.contentMuted,
     required this.contentSubtle,
@@ -43,6 +44,7 @@ final class YsPalette {
     required this.infoMuted,
     required this.error,
     required this.errorWash,
+    required this.errorContent,
     required this.logoSurface,
     required this.avatarSurface,
     required this.shadow,
@@ -67,8 +69,13 @@ final class YsPalette {
   /// Solid neutral fill: tab track, avatar badges, monogram logos.
   final YsColor neutralAmbient;
 
-  /// Selected segment inside a neutral track, hover wash.
+  /// Selected segment inside a neutral track, hover fill.
   final YsColor neutralFilm;
+
+  /// Faint hover wash where a full [neutralFilm] already marks the selected
+  /// item (segmented tabs, panel rows, browser chrome). Translucent, so it
+  /// reads on canvas, paper and a neutral track alike.
+  final YsColor neutralWash;
 
   /// Primary text and icons.
   final YsColor content;
@@ -125,6 +132,9 @@ final class YsPalette {
   /// Faint negative wash behind a failed row.
   final YsColor errorWash;
 
+  /// Text/icons drawn on [error] (destructive buttons).
+  final YsColor errorContent;
+
   /// Light disc behind airline marks.
   final YsColor logoSurface;
 
@@ -144,6 +154,7 @@ final class YsPalette {
     paperShadow: YsColor(0x00000000),
     neutralAmbient: YsColor(0xFF28292B),
     neutralFilm: YsColor(0xFF3A3B3E),
+    neutralWash: YsColor(0x663A3B3E),
     content: YsColor(0xFFFFFFFF),
     contentMuted: YsColor(0x87F2F7FF),
     contentSubtle: YsColor(0x61F1F6FF),
@@ -161,6 +172,7 @@ final class YsPalette {
     infoMuted: YsColor(0x293B82F6),
     error: YsColor(0xFFE5484D),
     errorWash: YsColor(0x14E5484D),
+    errorContent: YsColor(0xFFFFFFFF),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
     shadow: YsColor(0x73000000),
@@ -176,7 +188,8 @@ final class YsPalette {
     paperEdge: YsColor(0x12141412),
     paperShadow: YsColor(0x0F141412),
     neutralAmbient: YsColor(0xFFE9E9E6),
-    neutralFilm: YsColor(0xFFDEDEDA),
+    neutralFilm: YsColor(0xFFDADAD6),
+    neutralWash: YsColor(0x0F141412),
     content: YsColor(0xFF191917),
     contentMuted: YsColor(0xA3191917),
     contentSubtle: YsColor(0x7A191917),
@@ -194,6 +207,7 @@ final class YsPalette {
     infoMuted: YsColor(0x292563EB),
     error: YsColor(0xFFDC2626),
     errorWash: YsColor(0x14DC2626),
+    errorContent: YsColor(0xFFFFFFFF),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFECE9E4),
     shadow: YsColor(0x2E141412),
@@ -208,6 +222,7 @@ final class YsPalette {
     'paper-shadow': paperShadow,
     'neutral-ambient': neutralAmbient,
     'neutral-film': neutralFilm,
+    'neutral-wash': neutralWash,
     'content': content,
     'content-muted': contentMuted,
     'content-subtle': contentSubtle,
@@ -225,6 +240,7 @@ final class YsPalette {
     'info-muted': infoMuted,
     'error': error,
     'error-wash': errorWash,
+    'error-content': errorContent,
     'logo-surface': logoSurface,
     'avatar-surface': avatarSurface,
     'shadow': shadow,

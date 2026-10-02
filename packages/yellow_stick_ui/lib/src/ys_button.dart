@@ -294,15 +294,14 @@ final class YsButton extends StatelessWidget {
       YsButtonKind.neutral => _PillShell(
         height: size,
         padding: padding,
-        // Dark buttons: lighten on hover, darken while pressed.
-        background: _brightness(
-          palette.neutralAmbientColor,
-          state.pressed
-              ? 0.9
-              : state.hovered
-              ? 1.15
-              : 1,
-        ),
+        // Hover steps to the film fill (lighter in dark, darker in light);
+        // pressing darkens the resting fill. A brightness boost would clamp
+        // a light fill to white and vanish on paper.
+        background: state.pressed
+            ? _brightness(palette.neutralAmbientColor, 0.9)
+            : state.hovered
+            ? palette.neutralFilmColor
+            : palette.neutralAmbientColor,
         child: _LabelWithIcon(
           label: label!,
           icon: icon,
@@ -324,8 +323,10 @@ final class YsButton extends StatelessWidget {
         child: _LabelWithIcon(
           label: label!,
           icon: icon,
-          style: YsType.label.flutter.copyWith(color: palette.contentColor),
-          iconColor: palette.contentColor,
+          style: YsType.label.flutter.copyWith(
+            color: palette.errorContentColor,
+          ),
+          iconColor: palette.errorContentColor,
         ),
       ),
     };

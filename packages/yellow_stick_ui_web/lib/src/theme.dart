@@ -72,6 +72,7 @@ abstract final class YsTheme {
   static Color get paperShadow => .variable('--paper-shadow');
   static Color get neutralAmbient => .variable('--neutral-ambient');
   static Color get neutralFilm => .variable('--neutral-film');
+  static Color get neutralWash => .variable('--neutral-wash');
   static Color get content => .variable('--content');
   static Color get contentMuted => .variable('--content-muted');
   static Color get contentSubtle => .variable('--content-subtle');
@@ -87,6 +88,7 @@ abstract final class YsTheme {
   static Color get successMuted => .variable('--success-muted');
   static Color get error => .variable('--error');
   static Color get errorWash => .variable('--error-wash');
+  static Color get errorContent => .variable('--error-content');
   static Color get logoSurface => .variable('--logo-surface');
   static Color get avatarSurface => .variable('--avatar-surface');
   static Color get shadow => .variable('--shadow');

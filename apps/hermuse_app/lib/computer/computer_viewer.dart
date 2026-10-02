@@ -569,7 +569,7 @@ final class _ModeToggle extends StatelessWidget {
                         color: mode == value
                             ? palette.neutralFilmColor
                             : state.hovered
-                            ? palette.neutralFilmColor.withValues(alpha: 0.4)
+                            ? palette.neutralWashColor
                             : const Color(0x00000000),
                         borderRadius: BorderRadius.circular(YsRadius.segment),
                       ),
@@ -678,7 +678,7 @@ final class _Tab extends StatelessWidget {
             color: tab.active
                 ? palette.neutralAmbientColor
                 : state.hovered
-                ? palette.neutralFilmColor.withValues(alpha: 0.4)
+                ? palette.neutralWashColor
                 : const Color(0x00000000),
             borderRadius: BorderRadius.circular(YsRadius.row),
           ),
