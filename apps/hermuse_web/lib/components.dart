@@ -21,7 +21,8 @@ import 'screens.dart';
 ///
 /// Shown once a Hermes is added and from its Instances row. Continue opens
 /// the chat ([onChat]) once a model answers, else the onboarding
-/// ([onSetUpModel]). Desktop parity: `ComponentsScreen`.
+/// ([onSetUpModel]); it waits while a look or an install runs. Desktop
+/// parity: `ComponentsScreen`.
 class HermuseComponents extends StatelessComponent {
   const HermuseComponents({
     required this.instance,
@@ -46,9 +47,15 @@ class HermuseComponents extends StatelessComponent {
   Component _body(RemoteSetupState state) {
     final phase = state.phase;
     final total = state.parts.length;
-    // Busy, every other action waits: nothing is installable then.
-    final everything = state.installable.length >= 2;
-    final onContinue = state[RemotePart.model].status.settled
+    final unreachable = phase == RemoteSetupPhase.unreachable;
+    // A look or an install runs: what depends on its outcome waits for it.
+    final working = _working(state);
+    // Busy, every other action waits: nothing is installable then. Installs
+    // need the Hermes to answer.
+    final everything = !unreachable && state.installable.length >= 2;
+    final onContinue = working
+        ? null
+        : state[RemotePart.model].status.settled
         ? onChat
         : onSetUpModel;
     return div(classes: 'hermuse-screen hermuse-screen-top', [
@@ -76,18 +83,22 @@ class HermuseComponents extends StatelessComponent {
         ),
         if (state.unreachable case final reason?) HermuseErrorNotice(reason),
         YsChecklist(items: [for (final row in state.parts) _item(row)]),
+        // One main action: the installs when offered, else reaching the
+        // Hermes again when it does not answer, else Continue.
         div(classes: 'hermuse-parts-actions', [
-          if (state.unreachable != null)
-            YsButton.neutral(
-              label: 'Check again',
-              onPressed: () => unawaited(_setup.checkAgain()),
-            ),
           if (everything)
             YsButton.primary(
               label: 'Install everything missing',
-              onPressed: () => unawaited(_setup.installEverything()),
+              onPressed: working
+                  ? null
+                  : () => unawaited(_setup.installEverything()),
             ),
-          if (state.busy || everything)
+          if (unreachable)
+            YsButton.primary(
+              label: working ? 'Checking…' : 'Check again',
+              onPressed: working ? null : () => unawaited(_setup.checkAgain()),
+            ),
+          if (everything || unreachable)
             YsButton.neutral(label: 'Continue', onPressed: onContinue)
           else
             YsButton.primary(label: 'Continue', onPressed: onContinue),
@@ -95,6 +106,16 @@ class HermuseComponents extends StatelessComponent {
       ]),
     ]);
   }
+
+  /// Whether a look or an install of [state] runs: Continue, "Install
+  /// everything missing" and "Check again" wait for it.
+  static bool _working(RemoteSetupState state) =>
+      state.busy ||
+      state.parts.any(
+        (row) =>
+            row.status == RemotePartStatus.checking ||
+            row.status == RemotePartStatus.installing,
+      );
 
   YsChecklistItem _item(RemotePartState row) => YsChecklistItem(
     id: row.part.name,

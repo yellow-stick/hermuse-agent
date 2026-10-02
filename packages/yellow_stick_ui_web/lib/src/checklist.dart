@@ -402,7 +402,7 @@ class YsStepBadge extends StatefulComponent {
           },
         ),
         css('.ys-sb-disc').styles(
-          raw: {'fill': 'var(--success-muted)', 'transform-origin': origin},
+          raw: {'fill': 'var(--info-muted)', 'transform-origin': origin},
         ),
         css('.ys-sb-glyph').styles(
           color: .variable('--content-subtle'),
@@ -483,12 +483,12 @@ class YsStepBadge extends StatefulComponent {
         css('.ys-sb-glyph').styles(color: .variable('--success')),
         css('.ys-sb-m0').styles(raw: {'animation': play(tick.part(0)!, tick)}),
       ]),
-      // Found: a soft disc grows behind a calm tick.
+      // Found (already in place): a soft blue disc grows behind a calm tick.
       css(state('found'), [
         css('.ys-sb-track').styles(raw: {'stroke': 'transparent'}),
         css('.ys-sb-disc').styles(raw: {'animation': play(calm.ring!, calm)}),
         css('.ys-sb-glyph').styles(
-          color: .variable('--success'),
+          color: .variable('--info'),
           raw: {'animation': play(calm.root!, calm)},
         ),
       ]),

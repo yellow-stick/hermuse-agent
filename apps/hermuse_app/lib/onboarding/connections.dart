@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cliproxy_client/cliproxy_client.dart' show CliproxyProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,25 +13,38 @@ import '../platform/open_url.dart';
 import '../product/route.dart' show HermuseRouteSkeleton;
 import '../shell/screens.dart' show YsDialogError, YsDialogHead;
 
-/// Connections page: card list for one instance (web `HermuseConnections`
-/// parity), plus desktop subscription-bridge cards (marked Advanced).
+/// Connections page: the model accounts of one instance (web
+/// `HermuseConnections` parity).
+///
+/// Subscription sign-ins come first ([_featuredSignIns]), then the
+/// connected providers; "Show other providers" unfolds the available ones
+/// and the custom endpoint form. A connected provider never folds away and
+/// a search shows every match.
 ///
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
 /// a masked field with server validate errors; custom endpoints get an
 /// add/delete form; external cards explain the terminal step. Bridge cards
 /// only appear where [bridgeHostProvider] is overridden (desktop).
-/// Model accounts of an instance, as a connector list: search, then
-/// Connected and Available groups of compact rows that expand in place.
 final class ConnectionsScreen extends ConsumerStatefulWidget {
   const ConnectionsScreen({
     required this.instance,
     required this.onBack,
+    this.lead,
+    this.onServerSetup,
     super.key,
   });
 
   final HermesInstance instance;
   final VoidCallback onBack;
+
+  /// Opens what is installed on the instance's server, where its Hermuse
+  /// plugin is installed or updated (subscription sign-ins need it there).
+  final VoidCallback? onServerSetup;
+
+  /// Shown above the page head: the onboarding stepper when the page is the
+  /// onboarding's Accounts step.
+  final Widget? lead;
 
   @override
   ConsumerState<ConnectionsScreen> createState() => _ConnectionsScreenState();
@@ -38,6 +52,10 @@ final class ConnectionsScreen extends ConsumerStatefulWidget {
 
 final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
   final _query = TextEditingController();
+
+  /// "Show other providers" unfolded the available providers and the custom
+  /// endpoint form.
+  var _others = false;
 
   @override
   void initState() {
@@ -58,10 +76,33 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
     final connections = ref.watch(connectionCardsProvider(instance.id));
     final state = connections.value;
     final needle = _query.text.trim().toLowerCase();
-    final cards = [
-      for (final card in state?.cards ?? const <ConnectionCard>[])
-        if (needle.isEmpty || card.name.toLowerCase().contains(needle)) card,
+    bool matches(String text) => text.toLowerCase().contains(needle);
+    // A featured sign-in is found by what its row shows, too.
+    bool featuredMatches(ConnectionCard card, _SignIn signIn) =>
+        matches(card.name) ||
+        matches('Sign in with ${signIn.product}') ||
+        matches(signIn.plan);
+    final (signIns, rest) = _featuredSignIns(state?.cards ?? const []);
+    final featured = [
+      for (final (card, signIn) in signIns)
+        if (featuredMatches(card, signIn)) (card, signIn),
     ];
+    final others = [
+      for (final card in rest)
+        if (matches(card.name)) card,
+    ];
+    final connected = [
+      for (final c in others)
+        if (c.state == ConnectionCardState.connected) c,
+    ];
+    final available = [
+      for (final c in others)
+        if (c.state != ConnectionCardState.connected) c,
+    ];
+    // Connected providers never fold away and a search shows every match;
+    // with no sign-in to feature, the other providers are the whole page.
+    final foldable = needle.isEmpty && signIns.isNotEmpty;
+    final unfolded = !foldable || _others;
     final muted = const YsTextStyle(
       14,
       20,
@@ -71,7 +112,16 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       18,
       YsWeight.medium,
     ).flutter.copyWith(color: palette.contentMutedColor);
-    Widget group(String title, List<ConnectionCard> list) => Column(
+    Widget row(ConnectionCard card, [_SignIn? signIn]) => _ConnectionCard(
+      key: ValueKey(card.id),
+      instanceId: instance.id,
+      card: card,
+      signIn: signIn,
+      pendingLogin: state?.pendingLogin,
+      pendingBridgeLogin: state?.pendingBridgeLogin,
+      onServerSetup: widget.onServerSetup,
+    );
+    Widget group(String title, List<Widget> rows) => Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -85,16 +135,10 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final (i, card) in list.indexed) ...[
+                for (final (i, child) in rows.indexed) ...[
                   if (i > 0)
                     Container(height: ysHairline, color: palette.lineColor),
-                  _ConnectionCard(
-                    key: ValueKey(card.id),
-                    instanceId: instance.id,
-                    card: card,
-                    pendingLogin: state?.pendingLogin,
-                    pendingBridgeLogin: state?.pendingBridgeLogin,
-                  ),
+                  child,
                 ],
               ],
             ),
@@ -102,14 +146,6 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
         ),
       ],
     );
-    final connected = [
-      for (final c in cards)
-        if (c.state == ConnectionCardState.connected) c,
-    ];
-    final available = [
-      for (final c in cards)
-        if (c.state != ConnectionCardState.connected) c,
-    ];
     // The drawing loops while the list loads and shows a pulled plug when
     // it cannot load (web `HermuseConnections` parity).
     final failed = connections.hasError && state == null;
@@ -121,11 +157,15 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(24),
             children: [
+              if (widget.lead case final lead?) ...[
+                lead,
+                const SizedBox(height: YsSpace.lg),
+              ],
               YsDialogHead(
                 art: failed ? YsArt.unreachable : YsArt.accounts,
                 busy: connections.isLoading,
-                title: 'Connections',
-                helper: 'Model accounts ${instance.label} can use.',
+                title: 'Model accounts',
+                helper: 'Subscriptions and API keys ${instance.label} can use.',
                 trailing: YsButton.icon(
                   icon: YsIcon.close,
                   onPressed: widget.onBack,
@@ -158,16 +198,40 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                   ),
                 ),
               ] else ...[
-                if (connected.isNotEmpty) group('Connected', connected),
-                if (available.isNotEmpty) group('Available', available),
-                if (cards.isEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text('No connection matches.', style: muted),
+                if (featured.isNotEmpty)
+                  group('Use your subscription', [
+                    for (final (card, signIn) in featured) row(card, signIn),
+                  ]),
+                if (connected.isNotEmpty)
+                  group('Connected', [for (final c in connected) row(c)]),
+                if (foldable) ...[
+                  const SizedBox(height: YsSpace.lg),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Semantics(
+                      expanded: _others,
+                      child: YsButton.neutral(
+                        label: _others
+                            ? 'Hide other providers'
+                            : 'Show other providers',
+                        onPressed: () => setState(() => _others = !_others),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: YsSpace.sm),
                 ],
-                const SizedBox(height: 8),
-                Text('Custom endpoint', style: groupStyle),
-                const SizedBox(height: 8),
-                _CustomEndpointCard(instanceId: instance.id),
+                if (unfolded) ...[
+                  if (available.isNotEmpty)
+                    group('Available', [for (final c in available) row(c)]),
+                  if (featured.isEmpty && others.isEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text('No connection matches.', style: muted),
+                  ],
+                  const SizedBox(height: 8),
+                  Text('Custom endpoint', style: groupStyle),
+                  const SizedBox(height: 8),
+                  _CustomEndpointCard(instanceId: instance.id),
+                ],
               ],
             ],
           ),
@@ -177,12 +241,72 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
   }
 }
 
+/// The product and plan a featured sign-in names in place of its card's
+/// name and detail ("Sign in with Codex", "Use your ChatGPT Plus/Pro
+/// subscription").
+typedef _SignIn = ({String product, String plan});
+
+/// What each subscription-bridge sign-in is called on its featured row.
+const _bridgeSignIns = <CliproxyProvider, _SignIn>{
+  CliproxyProvider.anthropic: (product: 'Claude Code', plan: 'Claude Pro/Max'),
+  CliproxyProvider.codex: (product: 'Codex', plan: 'ChatGPT Plus/Pro'),
+  CliproxyProvider.meta: (product: 'Muse Code', plan: 'Meta Muse Code'),
+  CliproxyProvider.antigravity: (
+    product: 'Antigravity',
+    plan: 'Google Antigravity',
+  ),
+  CliproxyProvider.kimi: (product: 'Kimi', plan: 'Kimi'),
+  CliproxyProvider.kimiAi: (product: 'Kimi.ai', plan: 'Kimi.ai'),
+  CliproxyProvider.devin: (product: 'Devin', plan: 'Devin'),
+  CliproxyProvider.xai: (product: 'Grok', plan: 'SuperGrok'),
+};
+
+/// The subscription sign-ins featured at the top of the page, then every
+/// other card (web `_featuredSignIns` parity: same rules).
+///
+/// Every subscription-bridge card is featured: each OAuth sign-in the
+/// CLIProxyAPI bridge offers, in [bridgeCardSpecs] order. Without bridge
+/// cards (no bridge host) the Hermes `openai-codex` device-code card stands
+/// in for Codex; the other subscriptions need the bridge. The Hermes cards a
+/// featured bridge replaces (`hermesIds`: `anthropic`, `claude-code`,
+/// `openai-codex`, `xai-oauth`) are other providers.
+(List<(ConnectionCard, _SignIn)>, List<ConnectionCard>) _featuredSignIns(
+  List<ConnectionCard> cards,
+) {
+  final featured = <(ConnectionCard, _SignIn)>[
+    for (final card in cards)
+      if (card.bridgeSpec?.provider case final provider?)
+        (card, _bridgeSignIns[provider]!),
+  ];
+  if (featured.isEmpty) {
+    final codex = cards
+        .where(
+          (c) => c.id == 'openai-codex' && c.flow == ConnectionFlow.deviceCode,
+        )
+        .firstOrNull;
+    if (codex != null) {
+      featured.add((
+        codex,
+        (product: 'ChatGPT / Codex', plan: 'ChatGPT Plus/Pro'),
+      ));
+    }
+  }
+  final ids = {for (final (card, _) in featured) card.id};
+  final others = [
+    for (final card in cards)
+      if (!ids.contains(card.id)) card,
+  ];
+  return (featured, others);
+}
+
 final class _ConnectionCard extends ConsumerStatefulWidget {
   const _ConnectionCard({
     required this.instanceId,
     required this.card,
     required this.pendingLogin,
     required this.pendingBridgeLogin,
+    this.signIn,
+    this.onServerSetup,
     super.key,
   });
 
@@ -190,6 +314,12 @@ final class _ConnectionCard extends ConsumerStatefulWidget {
   final ConnectionCard card;
   final DeviceCodeLogin? pendingLogin;
   final BridgeLogin? pendingBridgeLogin;
+
+  /// Set on a featured subscription sign-in: a taller row naming its
+  /// product and plan, without the Advanced chip.
+  final _SignIn? signIn;
+
+  final VoidCallback? onServerSetup;
 
   @override
   ConsumerState<_ConnectionCard> createState() => _ConnectionCardState();
@@ -224,7 +354,34 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
     // An in-flight login keeps its row open.
     final open = _open || isPending || bridgePending || _error != null;
     final connected = card.state == ConnectionCardState.connected;
+    // A featured sign-in is a taller row that names its product once signed
+    // in and invites to sign in until then; progress and errors replace its
+    // plan line.
+    final signIn = widget.signIn;
+    final featured = signIn != null;
+    final title = signIn == null
+        ? card.name
+        : connected
+        ? signIn.product
+        : 'Sign in with ${signIn.product}';
+    final idle =
+        card.state == ConnectionCardState.disconnected && !card.needsPlugin;
+    final subtitle = signIn != null && (idle || card.detail.isEmpty)
+        ? 'Use your ${signIn.plan} subscription'
+        : card.detail;
+    final titleType = featured ? YsType.heading : YsType.label;
+    final subtitleType = featured ? YsType.small : YsType.caption;
+    // The body lines up under the title.
+    final bodyInset = featured
+        ? YsLayout.activityTileSize + YsSpace.md + 14
+        : 48.0;
     final (action, actionColor) = switch ((card.state, card.flow)) {
+      _ when card.needsPlugin => (
+        card.detail == serverBridgeInstallPlugin
+            ? 'Install plugin'
+            : 'Update plugin',
+        palette.primary2Color,
+      ),
       (ConnectionCardState.connected, _) => (
         'Manage',
         palette.contentMutedColor,
@@ -309,42 +466,35 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
       children: [
         YsPressable(
           onPressed: () => setState(() => _open = !open),
-          semanticLabel: '${card.name}: $action',
+          semanticLabel: '$title: $action',
           builder: (context, state) => ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 44),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: featured ? YsSpace.md : 8,
+              ),
               child: Row(
                 children: [
-                  _Logo(name: card.name),
-                  const SizedBox(width: 10),
+                  _Logo(name: card.name, featured: featured),
+                  SizedBox(width: featured ? YsSpace.md : 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                card.name,
-                                style: YsType.label.flutter.copyWith(
-                                  color: palette.contentColor,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (card.advanced) ...[
-                              const SizedBox(width: 8),
-                              _AdvancedChip(),
-                            ],
-                          ],
+                        Text(
+                          title,
+                          style: titleType.flutter.copyWith(
+                            color: palette.contentColor,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        if (card.detail.isNotEmpty && card.detail != card.name)
+                        if (subtitle.isNotEmpty && subtitle != title)
                           Text(
-                            card.detail,
-                            style: YsType.caption.flutter.copyWith(
+                            subtitle,
+                            style: subtitleType.flutter.copyWith(
                               color: palette.contentMutedColor,
                             ),
                             maxLines: 1,
@@ -381,7 +531,7 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         ),
         if (open && body.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(left: 48, right: 14, bottom: 12),
+            padding: EdgeInsets.only(left: bodyInset, right: 14, bottom: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
@@ -516,6 +666,35 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
 
   Widget _bridgeBody(ConnectionCard card, BridgeLogin? login) {
     final palette = YsTheme.of(context);
+    if (card.needsPlugin) {
+      final install = card.detail == serverBridgeInstallPlugin;
+      final setup = widget.onServerSetup;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'The sign-in keeps your subscription on the server, which needs '
+            'the Hermuse plugin $hermusePluginVersion or later. '
+            '${install ? 'Install' : 'Update'} it from what is installed on '
+            'the server, then come back here.',
+            style: YsType.small.flutter.copyWith(
+              color: palette.contentMutedColor,
+            ),
+          ),
+          if (setup != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: YsButton.primary(
+                label: install ? 'Install the plugin' : 'Update the plugin',
+                onPressed: setup,
+              ),
+            ),
+          ],
+        ],
+      );
+    }
     if (login == null) {
       final connected = card.state == ConnectionCardState.connected;
       return Column(
@@ -523,8 +702,9 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'Uses your personal subscription through the on-device sidecar. '
-            'This may breach the vendor ToS and can break without notice.',
+            'Personal use only: using a consumer subscription outside its '
+            'official clients may breach the vendor ToS and can stop working '
+            'without notice.',
             style: YsType.caption.flutter.copyWith(
               color: palette.contentSubtleColor,
             ),
@@ -636,52 +816,33 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
 }
 
 final class _Logo extends StatelessWidget {
-  const _Logo({required this.name});
+  const _Logo({required this.name, required this.featured});
 
   final String name;
+
+  /// The bigger tile of a featured sign-in.
+  final bool featured;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final trimmed = name.trim();
+    final size = featured ? YsLayout.activityTileSize : 24.0;
+    final type = featured
+        ? YsType.monogram
+        : const YsTextStyle(12, 16, YsWeight.semibold);
     return SizedBox(
-      width: 24,
-      height: 24,
+      width: size,
+      height: size,
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: palette.paperClearColor,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(featured ? YsRadius.row : 6),
         ),
         child: Center(
           child: Text(
             trimmed.isEmpty ? '?' : trimmed.characters.first.toUpperCase(),
-            style: const YsTextStyle(
-              12,
-              16,
-              YsWeight.semibold,
-            ).flutter.copyWith(color: palette.contentColor),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-final class _AdvancedChip extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(YsRadius.pill),
-        border: Border.all(color: palette.lineColor, width: ysHairline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        child: Text(
-          'Advanced',
-          style: YsType.caption.flutter.copyWith(
-            color: palette.contentMutedColor,
+            style: type.flutter.copyWith(color: palette.contentColor),
           ),
         ),
       ),
@@ -905,8 +1066,11 @@ final class _CustomEndpointCard extends ConsumerStatefulWidget {
 final class _CustomEndpointCardState
     extends ConsumerState<_CustomEndpointCard> {
   var _open = false;
-  late final TextEditingController _name = TextEditingController();
-  late final TextEditingController _baseUrl = TextEditingController();
+  // Add is enabled by the name and URL fields: rebuild on their edits.
+  late final TextEditingController _name = TextEditingController()
+    ..addListener(() => setState(() {}));
+  late final TextEditingController _baseUrl = TextEditingController()
+    ..addListener(() => setState(() {}));
   late final TextEditingController _apiKey = TextEditingController();
   late final TextEditingController _model = TextEditingController();
   var _busy = false;

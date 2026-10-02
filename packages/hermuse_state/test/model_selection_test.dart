@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:cliproxy_client/cliproxy_client.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermes_client/testing.dart';
 import 'package:hermuse_data/hermuse_data.dart';
@@ -254,6 +255,7 @@ void main() {
     late ProviderContainer container;
     late Map<String, http.Response Function(http.Request)> routes;
     late List<({String method, String path, Object? body})> calls;
+    late MockClient mock;
 
     http.Response json(Object? payload, [int status = 200]) =>
         http.Response.bytes(
@@ -293,7 +295,7 @@ void main() {
         }),
       };
       calls = [];
-      final mock = MockClient((request) async {
+      mock = MockClient((request) async {
         Object? body;
         if (request.body.isNotEmpty) {
           try {
@@ -426,5 +428,110 @@ void main() {
         'MiniMax-M3',
       ]);
     });
+
+    test('a bridge on a server serves discovery and makeDefault', () async {
+      const label = 'Claude Pro/Max (bridge)';
+      const endpoint = 'http://127.0.0.1:41000/v1';
+      Map<String, Object?> model(String id, String owner) => {
+        'id': id,
+        'object': 'model',
+        'owned_by': owner,
+      };
+      routes['GET /api/providers/custom-endpoints'] = (_) => json({
+        'endpoints': [
+          {'id': 'claude-bridge', 'name': label, 'base_url': endpoint},
+        ],
+      });
+      routes['GET $hermuseBridgeRoute/status'] = (_) => json({
+        'supported': true,
+        'running': true,
+        'base_url': 'http://127.0.0.1:41000',
+        'accounts': [
+          {
+            'name': 'claude-dev@shop.com.json',
+            'provider': 'claude',
+            'email': 'dev@shop.com',
+            'usable': true,
+          },
+        ],
+      });
+      routes['POST $hermuseBridgeRoute/ensure'] = (_) =>
+          json({'base_url': 'http://127.0.0.1:41000', 'api_key': 'server-key'});
+      routes['GET $hermuseBridgeRoute/models'] = (_) => json({
+        'object': 'list',
+        'data': [
+          model('claude-opus-4-6', 'anthropic'),
+          model('claude-sonnet-4-6', 'anthropic'),
+          model('gpt-5.5', 'openai'),
+        ],
+      });
+      routes['POST /api/providers/custom-endpoints'] = (_) =>
+          json({'ok': true});
+      routes['POST /api/model/set'] = (_) => json({'ok': true});
+      final desktop = ProviderContainer(
+        overrides: [
+          hermuseDatabaseProvider.overrideWithValue(db),
+          secretStoreProvider.overrideWithValue(MemorySecretStore()),
+          transportFactoryProvider.overrideWithValue((_) async => fake),
+          restClientProvider('vps').overrideWith(
+            (ref) => HermesRestClient(
+              mock,
+              baseUrl: Uri.parse('https://vps.example'),
+            ),
+          ),
+          // This desktop's sidecar: an instance on a server never uses it.
+          bridgeHostProvider.overrideWithValue(const _UnusedBridgeHost()),
+        ],
+      );
+      addTearDown(desktop.dispose);
+      final claude = modelSelectionProvider('vps', 'bridge:anthropic');
+
+      final selection = await desktop.read(claude.future);
+      await desktop.read(claude.notifier).makeDefault();
+
+      expect(selection.allModels, ['claude-opus-4-6', 'claude-sonnet-4-6']);
+      expect(
+        [
+          for (final c in calls)
+            if (c.method == 'POST' &&
+                (c.path == '/api/providers/custom-endpoints' ||
+                    c.path == '/api/model/set'))
+              c.body,
+        ],
+        [
+          {
+            'name': label,
+            'base_url': endpoint,
+            'model': 'claude-opus-4-6',
+            'api_key': 'server-key',
+            'models': ['claude-opus-4-6', 'claude-sonnet-4-6'],
+            'api_mode': 'chat_completions',
+            'discover_models': true,
+          },
+          {
+            'scope': 'main',
+            'provider': 'custom:$label',
+            'model': 'claude-opus-4-6',
+            'base_url': endpoint,
+            'api_key': 'server-key',
+          },
+          {
+            'scope': 'auxiliary',
+            'provider': 'custom:$label',
+            'model': 'claude-sonnet-4-6',
+            'base_url': endpoint,
+          },
+        ],
+      );
+    });
   });
+}
+
+/// This desktop's sidecar, which must not serve an instance on a server.
+final class _UnusedBridgeHost implements BridgeHost {
+  const _UnusedBridgeHost();
+
+  @override
+  Future<BridgeConnection> ensureStarted() =>
+      throw StateError('the sidecar served an instance on a server');
 }

@@ -61,9 +61,9 @@ void main() {
     );
 
     // Welcome → add-instance form.
-    await _waitFor(tester, find.text('Connect to a Hermes'));
+    await _waitFor(tester, find.text('Connect to a machine'));
     await tester.tap(
-      find.widgetWithText(YsChoiceCard, 'Connect to a Hermes').first,
+      find.widgetWithText(YsChoiceCard, 'Connect to a machine').first,
     );
     await tester.pumpAndSettle();
 
@@ -77,10 +77,14 @@ void main() {
     await tester.enterText(fields.at(3), password);
     await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
 
-    // What the instance has shows first; once its model answers, Continue
-    // goes on to the chat.
+    // What the instance has shows first; once its model answers and every
+    // look is over, Continue goes on to the chat.
     await _waitFor(tester, find.text('Connected'));
-    await tester.tap(find.widgetWithText(YsButton, 'Continue'));
+    final onContinue = find.byWidgetPredicate(
+      (w) => w is YsButton && w.label == 'Continue' && w.onPressed != null,
+    );
+    await _waitFor(tester, onContinue);
+    await tester.tap(onContinue);
 
     // The chat opens on a new conversation; the composer proves it. (The
     // kit merges the field label into the EditableText node, so match the
