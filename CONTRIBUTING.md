@@ -26,19 +26,19 @@ of the project and of this flow.
    documentation builds nothing; each new push cancels the run it supersedes.
    Pull requests from forks run without secrets, so the web preview is only
    deployed for branches of this repository.
-4. **Review and merge queue.** The maintainer reviews every pull request (code
-   owner). An approved one goes through the merge queue: the merged result is
-   checked and built again for every platform before `main` moves. The
-   installed-package smoke tests do not run there: they run for each release
-   and in manual test runs ([CI at a glance](#ci-at-a-glance)).
+4. **Review and merge.** The maintainer reviews every pull request (code
+   owner). It merges once its checks passed on a branch up to date with
+   `main`: when `main` moved since, "Update branch" runs them again on top of
+   it. The installed-package smoke tests do not run on pull requests: they run
+   for each release and in manual test runs ([CI at a glance](#ci-at-a-glance)).
 5. **One squashed commit.** Pull requests are squash-merged only: the pull
    request title becomes the single commit on `main` (GitHub appends `(#N)`)
    and its description becomes the commit message.
 
 Maintainers push branches named `yellow-stick/<topic>` (kebab-case, cut from
 `origin/main`) to this repository. A ruleset only lets `main`,
-`yellow-stick/**`, `release/**`, `dependabot/**` and the merge queue's
-`gh-readonly-queue/**` branches be created here; administrators can bypass it.
+`yellow-stick/**`, `release/**` and `dependabot/**` branches be created here;
+administrators can bypass it.
 
 ### Titles, commits and validation
 
@@ -69,7 +69,6 @@ One workflow per scenario, in `.github/workflows/`:
 | --- | --- | --- |
 | Draft pull request | `ci.yml`, `web-pr.yml` | Nothing |
 | Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web app and demo builds, and a demo preview |
-| Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview |
 | Push to `main` touching the web app or the demo | `web-deploy.yml` | The read-only demo deployed to https://demo.hermuse.app |
 | Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below |
 | Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |

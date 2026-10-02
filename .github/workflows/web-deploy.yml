@@ -17,7 +17,7 @@ name: Web deploy
 on:
   push:
     branches: [main]
-    # The demo's inputs (listed in web-pr.yml and web-queue.yml too) and the
+    # The demo's inputs (listed in web-pr.yml too) and the
     # workflows that build and deploy it.
     paths:
       - demo/**

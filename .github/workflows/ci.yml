@@ -1,21 +1,21 @@
-# Continuous integration of pull requests and of the merge queue: the checks
-# and the unsigned packages of every platform (build.yml).
+# Continuous integration of pull requests: the checks and the unsigned
+# packages of every platform (build.yml).
 #
 #   changes -> build (build.yml: checks, Linux, macOS and Windows packages, assembly) -> CI
 #
 # Triggers: a pull request opened, pushed to, reopened or marked ready for
-# review, and a merge group of the merge queue. A draft runs nothing: marking
-# it ready for review starts the run. A change of documentation only (docs/
-# and Markdown, except under hermes-plugin/ and the app's copy of it, whose
-# README and skill ship in the app) builds nothing. A new push cancels the run
-# it supersedes. No secret, no signing, no smoke leg: the installed-package
-# smoke tests run for a release (release.yml) and for a manual test run
-# (smoke.yml).
+# review. A draft runs nothing: marking it ready for review starts the run. A
+# change of documentation only (docs/ and Markdown, except under hermes-plugin/
+# and the app's copy of it, whose README and skill ship in the app) builds
+# nothing. A new push cancels the run it supersedes. No secret, no signing, no
+# smoke leg: the installed-package smoke tests run for a release (release.yml)
+# and for a manual test run (smoke.yml).
 #
 # Required check of main: `CI`, the last job. It runs whatever happened before
 # it and passes only when every job succeeded or was skipped, so a failure
 # upstream never passes as a skipped check. The web app has its own required
-# check, `Web` (web-pr.yml, web-queue.yml).
+# check, `Web` (web-pr.yml). Both must pass on a branch up to date with main:
+# a pull request merges only once tested on top of the current main.
 #
 # Actions are pinned by commit (tag in the trailing comment).
 name: CI
@@ -23,15 +23,13 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  merge_group:
-    types: [checks_requested]
 
 permissions:
   contents: read
 
 concurrency:
-  # One run per pull request; every merge group has a ref of its own.
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One run per pull request.
+  group: ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -52,17 +50,13 @@ jobs:
 
       - name: Whether the change touches more than documentation
         id: scope
-        env:
-          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
-          # A merge group is compared with its base commit, fetched; a pull
-          # request with the first parent of its merge commit.
-          if [ -n "$MERGE_GROUP_BASE" ]; then base=$MERGE_GROUP_BASE; else base=$(git rev-parse HEAD^1); fi
+          # The merge commit is compared with its first parent, the base it merges onto.
+          base=$(git rev-parse HEAD^1)
           code=true
           # A change set that cannot be computed builds everything.
-          if { [ -z "$MERGE_GROUP_BASE" ] || git fetch -q --no-tags --depth=1 origin "$base"; } &&
-            git diff --name-only "$base" HEAD >"$RUNNER_TEMP/changed"; then
+          if git diff --name-only "$base" HEAD >"$RUNNER_TEMP/changed"; then
             echo "Changed against $base:"
             cat "$RUNNER_TEMP/changed"
             # Documentation only: docs/ and Markdown, except under hermes-plugin/

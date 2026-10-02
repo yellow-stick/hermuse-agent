@@ -2,12 +2,11 @@
 # web app every user's relay serves still builds; nothing publishes it. Then
 # demo/build.sh builds the read-only demo (HERMUSE_DEMO=true) into
 # demo/build/web, uploaded as the `demo` artifact of the calling run. Their
-# analysis and tests run in the checks of every pull request and merge group
-# (ci.yml, build.yml).
+# analysis and tests run in the checks of every pull request (ci.yml,
+# build.yml).
 #
 # Callers (workflow_call only): web-pr.yml (pull requests, then a demo
-# preview), web-queue.yml (merge groups, build only), web-deploy.yml (the demo
-# in production).
+# preview), web-deploy.yml (the demo in production).
 #
 # Actions are pinned by commit (tag in the trailing comment); the Flutter SDK
 # comes from tool/release/toolchain.lock.json, checked by SHA-256.

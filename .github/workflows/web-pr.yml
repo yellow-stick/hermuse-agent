@@ -13,9 +13,9 @@
 # repository secrets: they build without a preview. Secrets: NETLIFY_AUTH_TOKEN,
 # NETLIFY_DEMO_SITE_ID.
 #
-# Required check of main: `Web`, the last job, here and in the merge queue
-# (web-queue.yml). It runs whatever happened before it and passes only when
-# every job succeeded or was skipped.
+# Required check of main: `Web`, the last job, on a branch up to date with
+# main. It runs whatever happened before it and passes only when every job
+# succeeded or was skipped.
 #
 # Actions are pinned by commit (tag in the trailing comment).
 name: Web preview
@@ -60,7 +60,7 @@ jobs:
             cat "$RUNNER_TEMP/changed"
             web=false
             while IFS= read -r file; do
-              # The web inputs (listed in web-queue.yml and web-deploy.yml too), the web workflows.
+              # The web inputs (listed in web-deploy.yml too), the web workflows.
               case $file in
                 demo/* | apps/hermuse_web/* | packages/* | pubspec.yaml | pubspec.lock | netlify.toml | \
                   tool/release/toolchain.lock.json | .github/workflows/web-*.yml) web=true ;;

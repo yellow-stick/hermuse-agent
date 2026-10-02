@@ -9,7 +9,7 @@
 #                      -> package-windows ----+
 #
 # Callers (workflow_call only), each passing its scenario as inputs:
-# - ci.yml: pull requests ready for review and merge groups, unsigned;
+# - ci.yml: pull requests ready for review, unsigned;
 # - smoke.yml: a manual test run, unsigned, the macOS/Windows package only
 #   when a selected leg needs it (`package_macos`, `package_windows`);
 # - release.yml: a release tag, `signing: true`, `tag` checked against the

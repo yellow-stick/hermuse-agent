@@ -29,7 +29,7 @@ Windows artifacts, manual gates, the checks outside CI) is listed under "Not
 yet proven" in its notes and checked before the manual promotion to latest.
 Releases (release.yml) and manual test runs (smoke.yml) run the `full` set,
 every leg; a test run may narrow it to the legs whose name matches --filter.
-Pull requests and the merge queue run no leg.
+Pull requests run no leg.
 """
 
 from __future__ import annotations
