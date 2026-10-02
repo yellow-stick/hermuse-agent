@@ -1,14 +1,15 @@
-# Web app in production on Netlify (project `hermuse-agent`,
-# https://hermuse.app).
+# Read-only demo in production on Netlify (project `hermuse-demo`,
+# https://demo.hermuse.app). The real web app is not hosted here: each user's
+# relay serves it (docs/guides/web-app-and-relay.md).
 #
 #   build (web-build.yml) -> deploy (production)
 #
-# Triggers: a push to main that touches the web app's inputs (apps/hermuse_web,
-# packages, pubspec.*, netlify.toml, the toolchain lock, the workflows that
-# build and deploy it), and a dispatch, which deploys the dispatched ref.
-# Netlify's own Git builds are stopped; this workflow is the only production
-# publisher (pull request previews: web-pr.yml). Secrets: NETLIFY_AUTH_TOKEN,
-# NETLIFY_SITE_ID.
+# Triggers: a push to main that touches the demo's inputs (demo,
+# apps/hermuse_web, packages, pubspec.*, netlify.toml, the toolchain lock, the
+# workflows that build and deploy it), and a dispatch, which deploys the
+# dispatched ref. The project has no Git builds; this workflow is the only
+# production publisher (pull request previews: web-pr.yml). Secrets:
+# NETLIFY_AUTH_TOKEN, NETLIFY_DEMO_SITE_ID.
 #
 # Actions are pinned by commit (tag in the trailing comment).
 name: Web deploy
@@ -16,9 +17,10 @@ name: Web deploy
 on:
   push:
     branches: [main]
-    # The web app's inputs (listed in web-pr.yml and web-queue.yml too) and the
+    # The demo's inputs (listed in web-pr.yml and web-queue.yml too) and the
     # workflows that build and deploy it.
     paths:
+      - demo/**
       - apps/hermuse_web/**
       - packages/**
       - pubspec.yaml
@@ -53,7 +55,7 @@ jobs:
     timeout-minutes: 15
     env:
       NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-      NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      NETLIFY_SITE_ID: ${{ secrets.NETLIFY_DEMO_SITE_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (netlify.toml: headers)
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -61,11 +63,11 @@ jobs:
           node-version: 22
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: web
-          path: apps/hermuse_web/build/jaspr
+          name: demo
+          path: demo/build/web
       - name: Deploy production
         run: |
           set -euo pipefail
-          npx --yes "netlify-cli@$NETLIFY_CLI_VERSION" deploy --no-build --dir=apps/hermuse_web/build/jaspr --prod \
+          npx --yes "netlify-cli@$NETLIFY_CLI_VERSION" deploy --no-build --dir=demo/build/web --prod \
             --message="${GITHUB_SHA::7} ${{ github.ref_name }}" --json | tee deploy.json
           echo "Production: $(jq -r .url deploy.json)" >>"$GITHUB_STEP_SUMMARY"
