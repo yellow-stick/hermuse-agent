@@ -28,6 +28,7 @@ final class YsDialogCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: palette.paperColor,
             borderRadius: BorderRadius.circular(YsRadius.bubble),
+            boxShadow: palette.raisedShadows,
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
@@ -220,6 +221,7 @@ final class _CommandBoxState extends State<CommandBox> {
       decoration: BoxDecoration(
         color: widget.onPaper ? palette.canvasColor : palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        boxShadow: widget.onPaper ? const [] : palette.raisedShadows,
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
@@ -295,6 +297,7 @@ final class _SignInBoxState extends State<SignInBox> {
       decoration: BoxDecoration(
         color: widget.onPaper ? palette.canvasColor : palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        boxShadow: widget.onPaper ? const [] : palette.raisedShadows,
       ),
       child: Padding(
         padding: const EdgeInsets.all(YsSpace.md),

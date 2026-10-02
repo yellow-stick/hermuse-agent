@@ -185,7 +185,7 @@ class HermuseComputerViewer extends StatefulComponent {
       ).styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -309,6 +309,7 @@ class HermuseComputerViewer extends StatefulComponent {
         padding: .only(left: 14.px, top: 8.px, right: 8.px, bottom: 8.px),
         radius: .circular(YsRadius.row.px),
         backgroundColor: .variable('--paper'),
+        raw: {'box-shadow': 'var(--raised)'},
       ),
       css('.hermuse-computer-command-text').styles(
         margin: .zero,

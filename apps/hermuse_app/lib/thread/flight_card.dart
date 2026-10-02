@@ -68,6 +68,7 @@ final class _FlightCard extends StatelessWidget {
                 bottomLeft: position.joinsBelow ? tail : all,
                 bottomRight: all,
               ),
+              boxShadow: palette.raisedShadows,
             ),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -131,7 +132,7 @@ final class _OfferRow extends StatelessWidget {
               : const Color(0x00000000),
           borderRadius: BorderRadius.circular(YsRadius.row),
           border: selected
-              ? Border.all(color: palette.primaryColor, width: ysHairline)
+              ? Border.all(color: palette.primaryInkColor, width: ysHairline)
               : null,
         ),
         child: Row(

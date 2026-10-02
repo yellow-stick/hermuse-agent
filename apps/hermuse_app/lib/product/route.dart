@@ -280,6 +280,7 @@ final class HermuseRouteSkeleton extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: palette.paperColor,
                   borderRadius: BorderRadius.circular(YsRadius.bubble),
+                  boxShadow: palette.raisedShadows,
                 ),
                 child: const Padding(
                   padding: EdgeInsets.all(20),

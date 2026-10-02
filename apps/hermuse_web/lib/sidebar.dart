@@ -186,7 +186,7 @@ class HermuseSidebar extends StatefulComponent {
       css(
         '& .hermuse-sidebar-row-main:focus-visible, '
         '& .hermuse-sidebar-result:focus-visible',
-      ).styles(raw: {'box-shadow': 'inset 0 0 0 2px var(--primary)'}),
+      ).styles(raw: {'box-shadow': 'inset 0 0 0 2px var(--primary-ink)'}),
       css('.hermuse-sidebar-row-pin').styles(
         display: .inlineFlex,
         color: .variable('--content-muted'),
@@ -275,7 +275,7 @@ class HermuseSidebar extends StatefulComponent {
       css('.hermuse-sidebar-section-toggle:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -320,6 +320,7 @@ class HermuseSidebar extends StatefulComponent {
       css('.hermuse-sidebar-back .ys-btn-icon').styles(
         color: .variable('--content'),
         backgroundColor: .variable('--paper-clear'),
+        raw: {'box-shadow': 'var(--raised)'},
       ),
       css('.hermuse-sidebar-back .ys-btn-icon:hover')
           .styles(backgroundColor: .variable('--neutral-film')),
@@ -396,7 +397,7 @@ class HermuseSidebar extends StatefulComponent {
         backgroundColor: .variable('--paper-clear'),
         fontSize: 13.px,
         lineHeight: 18.px,
-        raw: {'flex-shrink': '0'},
+        raw: {'flex-shrink': '0', 'box-shadow': 'var(--raised)'},
       ),
       css('.hermuse-sidebar-notice-text')
           .styles(flex: .grow(1), raw: {'overflow-wrap': 'anywhere'}),

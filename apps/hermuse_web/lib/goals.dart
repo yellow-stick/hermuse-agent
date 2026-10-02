@@ -56,6 +56,8 @@ class HermuseGoals extends StatefulComponent {
       alignItems: .start,
       gap: .all(YsSpace.xs.px),
       backgroundColor: .variable('--paper'),
+      // Done rows have no `ys-lift`, so they carry the elevation themselves.
+      raw: {'box-shadow': 'var(--raised)', '--ys-lift-rest': 'var(--raised)'},
     ),
     css('.hermuse-goals-check').styles(
       width: 36.px,
@@ -122,7 +124,7 @@ class HermuseGoals extends StatefulComponent {
     css('.hermuse-goals-category:hover')
         .styles(backgroundColor: .variable('--neutral-film')),
     css('.hermuse-goals-category:hover .ys-icon')
-        .styles(color: .variable('--primary')),
+        .styles(color: .variable('--primary-ink')),
     css('.hermuse-goals-category-label').styles(flex: .grow(1)),
     css('.hermuse-goals-timeline')
         .styles(display: .flex, flexDirection: .column, gap: .all(12.px)),

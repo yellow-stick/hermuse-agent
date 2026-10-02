@@ -8,6 +8,8 @@ extension YsFlutterPalette on YsPalette {
   Color get canvasColor => Color(canvas.value);
   Color get paperColor => Color(paper.value);
   Color get paperClearColor => Color(paperClear.value);
+  Color get paperEdgeColor => Color(paperEdge.value);
+  Color get paperShadowColor => Color(paperShadow.value);
   Color get neutralAmbientColor => Color(neutralAmbient.value);
   Color get neutralFilmColor => Color(neutralFilm.value);
   Color get contentColor => Color(content.value);
@@ -15,6 +17,7 @@ extension YsFlutterPalette on YsPalette {
   Color get contentSubtleColor => Color(contentSubtle.value);
   Color get primaryColor => Color(primary.value);
   Color get primary2Color => Color(primary2.value);
+  Color get primaryInkColor => Color(primaryInk.value);
   Color get primaryMutedColor => Color(primaryMuted.value);
   Color get primaryWashColor => Color(primaryWash.value);
   Color get primaryContentColor => Color(primaryContent.value);
@@ -29,6 +32,26 @@ extension YsFlutterPalette on YsPalette {
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
   Color get shadowColor => Color(shadow.value);
+
+  /// Resting elevation of a raised [paper]/[paperClear] surface on [canvas]:
+  /// a hairline ring and a soft two-step shadow. Empty in dark, where tone
+  /// alone lifts the surface. Web kit: `box-shadow: var(--raised)`.
+  List<BoxShadow> get raisedShadows =>
+      paperEdge.alpha == 0 && paperShadow.alpha == 0
+      ? const []
+      : [
+          BoxShadow(color: paperEdgeColor, spreadRadius: 1),
+          BoxShadow(
+            color: paperShadowColor,
+            offset: const Offset(0, 1),
+            blurRadius: 2,
+          ),
+          BoxShadow(
+            color: paperShadowColor,
+            offset: const Offset(0, 4),
+            blurRadius: 12,
+          ),
+        ];
 }
 
 extension YsFlutterType on YsTextStyle {

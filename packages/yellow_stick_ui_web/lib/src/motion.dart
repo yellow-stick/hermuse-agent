@@ -29,8 +29,10 @@ final ysLifted = {
 };
 
 /// Shadow of a card at rest: the lifted shadow, transparent and flat, so
-/// the lift eases both ways.
-final _restShadow = '0px 0px ${ysNum(YsLiftMotion.shadowBlur)}px transparent';
+/// the lift eases both ways. A raised card sets `--ys-lift-rest` to
+/// `var(--raised)` so it rests on its elevation and still lifts on hover.
+final _restShadow =
+    'var(--ys-lift-rest, 0px 0px ${ysNum(YsLiftMotion.shadowBlur)}px transparent)';
 
 /// Page entrance and card lift, as classes:
 ///
@@ -40,7 +42,8 @@ final _restShadow = '0px 0px ${ysNum(YsLiftMotion.shadowBlur)}px transparent';
 ///   rebuilds do not replay it.
 /// - `ys-lift`: a card rises [YsLiftMotion.lift] px and casts the palette
 ///   `shadow` under a hovering pointer; with `ys-press`, pressing settles it
-///   back to [YsLiftMotion.press] scale.
+///   back to [YsLiftMotion.press] scale. At rest it casts `--ys-lift-rest`
+///   (none unless the card sets it, e.g. to `var(--raised)`).
 ///
 /// With reduced motion the page shows at once and the card changes without
 /// easing.

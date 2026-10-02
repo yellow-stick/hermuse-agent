@@ -207,7 +207,7 @@ final class _RingPainter extends CustomPainter {
         false,
         paint
           ..color = Color.lerp(
-            palette.primaryColor,
+            palette.primaryInkColor,
             palette.successColor,
             turn,
           )!,

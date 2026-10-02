@@ -27,6 +27,7 @@ final class YsButton extends StatelessWidget {
     this.iconColor,
     this.background,
     this.hoverBackground,
+    this.raised = false,
   });
 
   /// Floating pill (Chats, Invite, New side chat): paperClear bg, h36.
@@ -57,7 +58,9 @@ final class YsButton extends StatelessWidget {
          iconSize: 18,
        );
 
-  /// Circular icon button; [size] 27/32/36 with a muted icon.
+  /// Circular icon button; [size] 27/32/36 with a muted icon. [raised]
+  /// gives a [background] paper disc floating on the canvas the resting
+  /// elevation ([YsFlutterPalette.raisedShadows]).
   const YsButton.icon({
     required YsIcon icon,
     required VoidCallback? onPressed,
@@ -71,6 +74,7 @@ final class YsButton extends StatelessWidget {
     Color? iconColor,
     Color? background,
     Color? hoverBackground,
+    bool raised = false,
   }) : this._(
          key: key,
          kind: YsButtonKind.icon,
@@ -85,6 +89,7 @@ final class YsButton extends StatelessWidget {
          iconColor: iconColor,
          background: background,
          hoverBackground: hoverBackground,
+         raised: raised,
        );
 
   /// Accent button: primary bg, primaryContent fg, hover primary2.
@@ -179,6 +184,7 @@ final class YsButton extends StatelessWidget {
   final Color? iconColor;
   final Color? background;
   final Color? hoverBackground;
+  final bool raised;
 
   @override
   Widget build(BuildContext context) {
@@ -238,6 +244,7 @@ final class YsButton extends StatelessWidget {
         background: state.hovered || state.pressed
             ? palette.neutralFilmColor
             : palette.paperClearColor,
+        shadows: palette.raisedShadows,
         // Floating pills hug their label, even under a max width.
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -262,6 +269,7 @@ final class YsButton extends StatelessWidget {
         background: state.hovered || state.pressed
             ? (hoverBackground ?? palette.neutralFilmColor)
             : (background ?? const Color(0x00000000)),
+        shadows: raised ? palette.raisedShadows : const [],
         child: YsIconWidget(
           icon!,
           size: iconSize,
@@ -343,11 +351,13 @@ final class _PillShell extends StatelessWidget {
     required this.padding,
     required this.background,
     required this.child,
+    this.shadows = const [],
   });
 
   final double height;
   final EdgeInsetsGeometry padding;
   final Color background;
+  final List<BoxShadow> shadows;
   final Widget child;
 
   @override
@@ -358,6 +368,7 @@ final class _PillShell extends StatelessWidget {
     decoration: BoxDecoration(
       color: background,
       borderRadius: BorderRadius.circular(YsRadius.pill),
+      boxShadow: shadows,
     ),
     child: Center(widthFactor: 1, child: child),
   );
@@ -368,10 +379,12 @@ final class _CircleShell extends StatelessWidget {
     required this.size,
     required this.background,
     required this.child,
+    this.shadows = const [],
   });
 
   final double size;
   final Color background;
+  final List<BoxShadow> shadows;
   final Widget child;
 
   @override
@@ -379,7 +392,11 @@ final class _CircleShell extends StatelessWidget {
     duration: const Duration(milliseconds: YsMotion.fast),
     width: size,
     height: size,
-    decoration: BoxDecoration(color: background, shape: BoxShape.circle),
+    decoration: BoxDecoration(
+      color: background,
+      shape: BoxShape.circle,
+      boxShadow: shadows,
+    ),
     child: Center(child: child),
   );
 }

@@ -149,7 +149,7 @@ final class _MarkdownViewState extends State<MarkdownView> {
                       : s.href != null
                       ? TextDecoration.underline
                       : null,
-                  color: s.href != null ? palette.primary2Color : null,
+                  color: s.href != null ? palette.primaryInkColor : null,
                   backgroundColor: s.code ? palette.neutralAmbientColor : null,
                   fontFamily: s.code ? 'monospace' : null,
                   fontSize: s.code ? 13 : null,

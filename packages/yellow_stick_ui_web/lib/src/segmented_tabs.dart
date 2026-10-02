@@ -100,7 +100,7 @@ class YsSegmentedTabs<T> extends StatelessComponent {
       css('.ys-tab:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),

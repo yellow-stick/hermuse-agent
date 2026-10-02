@@ -200,7 +200,9 @@ final class _ProviderCard extends StatelessWidget {
                       : palette.neutralAmbientColor,
                   borderRadius: BorderRadius.circular(YsRadius.row),
                   border: Border.all(
-                    color: selected ? palette.primaryColor : palette.lineColor,
+                    color: selected
+                        ? palette.primaryInkColor
+                        : palette.lineColor,
                     width: ysHairline,
                   ),
                 ),
@@ -255,7 +257,7 @@ final class _ProviderCard extends StatelessWidget {
                       child: YsIconWidget(
                         YsIcon.check,
                         size: 16,
-                        color: palette.primaryColor,
+                        color: palette.primaryInkColor,
                       ),
                     ),
                   ],
@@ -600,7 +602,7 @@ final class _FreeTierBox extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.primaryMutedColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
-        border: Border.all(color: palette.primaryColor, width: ysHairline),
+        border: Border.all(color: palette.primaryInkColor, width: ysHairline),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

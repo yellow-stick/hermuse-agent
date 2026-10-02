@@ -62,7 +62,7 @@ List<StyleRule> get hermuseRouteStyles => [
       margin: .zero,
       fontSize: 14.px,
       lineHeight: 20.px,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
     ),
   ]),
   css.media(MediaQuery.screen(maxWidth: 767.px), [

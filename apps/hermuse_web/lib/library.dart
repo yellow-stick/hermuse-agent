@@ -132,6 +132,7 @@ class HermuseLibrary extends StatefulComponent {
       flexDirection: .column,
       gap: .all(8.px),
       backgroundColor: .variable('--paper'),
+      raw: {'box-shadow': 'var(--raised)'},
     ),
     css('.hermuse-lib-reflection-date').styles(
       margin: .zero,

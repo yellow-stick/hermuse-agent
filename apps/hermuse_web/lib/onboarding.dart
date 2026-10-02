@@ -144,12 +144,12 @@ class HermuseOnboarding extends StatelessComponent {
       ),
       css('&[aria-pressed="true"]').styles(
         backgroundColor: .variable('--primary-wash'),
-        raw: {'border-color': 'var(--primary)'},
+        raw: {'border-color': 'var(--primary-ink)'},
       ),
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -193,7 +193,7 @@ class HermuseOnboarding extends StatelessComponent {
       css('.hermuse-ob-provider-tick').styles(
         display: .inlineFlex,
         opacity: 0,
-        color: .variable('--primary'),
+        color: .variable('--primary-ink'),
         raw: {'transition': 'opacity ${YsMotion.base}ms linear'},
       ),
       css('&[aria-pressed="true"] .hermuse-ob-provider-tick')
@@ -228,7 +228,11 @@ class HermuseOnboarding extends StatelessComponent {
       flexDirection: .column,
       gap: .all(8.px),
       backgroundColor: .variable('--primary-muted'),
-      border: .all(style: .solid, color: .variable('--primary'), width: 1.2.px),
+      border: .all(
+        style: .solid,
+        color: .variable('--primary-ink'),
+        width: 1.2.px,
+      ),
     ),
     css('.hermuse-ob-tier-title').styles(
       margin: .zero,
@@ -247,7 +251,7 @@ class HermuseOnboarding extends StatelessComponent {
     css('.hermuse-ob-link').styles(
       fontSize: 14.px,
       lineHeight: 20.px,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
       cursor: .pointer,
       border: .none,
       backgroundColor: Colors.transparent,

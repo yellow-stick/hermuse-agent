@@ -46,6 +46,7 @@ class HermusePluginMissing extends StatefulComponent {
       flexDirection: .column,
       gap: .all(12.px),
       backgroundColor: .variable('--paper'),
+      raw: {'box-shadow': 'var(--raised)'},
     ),
     // The card's drawing sits at its start, like the text under it.
     css('.hermuse-plugin-card .hermuse-card-art')
@@ -73,7 +74,7 @@ class HermusePluginMissing extends StatefulComponent {
     css('.hermuse-plugin-actions')
         .styles(display: .flex, gap: .all(8.px), raw: {'flex-wrap': 'wrap'}),
     css('.hermuse-plugin-body a').styles(
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
       raw: {'text-decoration': 'underline', 'text-underline-offset': '2px'},
     ),
     css('.hermuse-plugin-cmd').styles(
@@ -320,6 +321,8 @@ class HermuseFeed extends StatefulComponent {
       flexDirection: .column,
       gap: .all(12.px),
       backgroundColor: .variable('--paper'),
+      // Rests raised; `ys-lift` still swaps in its hover shadow.
+      raw: {'--ys-lift-rest': 'var(--raised)'},
     ),
     css('.hermuse-feed-title').styles(
       margin: .zero,

@@ -118,6 +118,7 @@ final class InstancesScreen extends ConsumerWidget {
           decoration: BoxDecoration(
             color: palette.paperColor,
             borderRadius: BorderRadius.circular(YsRadius.bubble),
+            boxShadow: palette.raisedShadows,
           ),
           child: Padding(
             padding: const EdgeInsets.all(20),
@@ -1029,6 +1030,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
             decoration: BoxDecoration(
               color: palette.paperColor,
               borderRadius: BorderRadius.circular(YsRadius.bubble),
+              boxShadow: palette.raisedShadows,
             ),
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),

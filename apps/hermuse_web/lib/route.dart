@@ -114,6 +114,7 @@ class HermuseRouteSkeleton extends StatelessComponent {
         padding: .all(20.px),
         radius: .circular(YsRadius.bubble.px),
         backgroundColor: .variable('--paper'),
+        raw: {'box-shadow': 'var(--raised)'},
       ),
     ]),
   ];

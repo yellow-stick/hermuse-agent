@@ -16,6 +16,11 @@ List<StyleRule> get ysThemeStyles => [
       for (final MapEntry(key: name, value: color)
           in YsPalette.light.byCssName.entries)
         '--$name': color.css,
+      // Resting elevation of raised paper on the canvas (Flutter kit:
+      // `raisedShadows`); transparent rings in dark.
+      '--raised':
+          '0 0 0 1px var(--paper-edge), 0 1px 2px var(--paper-shadow), '
+          '0 4px 12px var(--paper-shadow)',
     },
   ),
   css.media(MediaQuery.raw('(prefers-color-scheme: dark)'), [
@@ -63,6 +68,8 @@ abstract final class YsTheme {
   static Color get canvas => .variable('--canvas');
   static Color get paper => .variable('--paper');
   static Color get paperClear => .variable('--paper-clear');
+  static Color get paperEdge => .variable('--paper-edge');
+  static Color get paperShadow => .variable('--paper-shadow');
   static Color get neutralAmbient => .variable('--neutral-ambient');
   static Color get neutralFilm => .variable('--neutral-film');
   static Color get content => .variable('--content');
@@ -70,6 +77,7 @@ abstract final class YsTheme {
   static Color get contentSubtle => .variable('--content-subtle');
   static Color get primary => .variable('--primary');
   static Color get primary2 => .variable('--primary-2');
+  static Color get primaryInk => .variable('--primary-ink');
   static Color get primaryMuted => .variable('--primary-muted');
   static Color get primaryWash => .variable('--primary-wash');
   static Color get primaryContent => .variable('--primary-content');

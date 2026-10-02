@@ -370,7 +370,7 @@ final class _MenuItemRow extends StatelessWidget {
                       ? YsIconWidget(
                           YsIcon.check,
                           size: 16,
-                          color: palette.primaryColor,
+                          color: palette.primaryInkColor,
                         )
                       : null,
                 ),

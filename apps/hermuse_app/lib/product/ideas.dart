@@ -199,7 +199,7 @@ final class _IdeaCardState extends ConsumerState<_IdeaCard>
                         YsIcon.sparkles,
                         size: 18,
                         color: state.hovered || _accept.isAnimating
-                            ? palette.primaryColor
+                            ? palette.primaryInkColor
                             : palette.contentSubtleColor,
                       ),
                     ),

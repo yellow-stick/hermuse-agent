@@ -257,6 +257,7 @@ List<StyleRule> get hermuseScreenStyles => [
       gap: .all(16.px),
       color: .variable('--content'),
       backgroundColor: .variable('--paper'),
+      raw: {'box-shadow': 'var(--raised)'},
     ),
     css('.hermuse-card-narrow').styles(maxWidth: YsLayout.dialogNarrow.px),
     css('.hermuse-card-title').styles(
@@ -279,7 +280,7 @@ List<StyleRule> get hermuseScreenStyles => [
       textAlign: .center,
       fontSize: 14.px,
       lineHeight: 20.px,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
     ),
     css('.hermuse-card-actions').styles(
       display: .flex,
@@ -323,7 +324,7 @@ List<StyleRule> get hermuseScreenStyles => [
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),

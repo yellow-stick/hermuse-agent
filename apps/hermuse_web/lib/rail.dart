@@ -252,7 +252,7 @@ class HermuseRail extends StatelessComponent {
       css('.hermuse-rail-item:focus-visible .hermuse-rail-disc').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),

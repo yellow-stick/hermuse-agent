@@ -187,7 +187,7 @@ class YsChecklist extends StatefulComponent {
         },
       ),
       css('.ys-check[data-state="needsAction"] .ys-check-status')
-          .styles(color: .variable('--primary')),
+          .styles(color: .variable('--primary-ink')),
       css('.ys-check[data-state="failed"] .ys-check-status')
           .styles(color: .variable('--error')),
       css(
@@ -446,7 +446,7 @@ class YsStepBadge extends StatefulComponent {
         ),
         css('.ys-sb-arc').styles(
           raw: {
-            'stroke': 'var(--primary)',
+            'stroke': 'var(--primary-ink)',
             'stroke-dasharray': '0.2 2',
             'animation':
                 'ys-sb-turn ${YsStepMotion.spin}ms linear infinite, '
@@ -464,11 +464,11 @@ class YsStepBadge extends StatefulComponent {
       css(state('needsAction'), [
         css('.ys-sb-track').styles(
           raw: {
-            'stroke': 'var(--primary)',
+            'stroke': 'var(--primary-ink)',
             'stroke-width': ysNum(YsLayout.stepRingStroke),
           },
         ),
-        css('.ys-sb-glyph').styles(color: .variable('--primary')),
+        css('.ys-sb-glyph').styles(color: .variable('--primary-ink')),
       ]),
       // Done now: the ring closes, then the tick draws.
       css(state('done'), [

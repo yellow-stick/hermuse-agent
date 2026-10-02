@@ -232,6 +232,7 @@ class HermuseInstances extends StatelessComponent {
       gap: .all(12.px),
       color: .variable('--content'),
       backgroundColor: .variable('--paper'),
+      raw: {'box-shadow': 'var(--raised)'},
     ),
     // Outlined, so the neutral buttons and the monogram disc stay visible on
     // it (desktop `_InstanceRow`).

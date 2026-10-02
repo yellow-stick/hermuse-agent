@@ -246,6 +246,7 @@ final class _BubbleShell extends StatelessWidget {
           decoration: BoxDecoration(
             color: isUser ? palette.primaryColor : palette.paperColor,
             borderRadius: _bubbleRadius(position, isUser),
+            boxShadow: isUser ? const [] : palette.raisedShadows,
           ),
           child: Padding(
             padding: padding,
@@ -682,7 +683,7 @@ final class _ChoiceOption extends StatelessWidget {
               : const Color(0x00000000),
           borderRadius: BorderRadius.circular(YsRadius.option),
           border: selected
-              ? Border.all(color: palette.primaryColor, width: ysHairline)
+              ? Border.all(color: palette.primaryInkColor, width: ysHairline)
               : null,
         ),
         foregroundDecoration: selected
@@ -750,7 +751,7 @@ final class _CustomOptionState extends State<_CustomOption> {
         color: selected ? palette.primaryMutedColor : const Color(0x00000000),
         borderRadius: BorderRadius.circular(YsRadius.option),
         border: selected
-            ? Border.all(color: palette.primaryColor, width: ysHairline)
+            ? Border.all(color: palette.primaryInkColor, width: ysHairline)
             : null,
       ),
       foregroundDecoration: selected

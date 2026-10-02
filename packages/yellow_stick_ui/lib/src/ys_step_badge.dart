@@ -334,7 +334,10 @@ final class _BadgePainter extends CustomPainter {
           rect,
           ring(fade(palette.neutralFilmColor), YsLayout.stepRingStroke),
         );
-        final arc = ring(fade(palette.primaryColor), YsLayout.stepRingStroke);
+        final arc = ring(
+          fade(palette.primaryInkColor),
+          YsLayout.stepRingStroke,
+        );
         if (progress != null) {
           canvas.drawArc(
             rect,
@@ -353,9 +356,9 @@ final class _BadgePainter extends CustomPainter {
       case YsStepState.needsAction:
         canvas.drawOval(
           rect,
-          ring(fade(palette.primaryColor), YsLayout.stepRingStroke),
+          ring(fade(palette.primaryInkColor), YsLayout.stepRingStroke),
         );
-        glyph(palette.primaryColor);
+        glyph(palette.primaryInkColor);
       case YsStepState.done:
         final closed = mark!.ring!.valueAt(YsMotionProperty.trimEnd, frame);
         if (closed > 0) {

@@ -385,7 +385,7 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         card.detail == serverBridgeInstallPlugin
             ? 'Install plugin'
             : 'Update plugin',
-        palette.primary2Color,
+        palette.primaryInkColor,
       ),
       (ConnectionCardState.connected, _) => (
         'Manage',
@@ -395,9 +395,9 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         'Waiting…',
         palette.contentMutedColor,
       ),
-      (ConnectionCardState.error, _) => ('Retry', palette.primary2Color),
+      (ConnectionCardState.error, _) => ('Retry', palette.primaryInkColor),
       (_, ConnectionFlow.external) => ('Terminal', palette.contentMutedColor),
-      _ => ('Connect', palette.primary2Color),
+      _ => ('Connect', palette.primaryInkColor),
     };
     // The row's state dot: connected pings once as the row shows; waiting
     // and failed logins keep a still dot.
@@ -463,7 +463,7 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
       if (_error != null)
         Text(
           _error!,
-          style: YsType.label.flutter.copyWith(color: palette.primary2Color),
+          style: YsType.label.flutter.copyWith(color: palette.primaryInkColor),
         ),
     ];
     return Column(
@@ -916,7 +916,9 @@ final class _LinkRowState extends State<_LinkRow> {
         Expanded(
           child: SelectableText(
             widget.url,
-            style: YsType.label.flutter.copyWith(color: palette.primary2Color),
+            style: YsType.label.flutter.copyWith(
+              color: palette.primaryInkColor,
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -1075,7 +1077,7 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
               child: Text(
                 _error!,
                 style: YsType.label.flutter.copyWith(
-                  color: palette.primary2Color,
+                  color: palette.primaryInkColor,
                 ),
               ),
             ),
@@ -1367,7 +1369,7 @@ final class _CustomEndpointCardState
               Text(
                 _error!,
                 style: YsType.label.flutter.copyWith(
-                  color: palette.primary2Color,
+                  color: palette.primaryInkColor,
                 ),
               ),
             ],

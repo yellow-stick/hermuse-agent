@@ -176,6 +176,10 @@ final class _CategoryRow extends StatelessWidget {
                 ? palette.neutralFilmColor
                 : palette.paperColor,
             borderRadius: BorderRadius.circular(YsRadius.row),
+            // At rest only: hovered, the lift's own shadow takes over.
+            boxShadow: state.hovered || state.pressed
+                ? const []
+                : palette.raisedShadows,
           ),
           child: Row(
             children: [
@@ -191,7 +195,7 @@ final class _CategoryRow extends StatelessWidget {
                 YsIcon.chevronDown,
                 size: 18,
                 color: state.hovered
-                    ? palette.primaryColor
+                    ? palette.primaryInkColor
                     : palette.contentMutedColor,
               ),
             ],
@@ -303,6 +307,8 @@ final class _TrackingRowState extends ConsumerState<_TrackingRow>
               decoration: BoxDecoration(
                 color: palette.paperColor,
                 borderRadius: BorderRadius.circular(YsRadius.row),
+                // At rest only: hovered, the lift's own shadow takes over.
+                boxShadow: hovered && !_done ? const [] : palette.raisedShadows,
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(

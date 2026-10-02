@@ -133,14 +133,14 @@ class YsPillButton extends StatelessComponent {
         cursor: .pointer,
         border: .none,
         position: .relative(),
-        raw: {'backdrop-filter': 'blur(12px)'},
+        raw: {'backdrop-filter': 'blur(12px)', 'box-shadow': 'var(--raised)'},
       ),
       css('&:hover').styles(backgroundColor: .variable('--neutral-film')),
       css('&:disabled').styles(cursor: .defaultCursor, opacity: 0.6),
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -210,7 +210,7 @@ class YsIconButton extends StatelessComponent {
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -262,7 +262,7 @@ class YsFilledButton extends StatelessComponent {
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
