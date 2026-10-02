@@ -18,6 +18,9 @@ Future<void> main() async {
     exit(2);
   }
   final registry = UpstreamRegistry.open(config.dbPath);
+  for (final url in config.upstreams) {
+    registry.register(url, null);
+  }
   final jar = CookieJar();
   final handler = const Pipeline()
       // Query strings carry credentials (`?ticket=`, loopback `?token=`):

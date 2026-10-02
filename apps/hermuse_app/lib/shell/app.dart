@@ -321,6 +321,7 @@ final class _RootState extends ConsumerState<_Root> {
         initialUsername: _remoteOutcome?.username,
         initialPassword: _remoteOutcome?.password,
         autoProbe: _remoteOutcome != null,
+        webUrl: _remoteOutcome?.webUrl,
         onDone: _added,
         onCancel: _cancelAdd,
         // Not after SSH setup handed its dashboard over: SSH is done.

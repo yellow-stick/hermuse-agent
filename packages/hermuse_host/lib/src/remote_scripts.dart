@@ -701,9 +701,12 @@ case "$exec_start" in *'/etc/caddy/Caddyfile'*) ;; *) echo 'Caddy uses a custom 
 
 // Caddy itself resolves every import/glob. The classifier inspects its JSON,
 // including wrong upstreams and wildcard routes, rather than parsing Caddyfiles.
+// Arguments: <host> <expected upstream dial> [dedicated <allowed host>...]. The
+// dedicated form additionally requires a configuration made only of exact
+// single-host sites for the allowed hosts, each at most once.
 const _caddyRouteStatus = r'''
 import fnmatch, json, sys
-domain = sys.argv[1]
+domain, dial = sys.argv[1], sys.argv[2]
 def routes(node):
     if isinstance(node, list):
         return [route for child in node for route in routes(child)]
@@ -721,13 +724,20 @@ def handlers(node):
     return ([node] if node.get("handler") else []) + [
         handler for child in node.values() for handler in handlers(child)]
 data = json.load(sys.stdin)
-if len(sys.argv) > 2 and sys.argv[2] == "dedicated":
+if sys.argv[3:4] == ["dedicated"]:
+    allowed = set(sys.argv[4:])
     apps = data.get("apps", {})
     servers = apps.get("http", {}).get("servers", {})
     top = [route for server in servers.values() for route in server.get("routes", [])]
-    if (set(apps) != {"http"} or len(servers) != 1 or len(top) != 1 or
-            not top[0].get("match") or
-            any(matcher.get("host") != [domain] for matcher in top[0]["match"])):
+    names = []
+    for route in top:
+        sites = {tuple(matcher.get("host") or ()) for matcher in route.get("match") or [{}]}
+        site = sites.pop() if len(sites) == 1 else ()
+        if len(site) != 1 or site[0] not in allowed or site[0] in names:
+            names = None
+            break
+        names.append(site[0])
+    if set(apps) != {"http"} or len(servers) != 1 or not top or names is None:
         print("foreign")
         raise SystemExit(0)
 matches = routes(data)
@@ -742,21 +752,50 @@ else:
     owned = exact and any(handler.get("handler") == "vars"
                           and handler.get("hermuse_remote_installer") == "v1" for handler in chain)
     safe = (owned and len(proxies) == 1
-            and proxies[0].get("upstreams") == [{"dial": "127.0.0.1:9119"}]
+            and proxies[0].get("upstreams") == [{"dial": dial}]
             and all(handler["handler"] in ("subroute", "vars", "reverse_proxy") for handler in chain))
     print("ready" if safe else "owned" if owned else "foreign")
 ''';
 
-String caddySite(String domain) =>
+/// The web app owns its own origin root (manifest, service worker, relay
+/// detection), so it is published on a dedicated sslip.io host.
+String webAppDomain(String dashboardDomain) => 'app.$dashboardDomain';
+
+const dashboardLoopbackPort = 9119;
+const webLoopbackPort = 9120;
+const webContainerName = 'hermuse-web';
+const webContainerLabel = 'org.hermuse.remote-installer=web-v1';
+const webImageRepository = 'ghcr.io/yellow-stick/hermuse-web';
+
+String _caddyRoute(
+  String config,
+  String host,
+  int port, {
+  List<String>? dedicated,
+}) =>
+    'caddy adapt --config $config --adapter caddyfile |\n'
+    '  python3 -B -c ${shellQuote(_caddyRouteStatus)} ${shellQuote(host)} '
+    '127.0.0.1:$port'
+    '${dedicated == null ? '' : ' dedicated ${dedicated.map(shellQuote).join(' ')}'}';
+
+String caddySite(String domain, {String? webDomain}) =>
     '''# Managed by Hermuse remote installer
 $domain {
   vars hermuse_remote_installer v1
-  reverse_proxy 127.0.0.1:9119
+  reverse_proxy 127.0.0.1:$dashboardLoopbackPort
 }
-''';
+${webDomain == null ? '' : '''$webDomain {
+  vars hermuse_remote_installer v1
+  reverse_proxy 127.0.0.1:$webLoopbackPort
+}
+'''}''';
 
-String caddyOwnershipScript(String domain) =>
-    '''
+/// [webDomain] is the web host the fragment must publish, if any. A managed
+/// fragment may always carry an owned block for the derived web host, so a
+/// previously published web app is recognized rather than called foreign.
+String caddyOwnershipScript(String domain, {String? webDomain}) {
+  final fragmentHosts = [domain, webAppDomain(domain)];
+  return '''
 [ ! -L /etc/caddy/Caddyfile ] || { echo 'Caddyfile is a symlink; refusing to replace it.' >&2; exit 1; }
 site=/etc/caddy/hermuse-remote.caddy
 [ ! -L "\$site" ] || { echo 'The Hermuse Caddy site is a symlink.' >&2; exit 1; }
@@ -776,15 +815,16 @@ if command -v caddy >/dev/null; then
   case "\$exec_start" in *'/etc/caddy/Caddyfile'*) ;; *) echo 'Caddy uses a custom configuration path; it was not changed.' >&2; exit 1 ;; esac
   command -v python3 >/dev/null || { echo 'Python is required to inspect existing Caddy routes safely.' >&2; exit 1; }
   owned=missing
+  owned_web=missing
   if [ -f "\$site" ]; then
-    owned=\$(caddy adapt --config "\$site" --adapter caddyfile |
-      python3 -B -c ${shellQuote(_caddyRouteStatus)} ${shellQuote(domain)} dedicated)
-    if [ "\$owned" != ready ] && [ "\$owned" != owned ]; then
+    owned=\$(${_caddyRoute('"\$site"', domain, dashboardLoopbackPort, dedicated: fragmentHosts)})
+    owned_web=\$(${_caddyRoute('"\$site"', fragmentHosts[1], webLoopbackPort, dedicated: fragmentHosts)})
+    if { [ "\$owned" != ready ] && [ "\$owned" != owned ]; } ||
+       { [ "\$owned_web" != ready ] && [ "\$owned_web" != owned ] && [ "\$owned_web" != missing ]; }; then
       echo 'The Hermuse Caddy fragment contains unrelated configuration; it was not changed.' >&2; exit 1
     fi
   fi
-  route=\$(caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile |
-    python3 -B -c ${shellQuote(_caddyRouteStatus)} ${shellQuote(domain)})
+  route=\$(${_caddyRoute('/etc/caddy/Caddyfile', domain, dashboardLoopbackPort)})
   if [ "\$route" != missing ]; then
     # Even an identical dashboard upstream is unrelated without an owned site.
     if { [ "\$route" != ready ] && [ "\$route" != owned ]; } ||
@@ -792,29 +832,43 @@ if command -v caddy >/dev/null; then
       echo 'An unrelated Caddy route already owns $domain; it was not changed.' >&2; exit 1
     fi
   fi
-elif [ -e /etc/caddy/Caddyfile ] || [ -e "\$site" ]; then
+${webDomain == null ? '' : '''
+  route=\$(${_caddyRoute('/etc/caddy/Caddyfile', webDomain, webLoopbackPort)})
+  if [ "\$route" != missing ]; then
+    if { [ "\$route" != ready ] && [ "\$route" != owned ]; } ||
+       { [ "\$owned_web" != ready ] && [ "\$owned_web" != owned ]; }; then
+      echo 'An unrelated Caddy route already owns $webDomain, the web app address; it was not changed.' >&2; exit 1
+    fi
+  fi
+'''}elif [ -e /etc/caddy/Caddyfile ] || [ -e "\$site" ]; then
   echo 'Existing Caddy configuration cannot be inspected without Caddy. Restore its package before setup.' >&2; exit 1
 fi
 ''';
+}
 
-String caddyHealthScript(String domain) =>
+String caddyHealthScript(String domain, {String? webDomain}) =>
     '''
-${caddyOwnershipScript(domain)}
+${caddyOwnershipScript(domain, webDomain: webDomain)}
 ${_health('''
 command -v caddy >/dev/null &&
-cmp -s /etc/caddy/hermuse-remote.caddy <(printf '%s' ${shellQuote(caddySite(domain))}) &&
+cmp -s /etc/caddy/hermuse-remote.caddy <(printf '%s' ${shellQuote(caddySite(domain, webDomain: webDomain))}) &&
 systemctl is-active --quiet caddy &&
 systemctl is-enabled --quiet caddy &&
-route=\$(caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile |
-  python3 -B -c ${shellQuote(_caddyRouteStatus)} ${shellQuote(domain)}) &&
+route=\$(${_caddyRoute('/etc/caddy/Caddyfile', domain, dashboardLoopbackPort)}) &&
 [ "\$route" = ready ] &&
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+${webDomain == null ? '' : '''web_route=\$(${_caddyRoute('/etc/caddy/Caddyfile', webDomain, webLoopbackPort)}) &&
+[ "\$web_route" = ready ] &&
+'''}caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
 ''')}
 ''';
 
-String caddyConfigureScript(String directory, String domain) =>
+String caddyConfigureScript(
+  String directory,
+  String domain, {
+  String? webDomain,
+}) =>
     '''
-${caddyOwnershipScript(domain)}
+${caddyOwnershipScript(domain, webDomain: webDomain)}
 ${_beginTransaction(directory, 'hermuse-caddy-rollback')}
 install -d -m 0700 ${shellQuote(directory)}
 exec 9>${shellQuote('$directory/lock')}
@@ -858,16 +912,180 @@ chmod 0700 ${shellQuote('$directory/rollback.sh')}
 systemctl reset-failed hermuse-caddy-rollback.timer hermuse-caddy-rollback.service 2>/dev/null || true
 systemd-run --quiet --unit=hermuse-caddy-rollback --on-active=600s /bin/bash ${shellQuote('$directory/rollback.sh')}
 touch ${shellQuote('$directory/armed')}
-printf '%s' ${shellQuote(caddySite(domain))} > "\$site"
+printf '%s' ${shellQuote(caddySite(domain, webDomain: webDomain))} > "\$site"
 chmod 0644 "\$site"
-route=\$(caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile |
-  python3 -B -c ${shellQuote(_caddyRouteStatus)} ${shellQuote(domain)})
+route=\$(${_caddyRoute('/etc/caddy/Caddyfile', domain, dashboardLoopbackPort)})
 if [ "\$route" = missing ]; then
   printf '\\nimport /etc/caddy/hermuse-remote.caddy\\n' >> /etc/caddy/Caddyfile
 elif [ "\$route" != ready ]; then
   echo 'The desired Hermuse Caddy route collides with existing configuration.' >&2; exit 1
 fi
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+${webDomain == null ? '' : '''route=\$(${_caddyRoute('/etc/caddy/Caddyfile', webDomain, webLoopbackPort)})
+if [ "\$route" != ready ]; then
+  echo 'The desired Hermuse web app route collides with existing configuration.' >&2; exit 1
+fi
+'''}caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable caddy
 systemctl reload-or-restart caddy
 ''';
+
+String webImageReference(String version) => '$webImageRepository:$version';
+
+// Shared by inventory and deployment. A label proves the installer created the
+// container; a matching name alone is foreign and is never changed.
+const _webInspection = r'''
+import json, os, shutil, socket, subprocess, sys, tempfile, time, urllib.request
+web, dashboard, image = sys.argv[1:4]
+NAME = "hermuse-web"
+LABEL = "org.hermuse.remote-installer"
+PORT = 9120
+BINDING = {"8787/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(PORT)}]}
+FOREIGN = ("A Docker container named hermuse-web that this installer did not create exists; "
+           "it was not changed. Rename or remove it, or choose not to publish the web app.")
+BUSY = ("Port 127.0.0.1:9120, needed by the web app, is used by another service; nothing was "
+        "changed. Free the port or choose not to publish the web app.")
+def docker(*args, timeout=30):
+    return subprocess.run(["docker", *args], stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, timeout=timeout)
+DOCKER = bool(shutil.which("docker")) and subprocess.run(
+    ["systemctl", "is-active", "--quiet", "docker"], stdin=subprocess.DEVNULL).returncode == 0
+def container():
+    if not DOCKER:
+        return None
+    result = docker("inspect", "--type", "container", NAME)
+    if result.returncode:
+        if "No such" in result.stderr or "not found" in result.stderr:
+            return None
+        raise SystemExit("Could not inspect the existing web app container safely.")
+    items = json.loads(result.stdout)
+    if not isinstance(items, list) or len(items) != 1:
+        raise SystemExit("Docker returned an ambiguous web app container identity.")
+    return items[0]
+def owned(item):
+    return ((item.get("Config") or {}).get("Labels") or {}).get(LABEL) == "web-v1"
+def running(item):
+    return (item.get("State") or {}).get("Running") is True
+def bound(item):
+    return (item.get("HostConfig") or {}).get("PortBindings") == BINDING
+def answering():
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        body = json.loads(opener.open("http://127.0.0.1:%d/relay/health" % PORT, timeout=3).read())
+        return isinstance(body, dict) and body.get("ok") is True
+    except (OSError, ValueError):
+        return False
+def current(item):
+    if not image or not DOCKER:
+        return False
+    local = docker("image", "inspect", "--format", "{{.Id}}", image)
+    config = item.get("Config") or {}
+    host = item.get("HostConfig") or {}
+    env = config.get("Env") or []
+    secret = "HERMUSE_RELAY_ADMIN_TOKEN="
+    return (local.returncode == 0 and running(item) and bound(item)
+            and config.get("Image") == image and item.get("Image") == local.stdout.strip()
+            and (host.get("RestartPolicy") or {}).get("Name") == "unless-stopped"
+            and host.get("ReadonlyRootfs") is True
+            and "HERMUSE_RELAY_ORIGIN=https://" + web in env
+            and "HERMUSE_RELAY_UPSTREAMS=https://" + dashboard in env
+            and any(value.startswith(secret) and len(value) >= len(secret) + 24 for value in env))
+def port_taken():
+    if DOCKER:
+        published = docker("ps", "--filter", "publish=%d" % PORT, "--format", "{{.Names}}")
+        if published.returncode:
+            raise SystemExit("Could not inspect Docker port bindings safely.")
+        if any(name != NAME for name in published.stdout.split()):
+            return True
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(("127.0.0.1", PORT))
+        return False
+    except OSError:
+        return True
+    finally:
+        probe.close()
+''';
+
+const _webInventory = r'''
+publish = sys.argv[4] == "publish"
+item = container()
+if item is not None and not owned(item):
+    if publish:
+        raise SystemExit(FOREIGN)
+    item = None
+if publish and not (item is not None and running(item) and bound(item)) and port_taken():
+    raise SystemExit(BUSY)
+if item is None:
+    print("HERMUSE_HEALTH_V1:absent")
+else:
+    print("HERMUSE_HEALTH_V1:" + ("ready" if current(item) and answering() else "repair"))
+''';
+
+const _webDeploy = r'''
+token = sys.stdin.read().strip()
+if len(token) < 24:
+    raise SystemExit("Refusing an empty or short relay admin token.")
+if not DOCKER:
+    raise SystemExit("Docker is not running; the web app cannot be started.")
+item = container()
+if item is not None:
+    if not owned(item):
+        raise SystemExit(FOREIGN)
+    if current(item) and answering():
+        raise SystemExit(0)
+    if docker("rm", "-f", item["Id"], timeout=60).returncode:
+        raise SystemExit("The previous web app container could not be replaced.")
+if port_taken():
+    raise SystemExit(BUSY)
+os.makedirs(sys.argv[4], 0o700, exist_ok=True)
+handle, path = tempfile.mkstemp(prefix=".hermuse-web-env-", dir=sys.argv[4])
+try:
+    with os.fdopen(handle, "w") as stream:
+        stream.write("HERMUSE_RELAY_ADMIN_TOKEN=" + token + "\n"
+                     "HERMUSE_RELAY_ORIGIN=https://" + web + "\n"
+                     "HERMUSE_RELAY_UPSTREAMS=https://" + dashboard + "\n")
+    started = docker("run", "-d", "--name", NAME, "--label", LABEL + "=web-v1",
+                     "--restart", "unless-stopped", "-p", "127.0.0.1:%d:8787" % PORT,
+                     "--read-only", "--tmpfs", "/tmp:rw,size=16m", "--cap-drop", "ALL",
+                     "--security-opt", "no-new-privileges", "--env-file", path, image, timeout=180)
+finally:
+    os.unlink(path)
+if started.returncode:
+    raise SystemExit("The web app container could not be started: " + started.stderr.strip()[:1000])
+for attempt in range(60):
+    if answering():
+        raise SystemExit(0)
+    time.sleep(1)
+raise SystemExit("The web app did not answer on 127.0.0.1:9120 within 60 seconds.")
+''';
+
+/// Read-only. Prints `ready` for an owned, current, answering deployment,
+/// `repair` for an owned one that is not, and `absent` otherwise. With
+/// [publish], a foreign `hermuse-web` container or another listener on the
+/// loopback port fails before any mutation.
+String webInventoryScript(
+  String webDomain,
+  String dashboardDomain,
+  String? image, {
+  required bool publish,
+}) =>
+    '''
+if command -v python3 >/dev/null; then
+  python3 -B -c ${shellQuote(_webInspection + _webInventory)} ${shellQuote(webDomain)} ${shellQuote(dashboardDomain)} ${shellQuote(image ?? '')} ${publish ? 'publish' : 'keep'}
+else
+  printf 'HERMUSE_HEALTH_V1:absent\\n'
+fi
+''';
+
+/// Replaces an owned stale container and starts the current one. The relay
+/// admin token arrives on stdin and only touches a root-only temporary env
+/// file that is removed after `docker run`.
+String webDeployScript(
+  String webDomain,
+  String dashboardDomain,
+  String image,
+) =>
+    'python3 -B -c ${shellQuote(_webInspection + _webDeploy)} '
+    '${shellQuote(webDomain)} ${shellQuote(dashboardDomain)} '
+    '${shellQuote(image)} $provisionRoot';

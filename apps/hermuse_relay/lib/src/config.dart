@@ -1,3 +1,5 @@
+import 'normalize.dart';
+
 // Relay configuration, parsed from environment variables.
 class RelayConfig {
   /// TCP port to listen on. Defaults to 8787.
@@ -17,12 +19,17 @@ class RelayConfig {
   /// Optional directory holding the built Jaspr site, served same-origin.
   final String? staticDir;
 
+  /// Hermes dashboard base URLs (normalised) registered at startup, from the
+  /// comma-separated `HERMUSE_RELAY_UPSTREAMS`. Registration is idempotent.
+  final List<String> upstreams;
+
   const RelayConfig({
     this.port = 8787,
     this.dbPath = 'hermuse_relay.db',
     required this.adminToken,
     required this.origin,
     this.staticDir,
+    this.upstreams = const [],
   });
 
   /// Reads configuration from [env] (defaults to `Platform.environment`).
@@ -53,12 +60,25 @@ class RelayConfig {
       );
     }
     final staticDir = env['HERMUSE_RELAY_STATIC_DIR']?.trim();
+    final upstreams = <String>[];
+    for (final entry in (env['HERMUSE_RELAY_UPSTREAMS'] ?? '').split(',')) {
+      if (entry.trim().isEmpty) continue;
+      try {
+        final url = normalizeUpstreamUrl(entry);
+        if (!upstreams.contains(url)) upstreams.add(url);
+      } on FormatException catch (e) {
+        throw StateError(
+          'HERMUSE_RELAY_UPSTREAMS: ${e.message}; refusing to start.',
+        );
+      }
+    }
     return RelayConfig(
       port: port,
       dbPath: (env['HERMUSE_RELAY_DB'] ?? 'hermuse_relay.db').trim(),
       adminToken: token,
       origin: originUri.origin,
       staticDir: staticDir == null || staticDir.isEmpty ? null : staticDir,
+      upstreams: upstreams,
     );
   }
 }
