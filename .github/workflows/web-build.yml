@@ -1,9 +1,13 @@
-# Static build of the web app (apps/hermuse_web, `jaspr build`), uploaded as
-# the `web` artifact of the calling run. Its analysis and tests run in the
-# checks of every pull request and merge group (ci.yml, build.yml).
+# Static builds of the web app (apps/hermuse_web). `jaspr build` checks that the
+# web app every user's relay serves still builds; nothing publishes it. Then
+# demo/build.sh builds the read-only demo (HERMUSE_DEMO=true) into
+# demo/build/web, uploaded as the `demo` artifact of the calling run. Their
+# analysis and tests run in the checks of every pull request and merge group
+# (ci.yml, build.yml).
 #
-# Callers (workflow_call only): web-pr.yml (pull requests, then a preview),
-# web-queue.yml (merge groups, build only), web-deploy.yml (production).
+# Callers (workflow_call only): web-pr.yml (pull requests, then a demo
+# preview), web-queue.yml (merge groups, build only), web-deploy.yml (the demo
+# in production).
 #
 # Actions are pinned by commit (tag in the trailing comment); the Flutter SDK
 # comes from tool/release/toolchain.lock.json, checked by SHA-256.
@@ -38,11 +42,14 @@ jobs:
           echo "$HOME/.pub-cache/bin" >>"$GITHUB_PATH"
       - run: flutter pub get --enforce-lockfile
       - run: dart pub global activate jaspr_cli "$JASPR_CLI_VERSION"
-      - run: jaspr build
+      - name: Web app (served by relays)
+        run: jaspr build
         working-directory: apps/hermuse_web
+      - name: Read-only demo
+        run: demo/build.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: web
-          path: apps/hermuse_web/build/jaspr
+          name: demo
+          path: demo/build/web
           include-hidden-files: false
           retention-days: 7
