@@ -11,8 +11,11 @@ import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_app/host/install_flow.dart';
 import 'package:hermuse_app/host/linux_setup.dart';
 import 'package:hermuse_app/host/linux_setup_gate.dart';
+import 'package:hermuse_app/host/remote_install.dart';
 import 'package:hermuse_app/platform/local_host.dart';
 import 'package:hermuse_app/shell/app.dart';
+import 'package:hermuse_app/shell/instances.dart';
+import 'package:hermuse_app/shell/screens.dart';
 import 'package:hermuse_data/native.dart';
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:hermuse_state/hermuse_state.dart';
@@ -285,6 +288,106 @@ void main() {
     // The test font's square glyphs would overflow the Welcome buttons.
     setUpAll(_loadInter);
 
+    testWidgets(
+      'should offer SSH removal for an offline remote instance without deleting its saved connection',
+      (tester) async {
+        tester.view
+          ..physicalSize = const Size(900, 1500)
+          ..devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final root = (await tester.runAsync(
+          () => Directory.systemTemp.createTemp('hermuse_remote_removal_route'),
+        ))!;
+        addTearDown(() => root.deleteSync(recursive: true));
+        final setup = _Setup(root.path);
+        addTearDown(() => tester.runAsync(setup.dispose));
+        setup.inspections.add(_inspection());
+        final keyring = _Keyring()..locked = false;
+        keyring.values.addAll({
+          'vps/username': 'admin',
+          'vps/password': 'existing-dashboard-secret',
+        });
+        final savedSecrets = Map<String, String>.of(keyring.values);
+        final host = LocalHermesHost.test(
+          detector: setup.script.detector(),
+          secrets: keyring,
+        );
+        await setup.db.saveInstances([
+          HermesInstance(
+            id: 'vps',
+            label: 'VPS',
+            kind: InstanceKind.remote,
+            baseUrl: Uri.parse('https://hermuse.203-0-113-10.sslip.io'),
+            auth: AuthMethod.password,
+          ),
+        ], primaryId: 'vps');
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              ...setup.overrides(secrets: keyring),
+              localHostProvider.overrideWithValue(host),
+              transportFactoryProvider.overrideWithValue((_) async {
+                throw const HermesUnreachable('test: offline server');
+              }),
+            ],
+            child: const HermuseApp(),
+          ),
+        );
+        final manage = find.byWidgetPredicate(
+          (widget) =>
+              widget is YsPressable && widget.semanticLabel == 'Settings',
+        );
+        await _settle(tester, until: () => manage.evaluate().isNotEmpty);
+        await tester.tap(manage);
+        await _settle(tester);
+        // Uninstalling lives in the row's "More actions" menu.
+        await tester.tap(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is YsButton &&
+                widget.semanticLabel == 'More actions for VPS',
+          ),
+        );
+        await _settle(tester);
+        await tester.tap(find.text('Uninstall from server…'));
+        await _settle(tester);
+        expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        expect(
+          find.widgetWithText(YsButton, 'Review inspection'),
+          findsOneWidget,
+        );
+        final input = find.descendant(
+          of: find.byWidgetPredicate(
+            (widget) =>
+                widget is YsInputBox &&
+                widget.semanticLabel == 'Host or IP address',
+          ),
+          matching: find.byType(EditableText),
+        );
+        expect(
+          tester.widget<EditableText>(input).controller.text,
+          'hermuse.203-0-113-10.sslip.io',
+        );
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(HermuseApp)),
+        );
+        expect(
+          (await container.read(registryProvider.future)).instances.single.id,
+          'vps',
+        );
+        expect(keyring.values, savedSecrets);
+        await tester.tap(find.bySemanticsLabel('Cancel').first);
+        await _settle(tester);
+        expect(find.byType(InstancesScreen), findsOneWidget);
+        expect(
+          (await container.read(registryProvider.future)).instances.single.id,
+          'vps',
+        );
+        expect(keyring.values, savedSecrets);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
     testWidgets('should connect no instance until the locked keyring opens', (
       tester,
     ) async {
@@ -333,6 +436,79 @@ void main() {
       expect(find.byType(LinuxSetupGate), findsNothing);
       expect(connections, greaterThan(0));
     });
+
+    testWidgets(
+      'should open machine detection after secure storage and retain the dashboard URL route',
+      (tester) async {
+        tester.view
+          ..physicalSize = const Size(900, 1500)
+          ..devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final root = (await tester.runAsync(
+          () => Directory.systemTemp.createTemp('hermuse_remote_gate'),
+        ))!;
+        addTearDown(() => root.deleteSync(recursive: true));
+        final setup = _Setup(root.path);
+        addTearDown(() => tester.runAsync(setup.dispose));
+        setup.inspections.add(_inspection(locked: true));
+        final keyring = _Keyring();
+        final host = LocalHermesHost.test(
+          detector: setup.script.detector(),
+          secrets: keyring,
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              ...setup.overrides(secrets: keyring),
+              localHostProvider.overrideWithValue(host),
+            ],
+            child: const HermuseApp(),
+          ),
+        );
+        await _settle(tester);
+        await tester.tap(
+          find.widgetWithText(YsChoiceCard, 'Connect to a machine'),
+        );
+        await _settle(tester);
+        expect(find.byType(LinuxSetupGate), findsOneWidget);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
+        expect(find.byType(AddInstanceScreen), findsNothing);
+
+        keyring.locked = false;
+        await tester.tap(find.widgetWithText(YsButton, 'Check again'));
+        await _settle(
+          tester,
+          until: () => find.byType(RemoteInstallScreen).evaluate().isNotEmpty,
+        );
+        expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        expect(find.byType(AddInstanceScreen), findsNothing);
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with a dashboard URL'),
+        );
+        await _settle(tester);
+        expect(find.byType(AddInstanceScreen), findsOneWidget);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
+        expect(keyring.values, isEmpty);
+        // Each form switches to the other with its own button…
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with SSH instead'),
+        );
+        await _settle(tester);
+        expect(find.byType(RemoteInstallScreen), findsOneWidget);
+        expect(find.byType(AddInstanceScreen), findsNothing);
+        await tester.tap(
+          find.widgetWithText(YsButton, 'Connect with a dashboard URL'),
+        );
+        await _settle(tester);
+        expect(find.byType(AddInstanceScreen), findsOneWidget);
+        // …and cancelling goes back where connecting started, not to the
+        // other form.
+        await tester.tap(find.bySemanticsLabel('Cancel').first);
+        await _settle(tester);
+        expect(find.byType(RemoteInstallScreen), findsNothing);
+        expect(find.byType(WelcomeScreen), findsOneWidget);
+      },
+    );
 
     testWidgets('should leave other platforms on their own install flow', (
       tester,

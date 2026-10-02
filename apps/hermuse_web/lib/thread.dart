@@ -200,11 +200,7 @@ class HermuseThread extends StatelessComponent {
                 ]),
                 div(classes: 'hermuse-composer-trailing', [
                   _Morph(
-                    action: busy
-                        ? 'stop'
-                        : draft.trim().isEmpty
-                        ? 'voice'
-                        : 'send',
+                    action: busy ? 'stop' : 'send',
                     child: busy
                         ? YsPressable(
                             onPressed: onInterrupt,
@@ -213,18 +209,8 @@ class HermuseThread extends StatelessComponent {
                             builder: (context, press) =>
                                 YsIconView(YsIcon.close, size: 18),
                           )
-                        : draft.trim().isEmpty
-                        ? YsTooltip(
-                            label: 'Voice',
-                            child: YsButton.icon(
-                              icon: YsIcon.mic,
-                              label: 'Voice',
-                              onPressed: null,
-                              size: 32,
-                            ),
-                          )
                         : YsPressable(
-                            onPressed: onSend,
+                            onPressed: draft.trim().isEmpty ? null : onSend,
                             label: 'Send',
                             classes: 'hermuse-send',
                             builder: (context, press) =>
@@ -444,6 +430,11 @@ class HermuseThread extends StatelessComponent {
       ),
       css('.hermuse-send:hover')
           .styles(backgroundColor: .variable('--primary-2')),
+      css('.hermuse-send:disabled').styles(
+        color: .variable('--content-muted'),
+        backgroundColor: .variable('--neutral-ambient'),
+        cursor: .defaultCursor,
+      ),
       css('.hermuse-send:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
@@ -544,7 +535,7 @@ class HermuseThread extends StatelessComponent {
   ];
 }
 
-/// The composer's trailing [action] (voice, send or stop): a new action
+/// The composer's trailing [action] (send or stop): a new action
 /// turns in [YsMorphMotion.turn] of a turn and grows from
 /// [YsMorphMotion.from] ([YsMorphMotion.swap] ms) while the previous one is
 /// gone at once; the first one simply shows.

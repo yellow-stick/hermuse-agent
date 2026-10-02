@@ -11,14 +11,16 @@ part of 'model_selection.dart';
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
 /// Discovery: native providers read their `model.options` row over the live
-/// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-/// to the spec owners. The selection persists in the settings table under
+/// connection; bridge cards read the `/v1/models` catalogue of the bridge
+/// serving the instance (this desktop's sidecar, or the bridge of the
+/// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+/// owners. The selection persists in the settings table under
 /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
 /// stored id that vanished from discovery is dropped (never offered), and an
 /// empty slot reverts to the newest discovered id of that tier on next load.
 ///
 /// Only *connected* providers resolve: native cards in `connected` state,
-/// bridge cards with usable sidecar credentials. Anything else throws
+/// bridge cards with usable bridge credentials. Anything else throws
 /// [StateError].
 
 @ProviderFor(ModelSelectionState)
@@ -27,28 +29,32 @@ final modelSelectionProvider = ModelSelectionStateFamily._();
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
 /// Discovery: native providers read their `model.options` row over the live
-/// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-/// to the spec owners. The selection persists in the settings table under
+/// connection; bridge cards read the `/v1/models` catalogue of the bridge
+/// serving the instance (this desktop's sidecar, or the bridge of the
+/// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+/// owners. The selection persists in the settings table under
 /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
 /// stored id that vanished from discovery is dropped (never offered), and an
 /// empty slot reverts to the newest discovered id of that tier on next load.
 ///
 /// Only *connected* providers resolve: native cards in `connected` state,
-/// bridge cards with usable sidecar credentials. Anything else throws
+/// bridge cards with usable bridge credentials. Anything else throws
 /// [StateError].
 final class ModelSelectionStateProvider
     extends $AsyncNotifierProvider<ModelSelectionState, ModelSelection> {
   /// Per-provider model selection (≤2: newest large + newest small by default).
   ///
   /// Discovery: native providers read their `model.options` row over the live
-  /// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-  /// to the spec owners. The selection persists in the settings table under
+  /// connection; bridge cards read the `/v1/models` catalogue of the bridge
+  /// serving the instance (this desktop's sidecar, or the bridge of the
+  /// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+  /// owners. The selection persists in the settings table under
   /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
   /// stored id that vanished from discovery is dropped (never offered), and an
   /// empty slot reverts to the newest discovered id of that tier on next load.
   ///
   /// Only *connected* providers resolve: native cards in `connected` state,
-  /// bridge cards with usable sidecar credentials. Anything else throws
+  /// bridge cards with usable bridge credentials. Anything else throws
   /// [StateError].
   ModelSelectionStateProvider._({
     required ModelSelectionStateFamily super.from,
@@ -87,19 +93,21 @@ final class ModelSelectionStateProvider
 }
 
 String _$modelSelectionStateHash() =>
-    r'ed5906b351f393b78e615946b368105582a3c832';
+    r'99318af71963140a1c167156a3b494ccf0797a63';
 
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
 /// Discovery: native providers read their `model.options` row over the live
-/// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-/// to the spec owners. The selection persists in the settings table under
+/// connection; bridge cards read the `/v1/models` catalogue of the bridge
+/// serving the instance (this desktop's sidecar, or the bridge of the
+/// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+/// owners. The selection persists in the settings table under
 /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
 /// stored id that vanished from discovery is dropped (never offered), and an
 /// empty slot reverts to the newest discovered id of that tier on next load.
 ///
 /// Only *connected* providers resolve: native cards in `connected` state,
-/// bridge cards with usable sidecar credentials. Anything else throws
+/// bridge cards with usable bridge credentials. Anything else throws
 /// [StateError].
 
 final class ModelSelectionStateFamily extends $Family
@@ -123,14 +131,16 @@ final class ModelSelectionStateFamily extends $Family
   /// Per-provider model selection (≤2: newest large + newest small by default).
   ///
   /// Discovery: native providers read their `model.options` row over the live
-  /// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-  /// to the spec owners. The selection persists in the settings table under
+  /// connection; bridge cards read the `/v1/models` catalogue of the bridge
+  /// serving the instance (this desktop's sidecar, or the bridge of the
+  /// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+  /// owners. The selection persists in the settings table under
   /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
   /// stored id that vanished from discovery is dropped (never offered), and an
   /// empty slot reverts to the newest discovered id of that tier on next load.
   ///
   /// Only *connected* providers resolve: native cards in `connected` state,
-  /// bridge cards with usable sidecar credentials. Anything else throws
+  /// bridge cards with usable bridge credentials. Anything else throws
   /// [StateError].
 
   ModelSelectionStateProvider call(String instanceId, String providerId) =>
@@ -146,14 +156,16 @@ final class ModelSelectionStateFamily extends $Family
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
 /// Discovery: native providers read their `model.options` row over the live
-/// connection; bridge cards read the sidecar `/v1/models` catalogue filtered
-/// to the spec owners. The selection persists in the settings table under
+/// connection; bridge cards read the `/v1/models` catalogue of the bridge
+/// serving the instance (this desktop's sidecar, or the bridge of the
+/// Hermuse plugin on its server — see [bridgeOnServer]) filtered to the spec
+/// owners. The selection persists in the settings table under
 /// `model_selection:<instanceId>:<providerId>` as `{large?, small?}`; a
 /// stored id that vanished from discovery is dropped (never offered), and an
 /// empty slot reverts to the newest discovered id of that tier on next load.
 ///
 /// Only *connected* providers resolve: native cards in `connected` state,
-/// bridge cards with usable sidecar credentials. Anything else throws
+/// bridge cards with usable bridge credentials. Anything else throws
 /// [StateError].
 
 abstract class _$ModelSelectionState extends $AsyncNotifier<ModelSelection> {

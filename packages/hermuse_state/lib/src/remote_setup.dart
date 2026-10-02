@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:hermes_client/hermes_client.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -45,7 +46,7 @@ enum RemotePartStatus {
   /// In place already.
   present,
 
-  /// Installed from the checklist.
+  /// Installed (or, for the model, connected) from the checklist.
   installed,
 
   /// Missing or out of date: the part's action installs it.
@@ -227,25 +228,222 @@ final class RemoteSetupTiming {
     this.poll = const Duration(seconds: 2),
     this.mountTimeout = const Duration(seconds: 10),
     this.mountPoll = const Duration(milliseconds: 500),
+    this.restartTimeout = const Duration(minutes: 1),
   });
 
   /// Between two looks at a computer being prepared.
   final Duration poll;
 
   /// How long the plugin routes may take to mount after an install, and
-  /// between two probes of them.
+  /// between two probes of them (a restarted dashboard's too).
   final Duration mountTimeout;
   final Duration mountPoll;
+
+  /// How long the dashboard may take to come back from a restart Hermuse
+  /// asked for.
+  final Duration restartTimeout;
 }
 
 @riverpod
 RemoteSetupTiming remoteSetupTiming(Ref ref) => const RemoteSetupTiming();
 
+/// What the user runs on the server: [note] says as whom and when, [command]
+/// holds the line(s) to copy (none when the step has no command).
+final class ServerStep {
+  const ServerStep(this.note, [this.command]);
+
+  final String note;
+  final String? command;
+}
+
+/// How the server runs the Hermes dashboard, as its own process tells
+/// through Hermes' authenticated file API ([readDashboardHost]): the systemd
+/// unit of its `/proc/self/cgroup`, its account (`/proc/self/status`, named
+/// by `/etc/passwd`). The steps it gives are the ones that work on that
+/// server; [unknown] gives them for both kinds of servers, labelled.
+final class DashboardHost {
+  const DashboardHost._({
+    required this.known,
+    this.unit,
+    this.userUnit = false,
+    this.uid,
+    this.user,
+  });
+
+  /// From the dashboard process' `/proc/self/cgroup` and `/proc/self/status`
+  /// and the server's `/etc/passwd`.
+  factory DashboardHost.parse({
+    required String cgroup,
+    required String status,
+    required String passwd,
+  }) {
+    // cgroup v1 hierarchies carry systemd's own (`1:name=systemd:/…`), v2
+    // the unified one (`0::/…`).
+    String? path;
+    for (final line in const LineSplitter().convert(cgroup)) {
+      final fields = line.split(':');
+      if (fields.length < 3) continue;
+      if (fields[1] == 'name=systemd') {
+        path = fields.skip(2).join(':');
+        break;
+      }
+      if (fields[0] == '0' && fields[1].isEmpty) {
+        path ??= fields.skip(2).join(':');
+      }
+    }
+    final units = [
+      for (final name in (path ?? '').split('/'))
+        if (name.endsWith('.service') || name.endsWith('.scope')) name,
+    ];
+    // The innermost unit holds the process: a service, or a scope (a
+    // login session, a terminal) that no systemctl restarts.
+    final innermost = units.lastOrNull;
+    final service =
+        innermost != null &&
+            innermost.endsWith('.service') &&
+            !_userManager.hasMatch(innermost)
+        ? innermost
+        : null;
+    final uid = int.tryParse(
+      RegExp(r'^Uid:\s*(\d+)', multiLine: true).firstMatch(status)?[1] ?? '',
+    );
+    String? user;
+    for (final line in const LineSplitter().convert(passwd)) {
+      final fields = line.split(':');
+      if (uid != null && fields.length > 2 && fields[2] == '$uid') {
+        user = fields[0];
+        break;
+      }
+    }
+    return DashboardHost._(
+      known: true,
+      unit: service,
+      userUnit: service != null && units.any(_userManager.hasMatch),
+      uid: uid,
+      user: user,
+    );
+  }
+
+  /// The server could not tell.
+  static const unknown = DashboardHost._(known: false);
+
+  /// A user's own systemd (`systemctl --user`).
+  static final _userManager = RegExp(r'^user@\d+\.service$');
+
+  final bool known;
+
+  /// The systemd service the dashboard runs in (`hermuse-dashboard.service`);
+  /// null outside one (started by hand, in a container).
+  final String? unit;
+
+  /// Whether [unit] belongs to its user's own systemd.
+  final bool userUnit;
+
+  /// The account that runs Hermes; [user] is null when `/etc/passwd` does
+  /// not name it.
+  final int? uid;
+  final String? user;
+
+  /// What restarts the dashboard by hand.
+  ServerStep get restartDashboard {
+    if (!known) {
+      return const ServerStep(
+        'Run the command that fits this server (or restart `hermes '
+            'dashboard` the way it was started), then check again:',
+        '# Server set up by Hermuse:\n'
+            'sudo systemctl restart hermuse-dashboard\n'
+            '# Hermes installed by hand, as its user:\n'
+            'systemctl --user restart hermes-dashboard',
+      );
+    }
+    final unit = this.unit;
+    if (unit == null) {
+      return const ServerStep(
+        'Stop `hermes dashboard` on the server and start it again, then '
+        'check again.',
+      );
+    }
+    final name = _shellWord(unit.substring(0, unit.length - '.service'.length));
+    return userUnit
+        ? ServerStep(
+            'As ${user ?? 'the user that runs Hermes'}, run this on the '
+                'server, then check again:',
+            'systemctl --user restart $name',
+          )
+        : ServerStep(
+            'Run this on the server, then check again:',
+            'sudo systemctl restart $name',
+          );
+  }
+
+  /// What lets the account that runs Hermes use Docker (until Hermes
+  /// restarts, the plugin reaches it through `sg docker`).
+  ServerStep get dockerGroup {
+    final account =
+        user ??
+        switch (uid) {
+          final uid? => '"\$(id -nu $uid)"',
+          _ => null,
+        };
+    if (!known || account == null) {
+      return const ServerStep(
+        'Add the user that runs Hermes to the docker group with the command '
+            'that fits this server, then check again:',
+        '# Server set up by Hermuse:\n'
+            'sudo usermod -aG docker hermes\n'
+            '# Hermes installed by hand, as its user:\n'
+            'sudo usermod -aG docker "\$USER"',
+      );
+    }
+    return ServerStep(
+      'Add ${user ?? 'the user that runs Hermes'} to the docker group: run '
+          'this on the server, then check again:',
+      'sudo usermod -aG docker $account',
+    );
+  }
+
+  /// [word] as one shell word.
+  static String _shellWord(String word) =>
+      RegExp(r'^[A-Za-z0-9_.@:+-]+$').hasMatch(word)
+      ? word
+      : "'${word.replaceAll("'", r"'\''")}'";
+}
+
+/// How the server runs the dashboard [rest] reaches, read through Hermes'
+/// file API (no plugin needed); [DashboardHost.unknown] on any failure.
+Future<DashboardHost> readDashboardHost(HermesRestClient rest) async {
+  try {
+    return DashboardHost.parse(
+      cgroup: await _serverFile(rest, '/proc/self/cgroup'),
+      status: await _serverFile(rest, '/proc/self/status'),
+      passwd: await _serverFile(rest, '/etc/passwd'),
+    );
+  } on Object {
+    return DashboardHost.unknown;
+  }
+}
+
+/// [path] on the server as the dashboard process reads it (`/proc/self` is
+/// that process): `GET /api/fs/read-data-url` reads a `/proc` file whole,
+/// where `read-text` stops at its zero size.
+Future<String> _serverFile(HermesRestClient rest, String path) async {
+  final body = await rest.getJson('/api/fs/read-data-url', {'path': path});
+  final data = RegExp(
+    r'^data:[^,]*;base64,(.*)$',
+    dotAll: true,
+  ).firstMatch('${body['dataUrl']}');
+  if (data == null) throw FormatException('no data URL for $path');
+  return utf8.decode(base64.decode(data[1]!), allowMalformed: true);
+}
+
 /// The component checklist of the Hermes [instanceId] reaches over the
 /// network: each part Hermuse needs there, found in place, or installed
 /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
 /// server). What only the user can do (a command on the server, a consent,
-/// a model to connect) says so, with the command to copy.
+/// a model to connect) says so, with the command to copy: the one that works
+/// on that server ([DashboardHost]). A dashboard that must restart to serve
+/// the installed plugin is restarted through the running plugin when it can
+/// be, and followed until it answers again.
 ///
 /// It looks as soon as it is read, after each install and on [checkAgain];
 /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -269,7 +467,8 @@ class RemoteSetup extends _$RemoteSetup {
   /// "Install everything" runs.
   var _everything = false;
 
-  /// Parts installed from here: they show done rather than found.
+  /// Parts installed from here, and the model when it got connected while
+  /// the checklist showed: they show done rather than found.
   final _installed = <RemotePart>{};
 
   /// Why the last attempt of each part failed.
@@ -283,6 +482,13 @@ class RemoteSetup extends _$RemoteSetup {
 
   /// The dashboard must restart to serve the plugin, or its update.
   _Restart? _restart;
+
+  /// The restart Hermuse asked for did not come back in time.
+  var _restartTimedOut = false;
+
+  /// How the server runs the dashboard, once a row needed it (see
+  /// [readDashboardHost]); read again while unknown.
+  DashboardHost? _host;
 
   /// Hermuse asked the server to install Docker.
   var _dockerTried = false;
@@ -299,6 +505,12 @@ class RemoteSetup extends _$RemoteSetup {
     _unreachable = null;
     _checking = {...RemotePart.values}..remove(RemotePart.model);
     ref.listen(onboardingProvider(instanceId), (_, next) {
+      final connected = next.value;
+      if (_modelMissing(_model.value) &&
+          connected != null &&
+          !_modelMissing(connected)) {
+        _installed.add(RemotePart.model);
+      }
       _model = next;
       if (_built) _publish();
     }, fireImmediately: true);
@@ -372,6 +584,7 @@ class RemoteSetup extends _$RemoteSetup {
     _consent = null;
     _dockerTried = false;
     _restart = null;
+    _restartTimedOut = false;
     _checking = {
       for (final row in state.parts)
         if (!row.status.settled && row.part != RemotePart.model) row.part,
@@ -401,7 +614,8 @@ class RemoteSetup extends _$RemoteSetup {
     _pluginRetry = force ? RemoteAction.allowInstall : RemoteAction.install;
     return _attempt(RemotePart.plugin, 'Installing…', (rest) async {
       final timing = _timing;
-      _plugin(
+      await _plugin(
+        rest,
         await mountHermusePlugin(
           rest,
           force: force,
@@ -418,19 +632,33 @@ class RemoteSetup extends _$RemoteSetup {
     return _attempt(
       RemotePart.plugin,
       'Updating…',
-      (rest) async =>
-          _plugin(await updateHermusePlugin(rest), restart: _Restart.update),
+      (rest) async => _plugin(
+        rest,
+        await updateHermusePlugin(rest),
+        restart: _Restart.update,
+      ),
     );
   }
 
-  void _plugin(PluginInstallResult result, {required _Restart restart}) {
+  /// Where [result] leaves the plugin; a dashboard that must restart is
+  /// restarted through the running plugin when it can be.
+  Future<void> _plugin(
+    HermesRestClient rest,
+    PluginInstallResult result, {
+    required _Restart restart,
+  }) async {
     switch (result) {
       case PluginInstalled():
         ref.invalidate(pluginStatusProvider(instanceId));
       case PluginNeedsConsent(:final detail):
         _consent = detail;
       case PluginNeedsDashboardRestart():
-        _restart = restart;
+        final outcome = await _restartDashboard(rest);
+        _restart = outcome == _Restarted.done ? null : restart;
+        _restartTimedOut = outcome == _Restarted.timedOut;
+        if (outcome == _Restarted.done) {
+          ref.invalidate(pluginStatusProvider(instanceId));
+        }
       case PluginInstallFailed(:final message, :final findings):
         _failures[RemotePart.plugin] = [
           message,
@@ -438,6 +666,54 @@ class RemoteSetup extends _$RemoteSetup {
         ];
     }
   }
+
+  /// Restarts the dashboard through the running plugin (`POST
+  /// /dashboard/restart`, plugin 0.3.0 and later), then waits for another
+  /// start of it to answer `GET /dashboard`. An older plugin, or one whose
+  /// routes are not mounted, cannot (`404`/`405`).
+  Future<_Restarted> _restartDashboard(HermesRestClient rest) async {
+    final String before;
+    try {
+      before = await _boot(rest);
+    } on Object {
+      return _Restarted.unavailable;
+    }
+    try {
+      await rest.postJson('$hermusePluginRoute/dashboard/restart', const {});
+    } on HermesHttpError catch (e) {
+      // 409: a restart is on its way already.
+      if (e.statusCode != 409) return _Restarted.unavailable;
+    } on Object {
+      return _Restarted.unavailable;
+    }
+    _work = 'Restarting the Hermes dashboard…';
+    _publish();
+    final timing = _timing;
+    final deadline = DateTime.now().add(timing.restartTimeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(timing.mountPoll);
+      if (!ref.mounted) break;
+      try {
+        if (await _boot(rest) != before) return _Restarted.done;
+      } on HermesAuthFailed {
+        // Back, without this sign-in: the next look says so.
+        return _Restarted.done;
+      } on HermesHttpError catch (e) {
+        // Back without the plugin routes: the next look says so.
+        if (e.statusCode == 404) return _Restarted.done;
+      } on Object {
+        // Down while it restarts.
+      }
+    }
+    return _Restarted.timedOut;
+  }
+
+  /// This start of the dashboard (`GET /dashboard`).
+  static Future<String> _boot(HermesRestClient rest) async =>
+      switch ((await rest.getJson('$hermusePluginRoute/dashboard'))['boot']) {
+        final String boot => boot,
+        _ => throw const FormatException('GET /dashboard has no boot'),
+      };
 
   Future<void> _scheduleJobs() =>
       _attempt(RemotePart.jobs, 'Scheduling them…', (rest) async {
@@ -529,7 +805,7 @@ class RemoteSetup extends _$RemoteSetup {
         (computer, computerError) = await _computer(rest);
         pointed = await _browserPointed(rest);
       }
-      _found = _Found(
+      final found = _found = _Found(
         version: version,
         plugin: hub,
         mounted: mounted,
@@ -540,7 +816,13 @@ class RemoteSetup extends _$RemoteSetup {
         browserPointed: pointed,
       );
       _unreachable = null;
-      if (mounted && _restart == _Restart.mount) _restart = null;
+      if (mounted && _restart == _Restart.mount) {
+        _restart = null;
+        _restartTimedOut = false;
+      }
+      if (_needsHost(found) && !(_host?.known ?? false)) {
+        _host = await readDashboardHost(rest);
+      }
     } on HermesException catch (e) {
       _unreachable = hermesReason(e);
     } on Object catch (e) {
@@ -573,6 +855,17 @@ class RemoteSetup extends _$RemoteSetup {
       _following = false;
     }
     if (ref.mounted) await _look();
+  }
+
+  /// Whether a row of [found] gives a command that depends on how the
+  /// server runs Hermes: a dashboard restart, the docker group.
+  bool _needsHost(_Found found) {
+    final computer = found.computer;
+    return _restart != null ||
+        (!found.mounted && (found.plugin?.enabled ?? false)) ||
+        (computer != null &&
+            computer.state == ComputerState.daemonDown &&
+            _dockerDenied(computer));
   }
 
   /// Hermes' record of the plugin (`GET /api/dashboard/plugins/hub`): null
@@ -697,14 +990,17 @@ class RemoteSetup extends _$RemoteSetup {
     };
   }
 
-  /// [part] is in place: done when installed from here.
-  RemotePartState _inPlace(RemotePart part, String summary) => RemotePartState(
-    part,
-    _installed.contains(part)
-        ? RemotePartStatus.installed
-        : RemotePartStatus.present,
-    summary: summary,
-  );
+  /// [part] is in place, with [detail] (its version, what runs): done when
+  /// installed from here, found otherwise.
+  RemotePartState _inPlace(RemotePart part, [String? detail]) {
+    final installed = _installed.contains(part);
+    final verdict = installed ? 'Installed now' : 'Already installed';
+    return RemotePartState(
+      part,
+      installed ? RemotePartStatus.installed : RemotePartStatus.present,
+      summary: detail == null ? verdict : '$verdict · $detail',
+    );
+  }
 
   RemotePartState? _runningOrFailed(RemotePart part) {
     if (_running == part) {
@@ -727,11 +1023,7 @@ class RemoteSetup extends _$RemoteSetup {
     const part = RemotePart.hermes;
     final version = hermesVersionOf(found.version) ?? found.version;
     if (hermesVersionSupported(found.version)) {
-      return RemotePartState(
-        part,
-        RemotePartStatus.present,
-        summary: 'Version $version',
-      );
+      return _inPlace(part, 'Version $version');
     }
     return RemotePartState(
       part,
@@ -775,7 +1067,7 @@ class RemoteSetup extends _$RemoteSetup {
           action: RemoteAction.update,
         );
       }
-      return _inPlace(part, version.isEmpty ? 'Installed' : 'Version $version');
+      return _inPlace(part, version.isEmpty ? null : 'Version $version');
     }
     if (!hermesVersionSupported(found.version)) {
       return const RemotePartState(
@@ -810,20 +1102,23 @@ class RemoteSetup extends _$RemoteSetup {
     return _restartRow(updated: false);
   }
 
-  static RemotePartState _restartRow({required bool updated}) =>
-      RemotePartState(
-        RemotePart.plugin,
-        RemotePartStatus.needsUser,
-        summary: updated
-            ? 'Updated: the Hermes dashboard must restart to run it'
-            : 'The Hermes dashboard must restart to serve it',
-        notes: const [
-          'Under systemd run the command below; otherwise stop `hermes '
-              'dashboard` and start it again. Then check again.',
-        ],
-        command: 'systemctl --user restart hermes-dashboard',
-        action: RemoteAction.checkAgain,
-      );
+  RemotePartState _restartRow({required bool updated}) {
+    final step = (_host ?? DashboardHost.unknown).restartDashboard;
+    return RemotePartState(
+      RemotePart.plugin,
+      RemotePartStatus.needsUser,
+      summary: updated
+          ? 'Updated: the Hermes dashboard must restart to run it'
+          : 'The Hermes dashboard must restart to serve it',
+      notes: [
+        if (_restartTimedOut)
+          'Hermuse asked it to restart; it did not come back in time.',
+        step.note,
+      ],
+      command: step.command,
+      action: RemoteAction.checkAgain,
+    );
+  }
 
   RemotePartState _jobsRow(_Found found) {
     const part = RemotePart.jobs;
@@ -906,9 +1201,8 @@ class RemoteSetup extends _$RemoteSetup {
           action: RemoteAction.install,
         );
       case ComputerState.daemonDown:
-        final denied = computer.detail.toLowerCase().contains(
-          'permission denied',
-        );
+        final denied = _dockerDenied(computer);
+        final group = (_host ?? DashboardHost.unknown).dockerGroup;
         return RemotePartState(
           part,
           RemotePartStatus.needsUser,
@@ -917,14 +1211,11 @@ class RemoteSetup extends _$RemoteSetup {
               : 'Installed but not running',
           notes: [
             if (computer.detail.isNotEmpty) computer.detail,
-            denied
-                ? 'Add the user that runs Hermes to the docker group: as '
-                      'that user, run this on the server, then check again:'
-                : 'Start it on the server, then check again:',
+            denied ? group.note : 'Start it on the server, then check again:',
           ],
           command: denied
-              ? r'sudo usermod -aG docker "$USER"'
-              : 'sudo systemctl start docker',
+              ? group.command
+              : 'sudo systemctl enable --now docker',
           action: RemoteAction.checkAgain,
         );
       case ComputerState.missing:
@@ -1051,13 +1342,25 @@ class RemoteSetup extends _$RemoteSetup {
         alert: true,
         action: RemoteAction.setUpModel,
       ),
-      _ => const RemotePartState(
-        part,
-        RemotePartStatus.present,
-        summary: 'Connected',
-      ),
+      _ =>
+        _installed.contains(part)
+            ? const RemotePartState(
+                part,
+                RemotePartStatus.installed,
+                summary: 'Connected now',
+              )
+            : const RemotePartState(
+                part,
+                RemotePartStatus.present,
+                summary: 'Already connected',
+              ),
     };
   }
+
+  /// Whether [onboarding] still waits for a model provider that answers.
+  static bool _modelMissing(OnboardingState? onboarding) =>
+      onboarding?.step == OnboardingStep.connections ||
+      onboarding?.step == OnboardingStep.runtimeCheck;
 
   static RemotePartState _needsPlugin(RemotePart part) => RemotePartState(
     part,
@@ -1080,6 +1383,10 @@ class RemoteSetup extends _$RemoteSetup {
   /// The bootstrap installs Docker (its first step), per its status detail.
   static bool _installsDocker(ComputerStatus status) =>
       status.detail.startsWith('Installing Docker');
+
+  /// Docker answers, but not to the account that runs Hermes.
+  static bool _dockerDenied(ComputerStatus status) =>
+      status.detail.toLowerCase().contains('permission denied');
 
   /// Whether plugin [version] is older than [hermusePluginVersion]; false
   /// when either is not `X.Y.Z`.
@@ -1108,6 +1415,19 @@ enum _Restart {
 
   /// It was updated: the dashboard still runs the version it loaded.
   update,
+}
+
+/// How a restart Hermuse asked the running plugin for went.
+enum _Restarted {
+  /// Another start of the dashboard answers.
+  done,
+
+  /// The running plugin cannot restart it: older than 0.3.0, its routes not
+  /// mounted, or a dashboard that cannot restart in place.
+  unavailable,
+
+  /// It did not come back within [RemoteSetupTiming.restartTimeout].
+  timedOut,
 }
 
 /// Hermes' record of the installed plugin.

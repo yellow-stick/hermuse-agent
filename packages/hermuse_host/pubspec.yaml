@@ -10,8 +10,10 @@ environment:
 dependencies:
   cliproxy_client: ^0.1.0
   crypto: ^3.0.7
+  dartssh2: ^4.1.0
   hermes_client: ^0.1.0
   http: ^1.6.0
+  path: ^1.9.1
 
 dev_dependencies:
   archive: ^4.3.0

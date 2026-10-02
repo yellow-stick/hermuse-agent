@@ -2,6 +2,7 @@
 build/
 .flutter-plugins-dependencies
 *.iml
+*.env
 .idea/
 .DS_Store
 coverage/
