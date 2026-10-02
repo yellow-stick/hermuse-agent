@@ -29,7 +29,7 @@
     </p>
   </description>
   <launchable type="desktop-id">com.yellowstick.hermuse_app.desktop</launchable>
-  <url type="homepage">https://yellow-stick.com</url>
+  <url type="homepage">https://hermuse.app</url>
   <content_rating type="oars-1.1"/>
   <releases>
     <release version="@VERSION@" date="@DATE@"/>

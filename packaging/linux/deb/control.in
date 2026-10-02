@@ -6,7 +6,7 @@ Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
 Section: utils
 Priority: optional
-Homepage: https://yellow-stick.com
+Homepage: https://hermuse.app
 Description: personal agent that works with Hermes Agent
  Hermuse Agent by Yellow Stick: ask in plain words and the agent gets to
  work in your calendar, your apps and on the web, checking with you before
