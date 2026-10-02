@@ -47,6 +47,7 @@ Running:
 
 ```bash
 cd apps/hermuse_app && flutter run -d linux   # or macos / windows / device
+tool/remote-app.sh                            # same on a headless KasmVNC display (VPS); http://<worktree>.localhost:6901, main checkout `main`
 tool/serve-web.sh                             # jaspr serve; http://localhost:8080 in the main checkout
 cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
