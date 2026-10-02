@@ -66,7 +66,7 @@ $UserPath = @(
 # UI copy the automation reads and clicks (OCR). It MUST equal the app's
 # English labels: a missing core label fails the flow, a missing secondary one
 # turns that GUI proof into a manual gate.
-$UiConnectTitle = 'Connect to a Hermes'
+$UiConnectTitle = 'Connect to a machine'
 $UiLocalChoice = 'Install Hermes on this computer'
 $UiKeystoreError = 'Secure storage unavailable'
 $UiRetryStage = 'Retry this stage'
