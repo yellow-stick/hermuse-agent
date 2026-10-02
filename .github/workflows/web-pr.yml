@@ -15,7 +15,8 @@
 #
 # Required check of main: `Web`, the last job, here and in the merge queue
 # (web-queue.yml). It runs whatever happened before it and passes only when
-# every job succeeded or was skipped.
+# every job succeeded or was skipped. When it passes it leaves the artifact
+# `web-passed-<tree>`: the merge queue builds nothing again for the same tree.
 #
 # Actions are pinned by commit (tag in the trailing comment).
 name: Web preview
@@ -43,6 +44,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       web: ${{ steps.paths.outputs.web }}
+      tree: ${{ steps.paths.outputs.tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,6 +70,7 @@ jobs:
             done <"$RUNNER_TEMP/changed"
           fi
           echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >>"$GITHUB_OUTPUT"
 
   build:
     name: Build
@@ -123,3 +126,17 @@ jobs:
             echo "::error::a job failed or was cancelled"
             exit 1
           fi
+
+      # A draft has no tree (changes skipped): nothing to record.
+      - name: Record the tree that passed
+        if: needs.changes.outputs.tree != ''
+        env:
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: echo "$TREE" >"$RUNNER_TEMP/tree"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Same condition as the step above.
+        if: needs.changes.outputs.tree != ''
+        with:
+          name: web-passed-${{ needs.changes.outputs.tree }}
+          path: ${{ runner.temp }}/tree
+          retention-days: 14
