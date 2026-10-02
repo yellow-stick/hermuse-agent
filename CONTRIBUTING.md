@@ -60,6 +60,20 @@ ran ([Validation per area](AGENTS.md#validation-per-area)):
 Generated files are regenerated, never edited by hand. Setup and commands are
 in the [README](README.md#development) and [AGENTS.md](AGENTS.md).
 
+### Orca worktree archiving
+
+Orca runs `tool/orca/archive-worktree.sh` from the repository's main checkout
+(`ORCA_ROOT_PATH`), including when removing an older worktree. On Linux the hook
+stops processes whose working directory or executable is inside the target
+worktree, escalating from SIGTERM to SIGKILL. It runs its own process sweep from
+`/` so its temporary helpers cannot be mistaken for worktree processes.
+Zombies are ignored; genuinely surviving processes still block removal.
+
+Run the isolated process regression tests with
+`python3 -B -m unittest discover -s tool/orca -p 'test_*.py' -v`.
+To use an updated hook for existing worktrees, update the copy in the main
+checkout; changing only the worktree's copy does not change the archive command.
+
 ## CI at a glance
 
 | When | What runs |
