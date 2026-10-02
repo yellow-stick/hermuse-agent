@@ -60,10 +60,11 @@ final class YsPalette {
   final YsColor paperClear;
 
   /// Hairline ring around raised [paper] and [paperClear] surfaces resting on
-  /// [canvas]. Transparent in dark, where tone alone lifts them.
+  /// [canvas]: dark ink in light, a faint light rim in dark, where a shadow
+  /// alone would not read.
   final YsColor paperEdge;
 
-  /// Resting shadow under the same raised surfaces. Transparent in dark.
+  /// Resting shadow under the same raised surfaces.
   final YsColor paperShadow;
 
   /// Solid neutral fill: tab track, avatar badges, monogram logos.
@@ -145,34 +146,36 @@ final class YsPalette {
   /// Soft shadow under a card lifted by the pointer.
   final YsColor shadow;
 
-  /// Yellow Stick dark theme: near-black canvas, warm professional yellow.
+  /// Yellow Stick dark theme: near-black canvas, raised surfaces a step
+  /// lighter with a faint rim, warm off-white text, warm professional
+  /// yellow. Text and ink stay readable (WCAG AA) on every surface.
   static const dark = YsPalette(
     canvas: YsColor(0xFF181819),
-    paper: YsColor(0xFF1F1F20),
-    paperClear: YsColor(0xCC383838),
-    paperEdge: YsColor(0x00000000),
-    paperShadow: YsColor(0x00000000),
-    neutralAmbient: YsColor(0xFF28292B),
-    neutralFilm: YsColor(0xFF3A3B3E),
-    neutralWash: YsColor(0x663A3B3E),
-    content: YsColor(0xFFFFFFFF),
-    contentMuted: YsColor(0x87F2F7FF),
-    contentSubtle: YsColor(0x61F1F6FF),
+    paper: YsColor(0xFF222224),
+    paperClear: YsColor(0xD9303033),
+    paperEdge: YsColor(0x13FFFFFF),
+    paperShadow: YsColor(0x38000000),
+    neutralAmbient: YsColor(0xFF2A2A2D),
+    neutralFilm: YsColor(0xFF3A3A3E),
+    neutralWash: YsColor(0x663A3A3E),
+    content: YsColor(0xFFF2F2F0),
+    contentMuted: YsColor(0x99F2F2F0),
+    contentSubtle: YsColor(0x6BF2F2F0),
     primary: YsColor(0xFFF5C21B),
     primary2: YsColor(0xFFFFD44D),
     primaryInk: YsColor(0xFFF5C21B),
     primaryMuted: YsColor(0x29F5C21B),
     primaryWash: YsColor(0x14F5C21B),
     primaryContent: YsColor(0xFF1A1505),
-    line: YsColor(0x1FFFFFFF),
+    line: YsColor(0x1FF2F2F0),
     backdrop: YsColor(0x8C000000),
     success: YsColor(0xFF07B123),
     successMuted: YsColor(0x2907B123),
-    info: YsColor(0xFF3B82F6),
-    infoMuted: YsColor(0x293B82F6),
-    error: YsColor(0xFFE5484D),
-    errorWash: YsColor(0x14E5484D),
-    errorContent: YsColor(0xFFFFFFFF),
+    info: YsColor(0xFF5B9BFF),
+    infoMuted: YsColor(0x295B9BFF),
+    error: YsColor(0xFFF0656A),
+    errorWash: YsColor(0x14F0656A),
+    errorContent: YsColor(0xFF1F0A0B),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
     shadow: YsColor(0x73000000),

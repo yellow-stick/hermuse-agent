@@ -207,6 +207,10 @@ void main() {
         );
       });
 
+      test('$name: a destructive button label reads on the error fill', () {
+        expect(contrast(p.errorContent, p.error), greaterThanOrEqualTo(4.5));
+      });
+
       test('$name: raised surfaces and fills stand apart from the canvas', () {
         expect(contrast(p.paper, p.canvas), greaterThanOrEqualTo(1.05));
         expect(

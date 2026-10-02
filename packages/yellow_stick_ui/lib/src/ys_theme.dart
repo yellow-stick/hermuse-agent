@@ -36,8 +36,8 @@ extension YsFlutterPalette on YsPalette {
   Color get shadowColor => Color(shadow.value);
 
   /// Resting elevation of a raised [paper]/[paperClear] surface on [canvas]:
-  /// a hairline ring and a soft two-step shadow. Empty in dark, where tone
-  /// alone lifts the surface. Web kit: `box-shadow: var(--raised)`.
+  /// a hairline ring and a soft two-step shadow (empty for a palette with
+  /// neither). Web kit: `box-shadow: var(--raised)`.
   List<BoxShadow> get raisedShadows =>
       paperEdge.alpha == 0 && paperShadow.alpha == 0
       ? const []

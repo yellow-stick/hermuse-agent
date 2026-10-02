@@ -17,7 +17,7 @@ List<StyleRule> get ysThemeStyles => [
           in YsPalette.light.byCssName.entries)
         '--$name': color.css,
       // Resting elevation of raised paper on the canvas (Flutter kit:
-      // `raisedShadows`); transparent rings in dark.
+      // `raisedShadows`).
       '--raised':
           '0 0 0 1px var(--paper-edge), 0 1px 2px var(--paper-shadow), '
           '0 4px 12px var(--paper-shadow)',
