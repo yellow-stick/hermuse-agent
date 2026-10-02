@@ -4,13 +4,18 @@
 #
 #   tag -> build (build.yml, signed) -> smoke (smoke-legs.yml, every leg) -+
 #                                    -> attest ----------------------------+-> release-approval -> publish
+#   publish -> published (published-release.yml: the public files downloaded, installed and started)
 #
 # Triggers: a pushed hermuse/v* tag, or a dispatch on an existing tag with
 # `tag` set to it, to run its release again:
 # `gh workflow run release.yml --ref hermuse/vX.Y.Z -f tag=hermuse/vX.Y.Z`.
-# This is the only workflow that publishes. Its first job runs in the
-# canonical repository only, so a fork never releases; every other job follows
-# it through `needs`.
+# The maintainer cuts a release with tool/release/release.sh: a release pull
+# request sets the pubspec version, the script tags its squash commit (only
+# administrators create hermuse/v* tags, so no workflow token can) and follows
+# this run to its end. A release candidate (hermuse/vX.Y.Z-rc.N, `release.sh
+# rc`) takes the same path and stays a pre-release. This is the only workflow
+# that publishes. Its first job runs in the canonical repository only, so a
+# fork never releases; every other job follows it through `needs`.
 #
 # The tag must have the form hermuse/vX.Y.Z[-rc.N], the run must be on it, it
 # must resolve to the run's commit and name exactly the pubspec version
@@ -28,6 +33,12 @@
 # listed under "Not yet proven" in the release notes; once they are checked,
 # promote it by hand: `gh release edit <tag> --prerelease=false --latest`. A
 # published asset is never replaced.
+#
+# Published release, after Publish: the files a user downloads, fetched by
+# their public URL without credentials, match the published SHA256SUMS.txt,
+# then install and start on clean macOS, Windows and Linux runners. The
+# release is public by then: a failure there fails this run but unpublishes
+# nothing; the fix goes into the next release (fix forward).
 #
 # Actions are pinned by commit (tag in the trailing comment, resolved
 # 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
@@ -325,6 +336,8 @@ jobs:
     concurrency:
       group: release-publish-${{ needs.tag.outputs.tag }}
       cancel-in-progress: false
+    outputs:
+      sha256sums: ${{ steps.tested.outputs.sha256sums }}
     env:
       GH_TOKEN: ${{ github.token }}
       REPOSITORY: ${{ github.repository }}
@@ -348,6 +361,7 @@ jobs:
           path: proof
 
       - name: The published bytes are the tested bytes
+        id: tested
         run: |
           set -euo pipefail
           cd dist
@@ -363,6 +377,7 @@ jobs:
             jq -e --arg n "$file" --arg sha "$(sha256sum "$file" | cut -d' ' -f1)" \
               '[.platforms[].artifacts[] | select(.name == $n and .sha256 == $sha)] | length == 1' VERSION.json
           done
+          echo "sha256sums=$(sha256sum SHA256SUMS.txt | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
 
       - name: No failed or missing automated result
         run: |
@@ -435,9 +450,25 @@ jobs:
             if [ "$PRERELEASE" = true ]; then
               echo "A release candidate stays a pre-release."
             else
-              echo "Once the points under \"Not yet proven\" of its notes are checked, make it the latest release:"
+              echo "Once the published-release check passed and the points under \"Not yet proven\" of its notes are checked, make it the latest release:"
               echo "\`gh release edit $TAG --prerelease=false --latest\`"
             fi
             echo
             cat proof/not-yet-proven.md
           } >>"$GITHUB_STEP_SUMMARY"
+
+  # The published files as a user gets them: downloaded by their public URL,
+  # installed and started on each platform. The release is public by then: a
+  # failure fails this run but unpublishes nothing (fix forward).
+  published:
+    name: Published release
+    needs: [tag, build, publish]
+    uses: ./.github/workflows/published-release.yml
+    permissions:
+      contents: read
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      sha256sums: ${{ needs.publish.outputs.sha256sums }}
+      deb_file: ${{ needs.build.outputs.deb_file }}
+      dmg_file: ${{ needs.build.outputs.dmg_file }}
+      windows_setup_file: ${{ needs.build.outputs.windows_setup_file }}

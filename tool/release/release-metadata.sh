@@ -3,6 +3,8 @@
 #
 # The only version source is the app pubspec: X.Y.Z+B or X.Y.Z-rc.N+B.
 #   Debian     X.Y.Z-B                    X.Y.Z~rc.N-B
+#   .deb file  hermuse-agent_X.Y.Z-B_amd64.deb (X.Y.Z-rc.N for an rc: GitHub
+#              renames a release asset whose name has a `~`)
 #   AppImage   Hermuse-Agent-X.Y.Z-linux-x86_64.AppImage (X.Y.Z-rc.N for an rc)
 #   macOS      Hermuse-Agent-X.Y.Z-macos-arm64.dmg
 #   Windows    Hermuse-Agent-X.Y.Z-windows-x64-Setup.exe
@@ -66,7 +68,7 @@ build_number=$build
 prerelease=$prerelease
 tag=$expected_tag
 deb_version=$deb_upstream-$build
-deb_file=hermuse-agent_$deb_upstream-${build}_amd64.deb
+deb_file=hermuse-agent_$app_version-${build}_amd64.deb
 appimage_file=Hermuse-Agent-$app_version-linux-x86_64.AppImage
 sources_file=hermuse-agent-$app_version-corresponding-sources.tar.gz
 fixture_deb_version=$fixture_upstream-$build

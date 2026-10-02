@@ -1,16 +1,21 @@
-# Continuous integration of pull requests and of the merge queue: the checks
-# and the unsigned packages of every platform (build.yml).
+# Continuous integration of pull requests and of the merge queue: the checks,
+# the unsigned packages of every platform (build.yml), then the compat smoke
+# legs on those packages (smoke-legs.yml).
 #
-#   changes -> build (build.yml: checks, Linux, macOS and Windows packages, assembly) -> CI
+#   changes -> build (build.yml: checks, Linux, macOS and Windows packages, assembly)
+#           -> compat (smoke-legs.yml, the compat legs) -> CI
 #
 # Triggers: a pull request opened, pushed to, reopened or marked ready for
 # review, and a merge group of the merge queue. A draft runs nothing: marking
 # it ready for review starts the run. A change of documentation only (docs/
 # and Markdown, except under hermes-plugin/ and the app's copy of it, whose
 # README and skill ship in the app) builds nothing. A new push cancels the run
-# it supersedes. No secret, no signing, no smoke leg: the installed-package
-# smoke tests run for a release (release.yml) and for a manual test run
-# (smoke.yml).
+# it supersedes. No secret, no signing. Of the installed-package smoke tests,
+# only the compat legs run here (filter ^compat-, about a minute each): the
+# .deb and the AppImage of the build installed and started in Ubuntu 24.04,
+# Ubuntu 26.04 and Debian 13 containers (APT and ELF resolution, a window).
+# They follow the build: no build, no compat legs. Every other scenario runs
+# for a release (release.yml) and for a manual test run (smoke.yml).
 #
 # A tree already checked builds nothing again: the `CI` gate of a passing run
 # leaves the artifact `ci-passed-<tree>`, and `changes` skips the build when a
@@ -114,9 +119,23 @@ jobs:
     permissions:
       contents: read
 
+  compat:
+    name: Compat
+    needs: build
+    # The compat legs on the packages of this build: skipped with the build.
+    uses: ./.github/workflows/smoke-legs.yml
+    permissions:
+      contents: read
+    with:
+      set: full
+      filter: ^compat-
+      commit: ${{ needs.build.outputs.commit }}
+      run_label: ${{ needs.build.outputs.run_label }}
+      fixture_deb_file: ${{ needs.build.outputs.fixture_deb_file }}
+
   ci:
     name: CI
-    needs: [changes, build]
+    needs: [changes, build, compat]
     # Gate: always runs, to fail when a job above failed or was cancelled.
     if: always()
     runs-on: ubuntu-24.04

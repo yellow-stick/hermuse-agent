@@ -7,7 +7,7 @@
 # Runs inside the builder image only. Builds from a copy of the checkout's
 # tracked and untracked-unignored files in $HERMUSE_RELEASE_WORK_DIR (default
 # /work), never in the checkout itself, and writes to dist/:
-#   hermuse-agent_<debver>_amd64.deb
+#   hermuse-agent_<version>-<build>_amd64.deb (Debian version <debver>)
 #   Hermuse-Agent-<version>-linux-x86_64.AppImage
 #   hermuse-agent-<version>-corresponding-sources.tar.gz
 #   SHA256SUMS.txt, VERSION.json
@@ -131,7 +131,7 @@ hermes_commit="$(sed -n "s/^const hermesReleaseCommit = '\([0-9a-f]\{40\}\)';$/\
 out="$work/out"
 deb="$("$HERMUSE_LINUX_DIR/package-deb.sh" "$bundle" "$out")"
 appimage="$("$HERMUSE_LINUX_DIR/package-appimage.sh" "$bundle" "$out")"
-[ "$deb" = "$out/${HERMUSE_DEB_PACKAGE}_${HERMUSE_DEB_VERSION}_amd64.deb" ] || hermuse_die "unexpected package $deb"
+[ "$deb" = "$out/$HERMUSE_DEB_FILE" ] || hermuse_die "unexpected package $deb"
 [ "$appimage" = "$out/$HERMUSE_APPIMAGE_NAME" ] || hermuse_die "unexpected AppImage $appimage"
 
 # Re-verify the embedded bridge and helper inside both finished artifacts.

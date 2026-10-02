@@ -89,6 +89,9 @@ fetch_lock_entry() {
 #   HERMUSE_APP_VERSION      0.1.0        (AppImage name, AppStream)
 #   HERMUSE_BUILD_NUMBER     1
 #   HERMUSE_DEB_VERSION      0.1.0-1      (`X.Y.Z-rc.N+B` → `X.Y.Z~rc.N-B`)
+#   HERMUSE_DEB_FILE         hermuse-agent_0.1.0-1_amd64.deb, named after the app
+#                            version (`hermuse-agent_X.Y.Z-rc.N-B_amd64.deb`): GitHub
+#                            renames a release asset whose name has a `~`
 hermuse_load_versions() {
   local pubspec="$HERMUSE_REPO/apps/hermuse_app/pubspec.yaml" raw core pre
   raw="$(sed -n 's/^version:[[:space:]]*//p' "$pubspec" | head -n 1 | tr -d "\"' \r")"
@@ -106,6 +109,7 @@ hermuse_load_versions() {
     HERMUSE_APP_VERSION="$core"
     HERMUSE_DEB_VERSION="$core-$HERMUSE_BUILD_NUMBER"
   fi
+  HERMUSE_DEB_FILE="${HERMUSE_DEB_PACKAGE}_$HERMUSE_APP_VERSION-${HERMUSE_BUILD_NUMBER}_amd64.deb"
   HERMUSE_APPIMAGE_NAME="Hermuse-Agent-$HERMUSE_APP_VERSION-linux-x86_64.AppImage"
 }
 
