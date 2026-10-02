@@ -28,9 +28,9 @@ of the project and of this flow.
    deployed for branches of this repository.
 4. **Review and merge queue.** The maintainer reviews every pull request (code
    owner). An approved one goes through the merge queue: the merged result is
-   packaged again and the installed packages are tested on fresh Ubuntu 22.04
-   and Debian 12 machines (`.deb` and AppImage), on newer distributions, on
-   macOS and on Windows before `main` moves.
+   checked and built again for every platform before `main` moves. The
+   installed-package smoke tests do not run there: they run for each release
+   and in manual test runs ([CI at a glance](#ci-at-a-glance)).
 5. **One squashed commit.** Pull requests are squash-merged only: the pull
    request title becomes the single commit on `main` (GitHub appends `(#N)`)
    and its description becomes the commit message.
@@ -76,13 +76,30 @@ checkout; changing only the worktree's copy does not change the archive command.
 
 ## CI at a glance
 
-| When | What runs |
-| --- | --- |
-| Draft pull request | Nothing |
-| Pull request ready for review | Checks, the Linux, macOS and Windows packages, the web build |
-| Merge queue | The same, plus the installed-package smoke tests and their report |
-| Every night, when `main` changed | Every smoke scenario: Docker variants, adopting an existing Hermes Agent, upgrade and removal |
-| Release tag | Every smoke scenario, then the release below |
+One workflow per scenario, in `.github/workflows/`:
+
+| When | Workflow | What runs |
+| --- | --- | --- |
+| Draft pull request | `ci.yml`, `web-pr.yml` | Nothing |
+| Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web build and its preview |
+| Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview |
+| Push to `main` touching the web app | `web-deploy.yml` | The web app deployed to https://hermuse.app |
+| Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below |
+| Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |
+
+`build.yml` (checks and packages), `smoke-legs.yml` (smoke scenarios) and
+`web-build.yml` are the steps these workflows share. The required checks of
+`main` are `CI` and `Web`: the last job of their workflows, which passes only
+when every job before it succeeded or was skipped (a draft, a change that does
+not concern it).
+
+The installed-package smoke tests run on fresh Ubuntu 22.04 and Debian 12
+machines (`.deb` and AppImage: first launch, Docker variants, adopting an
+existing Hermes Agent, upgrade and removal), on newer distributions, on macOS
+and on Windows. The maintainer runs them on a branch with
+`gh workflow run smoke.yml --ref <branch>`, all of them or, with
+`-f legs=<regex>`, those whose name matches (the names are listed in
+`packaging/smoke/proof_summary.py`); such a run never signs nor publishes.
 
 ## Releases
 
