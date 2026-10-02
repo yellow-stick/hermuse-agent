@@ -495,11 +495,7 @@ final class ChatController {
             );
           } else {
             out.add(
-              Message(
-                id: id,
-                author: Author.agent,
-                blocks: [update(null)],
-              ),
+              Message(id: id, author: Author.agent, blocks: [update(null)]),
             );
           }
         case 'tool':

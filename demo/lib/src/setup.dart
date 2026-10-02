@@ -10,7 +10,6 @@ import 'content.dart';
 import 'plugin_api.dart';
 import 'transport.dart';
 
-
 /// Riverpod overrides running the app on the demo: chats come from
 /// [DemoTransport], plugin routes from [demoPluginClient]. Ages of chats and
 /// records count back from [now] (page load by default).

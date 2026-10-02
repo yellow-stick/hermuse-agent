@@ -95,12 +95,7 @@ final class _DemoComputerServer {
   void sendState() {
     out.add(
       TextDataReceived(
-        jsonEncode({
-          't': 'geometry',
-          'w': 1280,
-          'h': 800,
-          'mode': mode,
-        }),
+        jsonEncode({'t': 'geometry', 'w': 1280, 'h': 800, 'mode': mode}),
       ),
     );
     out.add(
@@ -162,13 +157,11 @@ final class _DemoComputerServer {
           // Show the matching still per tab.
           out.add(
             BinaryDataReceived(
-              demoComputerFrame(
-                switch (id) {
-                  'compare' => 'energy',
-                  'stay' => 'annecy',
-                  _ => browserFrame,
-                },
-              ),
+              demoComputerFrame(switch (id) {
+                'compare' => 'energy',
+                'stay' => 'annecy',
+                _ => browserFrame,
+              }),
             ),
           );
         }

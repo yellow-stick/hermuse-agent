@@ -24,6 +24,7 @@ final class DemoRow {
     : role = 'assistant',
       tool = null,
       args = const {};
+
   /// A finished tool call; [text] is the summary its row shows. Browser
   /// calls (`browser_*`) also carry their [args] (page URL, element text),
   /// like the live transcript does.

@@ -144,11 +144,8 @@ http.Response _json(int status, Map<String, Object?> body) => http.Response(
   headers: {'content-type': 'application/json; charset=utf-8'},
 );
 
-http.Response _bytes(Uint8List body) => http.Response.bytes(
-  body,
-  200,
-  headers: {'content-type': 'image/jpeg'},
-);
+http.Response _bytes(Uint8List body) =>
+    http.Response.bytes(body, 200, headers: {'content-type': 'image/jpeg'});
 
 /// Frame for a snapshot request: the mapped frame of the transcript tool
 /// call the id points at. The Annecy booking steps always show the stay
