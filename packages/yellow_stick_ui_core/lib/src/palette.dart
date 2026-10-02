@@ -166,6 +166,8 @@ final class YsPalette {
     backdrop: YsColor(0x59000000),
     success: YsColor(0xFF0B8A1E),
     successMuted: YsColor(0x290B8A1E),
+    info: YsColor(0xFF2563EB),
+    infoMuted: YsColor(0x292563EB),
     error: YsColor(0xFFD92D20),
     errorWash: YsColor(0x14D92D20),
     logoSurface: YsColor(0xFFFFFFFF),
