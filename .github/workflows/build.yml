@@ -1,0 +1,558 @@
+# Build of Hermuse Agent for every platform, called by the pipelines that need
+# it: the checks, then the Linux .deb + AppImage (amd64, from one Flutter
+# bundle, with the corresponding sources and the upgrade fixture of the
+# lifecycle smoke), the macOS .dmg (arm64) and the Windows Setup.exe (x64),
+# assembled into one set of release files.
+#
+#   metadata -> checks -> package (Linux) ----+
+#                      -> package-macos ------+-> assemble
+#                      -> package-windows ----+
+#
+# Callers (workflow_call only), each passing its scenario as inputs:
+# - ci.yml: pull requests ready for review and merge groups, unsigned;
+# - smoke.yml: a manual test run, unsigned, the macOS/Windows package only
+#   when a selected leg needs it (`package_macos`, `package_windows`);
+# - release.yml: a release tag, `signing: true`, `tag` checked against the
+#   pubspec version by tool/release/release-metadata.sh.
+# Every job builds the commit of the calling run (github.sha). The outputs are
+# the release metadata the smoke legs and the publication need.
+#
+# Signing: with `signing: true` the macOS and Windows package jobs take their
+# secrets from the `signing` environment (no reviewer: it deploys from
+# hermuse/v* tags only, which only administrators create); a platform without
+# them builds unsigned and records why. Without it no job sees a secret.
+#
+# Actions are pinned by commit (tag in the trailing comment, resolved
+# 2026-09-29 with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`); external
+# tools by URL + SHA-256 in tool/release/toolchain.lock.json.
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      signing:
+        description: Sign the macOS and Windows packages with the secrets of the `signing` environment
+        type: boolean
+        default: false
+      package_macos:
+        description: Build and package macOS
+        type: boolean
+        default: true
+      package_windows:
+        description: Build and package Windows
+        type: boolean
+        default: true
+      tag:
+        description: Release tag (hermuse/vX.Y.Z[-rc.N]); the metadata fails unless it names exactly the pubspec version
+        type: string
+        default: ''
+    outputs:
+      commit:
+        description: The built commit
+        value: ${{ jobs.metadata.outputs.commit }}
+      run_label:
+        description: Run id and attempt, labelling the smoke results
+        value: ${{ jobs.metadata.outputs.run_label }}
+      app_version:
+        description: Version of the app pubspec without its build number
+        value: ${{ jobs.metadata.outputs.app_version }}
+      prerelease:
+        description: Whether the version is a release candidate
+        value: ${{ jobs.metadata.outputs.prerelease }}
+      deb_file:
+        description: File name of the .deb
+        value: ${{ jobs.metadata.outputs.deb_file }}
+      fixture_deb_file:
+        description: File name of the upgrade fixture .deb (lifecycle smoke, never published)
+        value: ${{ jobs.metadata.outputs.fixture_deb_file }}
+      dmg_file:
+        description: File name of the macOS .dmg
+        value: ${{ jobs.metadata.outputs.dmg_file }}
+      windows_setup_file:
+        description: File name of the Windows Setup.exe
+        value: ${{ jobs.metadata.outputs.windows_setup_file }}
+
+env:
+  BUILDER_IMAGE: hermuse-linux-builder:ci
+
+jobs:
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.meta.outputs.commit }}
+      run_label: ${{ steps.meta.outputs.run_label }}
+      app_version: ${{ steps.meta.outputs.app_version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      deb_version: ${{ steps.meta.outputs.deb_version }}
+      deb_file: ${{ steps.meta.outputs.deb_file }}
+      appimage_file: ${{ steps.meta.outputs.appimage_file }}
+      sources_file: ${{ steps.meta.outputs.sources_file }}
+      fixture_deb_version: ${{ steps.meta.outputs.fixture_deb_version }}
+      fixture_deb_file: ${{ steps.meta.outputs.fixture_deb_file }}
+      dmg_file: ${{ steps.meta.outputs.dmg_file }}
+      windows_setup_file: ${{ steps.meta.outputs.windows_setup_file }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Release metadata from the app pubspec
+        id: meta
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ github.sha }}
+          RUN_LABEL: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          { echo "commit=$COMMIT"; echo "run_label=$RUN_LABEL"; } | tee -a "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            tool/release/release-metadata.sh --tag "$TAG" | tee -a "$GITHUB_OUTPUT"
+          else
+            tool/release/release-metadata.sh | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  checks:
+    name: Checks
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: Pinned lint tools
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          bin="$RUNNER_TEMP/lint"
+          mkdir -p "$bin"
+          fetch() {
+            curl -fsSL --proto '=https' --retry 3 -o "$bin/$1.archive" "$(jq -er ".ci.$1.url" "$lock")"
+            echo "$(jq -er ".ci.$1.sha256" "$lock")  $bin/$1.archive" | sha256sum -c -
+          }
+          fetch actionlint
+          tar -xzf "$bin/actionlint.archive" -C "$bin" actionlint
+          fetch shellcheck
+          tar -xJf "$bin/shellcheck.archive" -C "$bin" --strip-components=1 \
+            "shellcheck-v$(jq -er .ci.shellcheck.version "$lock")/shellcheck"
+          echo "$bin" >>"$GITHUB_PATH"
+
+      - name: Lint the workflows and the release scripts
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files packaging tool/release | while read -r file; do
+            case $file in
+              *.sh) echo "$file" ;;
+              *) head -n 1 "$file" | grep -Eq '^#!.*[/ ](ba|da)?sh( |$)' && echo "$file" || true ;;
+            esac
+          done)
+          [ "${#scripts[@]}" -gt 0 ] || { echo "::error::no release scripts found"; exit 1; }
+          printf 'shellcheck: %s\n' "${scripts[@]}"
+          shellcheck -x -P SCRIPTDIR "${scripts[@]}" </dev/null
+          for file in "${scripts[@]}"; do
+            if head -n 1 "$file" | grep -Eq '^#!.*[/ ]sh( |$)'; then sh -n "$file"; else bash -n "$file"; fi
+          done
+          actionlint -shellcheck "$(command -v shellcheck)"
+          python3 -m py_compile packaging/smoke/*.py packaging/smoke/guest/*.py
+
+      - name: The PowerShell release scripts parse
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(git ls-files 'packaging/*.ps1' 'tool/release/*.ps1')
+          if ($files.Count -eq 0) { throw 'no PowerShell release scripts found' }
+          $failed = $false
+          foreach ($file in $files) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file).Path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) {
+              $failed = $true
+              foreach ($e in $errors) { "::error file=$file,line=$($e.Extent.StartLineNumber)::$($e.Message)" }
+            } else { "parsed: $file" }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Linux helper shell tests
+        run: sh packaging/linux/tests/run.sh
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Builder image (Ubuntu 22.04, Flutter and Melos from toolchain.lock.json, no JDK)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tool/release
+          file: packaging/linux/builder.Dockerfile
+          tags: ${{ env.BUILDER_IMAGE }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermuse-linux-builder
+          cache-to: type=gha,scope=hermuse-linux-builder,mode=max
+
+      - name: Dart workspace checks in the builder
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$BUILDER_IMAGE" bash -euo pipefail -c '
+            flutter --version
+            melos --version
+            flutter pub get --enforce-lockfile
+            (cd apps/hermuse_app && dart run tool/sync_plugin_assets.dart)
+            melos run analyze
+            melos run format:check
+            melos run test:dart
+            melos run test:flutter
+          '
+
+      - name: Bundled plugin assets match hermes-plugin/hermuse
+        run: |
+          set -euo pipefail
+          drift=$(git status --porcelain -- apps/hermuse_app/assets/hermes-plugin)
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::apps/hermuse_app/assets/hermes-plugin is stale: run 'dart run tool/sync_plugin_assets.dart' in apps/hermuse_app"
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: 0.12.20
+          checksum: 6590717592ace991ff83a63fef799e3ad9d33ecc8f96c5d6bdd732496e79337f
+          enable-cache: false
+
+      - name: Pinned Hermes commit, its installer script digests, plugin tests against it
+        run: |
+          set -euo pipefail
+          installer=packages/hermuse_host/lib/src/installer.dart
+          pin=$(sed -n "s/^const hermesReleaseCommit = '\([0-9a-f]\{40\}\)';$/\1/p" "$installer")
+          [ -n "$pin" ] || { echo "::error::no hermesReleaseCommit in installer.dart"; exit 1; }
+          src="$RUNNER_TEMP/hermes-agent"
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 https://github.com/NousResearch/hermes-agent "$pin"
+          git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          [ "$(git -C "$src" rev-parse HEAD)" = "$pin" ]
+          # The app runs only the pinned commit's installer scripts, byte for byte.
+          for script in install.sh=hermesInstallShSha256 install.ps1=hermesInstallPs1Sha256; do
+            want=$(tr -d ' \n' <"$installer" | grep -o "const${script#*=}='[0-9a-f]\{64\}'" | cut -d"'" -f2 || true)
+            got=$(git -C "$src" cat-file blob "HEAD:scripts/${script%%=*}" | sha256sum | cut -d' ' -f1)
+            if [ -z "$want" ] || [ "$got" != "$want" ]; then
+              echo "::error::scripts/${script%%=*} at $pin has SHA-256 $got, installer.dart pins '${want:-nothing}' (${script#*=})"
+              exit 1
+            fi
+            echo "scripts/${script%%=*} at $pin: $got"
+          done
+          (cd "$src" && uv sync --frozen --extra dev --python 3.12)
+          cd hermes-plugin/hermuse
+          HERMES_AGENT_DIR="$src" "$src/.venv/bin/python" -m pytest tests/ -q
+
+  package:
+    name: Build and package (Linux)
+    needs: [metadata, checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Builder image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tool/release
+          file: packaging/linux/builder.Dockerfile
+          tags: ${{ env.BUILDER_IMAGE }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermuse-linux-builder
+          cache-to: type=gha,scope=hermuse-linux-builder,mode=max
+
+      - name: Build the release (packaging/linux/build-release.sh)
+        run: |
+          mkdir -p "$RUNNER_TEMP/hermuse-work"
+          docker run --rm -v "$PWD:/src" -v "$RUNNER_TEMP/hermuse-work:/work" -w /src \
+            "$BUILDER_IMAGE" packaging/linux/build-release.sh
+
+      - name: Artifacts match the release metadata
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          DEB_VERSION: ${{ needs.metadata.outputs.deb_version }}
+          DEB_FILE: ${{ needs.metadata.outputs.deb_file }}
+          APPIMAGE_FILE: ${{ needs.metadata.outputs.appimage_file }}
+          SOURCES_FILE: ${{ needs.metadata.outputs.sources_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$DEB_FILE" "$APPIMAGE_FILE" "$SOURCES_FILE" SHA256SUMS.txt VERSION.json | sort)
+          actual=$(find . -maxdepth 1 -type f -printf '%P\n' | sort)
+          [ "$actual" = "$expected" ] || { ls -l; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          sha256sum -c SHA256SUMS.txt
+          [ "$(wc -l <SHA256SUMS.txt)" = 4 ]
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg deb "$DEB_VERSION" '
+            .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and .app.debian_version == $deb' VERSION.json
+
+      - name: Upgrade fixture (lower Debian version, never published)
+        env:
+          DEB_VERSION: ${{ needs.metadata.outputs.deb_version }}
+          FIXTURE_VERSION: ${{ needs.metadata.outputs.fixture_deb_version }}
+          FIXTURE_FILE: ${{ needs.metadata.outputs.fixture_deb_file }}
+        run: |
+          set -euo pipefail
+          dpkg --compare-versions "$FIXTURE_VERSION" lt "$DEB_VERSION"
+          docker run --rm -v "$PWD:/src" -v "$RUNNER_TEMP/hermuse-work:/work" -w /src \
+            -e HERMUSE_DEB_VERSION_OVERRIDE="$FIXTURE_VERSION" -e HERMUSE_TOOLS_CACHE=/work/cache "$BUILDER_IMAGE" \
+            packaging/linux/package-deb.sh /work/bundle /work/fixture
+          mkdir -p upgrade-fixture
+          cp "$RUNNER_TEMP/hermuse-work/fixture/$FIXTURE_FILE" upgrade-fixture/
+          [ "$(dpkg-deb -f "upgrade-fixture/$FIXTURE_FILE" Version)" = "$FIXTURE_VERSION" ]
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-dist
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/SHA256SUMS.txt
+            dist/VERSION.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-sources
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-upgrade-fixture
+          path: upgrade-fixture/*.deb
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  package-macos:
+    name: Build and package (macOS)
+    needs: [metadata, checks]
+    # Input: a manual test run (smoke.yml) leaves out a platform no selected leg needs.
+    if: inputs.package_macos
+    runs-on: macos-15
+    timeout-minutes: 150
+    environment: ${{ inputs.signing && 'signing' || '' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: Xcode and the Flutter SDK from toolchain.lock.json
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          sudo xcode-select -s "$(jq -er .macos.xcode.path "$lock")"
+          xcodebuild -version
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/flutter.zip" \
+            "$(jq -er '.flutter.archives["macos-arm64"].url' "$lock")"
+          echo "$(jq -er '.flutter.archives["macos-arm64"].sha256' "$lock")  $RUNNER_TEMP/flutter.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/flutter.zip" -d "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/flutter.zip"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-cli-animations
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+
+      - name: Build, sign when the signing environment allows it, package (packaging/macos/build-release.sh)
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ inputs.signing && secrets.MACOS_DEVELOPER_ID_P12_BASE64 || '' }}
+          MACOS_DEVELOPER_ID_P12_PASSWORD: ${{ inputs.signing && secrets.MACOS_DEVELOPER_ID_P12_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ inputs.signing && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_NOTARY_KEY_ID: ${{ inputs.signing && secrets.APPLE_NOTARY_KEY_ID || '' }}
+          APPLE_NOTARY_ISSUER_ID: ${{ inputs.signing && secrets.APPLE_NOTARY_ISSUER_ID || '' }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ inputs.signing && secrets.APPLE_NOTARY_KEY_P8_BASE64 || '' }}
+        run: packaging/macos/build-release.sh
+
+      - name: Artifacts match the release metadata
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          DMG_FILE: ${{ needs.metadata.outputs.dmg_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$DMG_FILE" macos/SHA256SUMS.txt macos/VERSION.json | sort)
+          actual=$(find . -type f | sed 's|^\./||' | sort)
+          [ "$actual" = "$expected" ] || { find . -type f; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          shasum -a 256 -c macos/SHA256SUMS.txt
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg dmg "$DMG_FILE" '
+            .os == "macos" and .arch == "arm64" and .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and [.artifacts[].name] == [$dmg]' macos/VERSION.json
+          jq -r '"macOS signing: signed=\(.signing.signed) notarized=\(.signing.notarized) stapled=\(.signing.stapled) \(.signing.reason // "")"' \
+            macos/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-dist
+          path: |
+            dist/*.dmg
+            dist/macos/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when a step above failed.
+        if: always()
+        with:
+          name: macos-package-evidence
+          path: ${{ runner.temp }}/hermuse-macos-release/evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  package-windows:
+    name: Build and package (Windows)
+    needs: [metadata, checks]
+    # Input: a manual test run (smoke.yml) leaves out a platform no selected leg needs.
+    if: inputs.package_windows
+    runs-on: windows-2025
+    timeout-minutes: 150
+    environment: ${{ inputs.signing && 'signing' || '' }}
+    # No `permissions` key: the job keeps the caller's (a nested job cannot ask
+    # for more). release.yml grants `id-token: write` for the Azure login (OIDC)
+    # of Artifact Signing, whose federated credential trusts the subject
+    # repo:<owner>/<repo>:environment:signing; the unsigned callers grant
+    # `contents: read` only, also on pull requests from forks or Dependabot.
+    env:
+      # A partial Azure identity still logs in, and fails loudly.
+      AZURE_LOGIN: ${{ inputs.signing && (secrets.AZURE_CLIENT_ID != '' || secrets.AZURE_TENANT_ID != '' || secrets.AZURE_SUBSCRIPTION_ID != '') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - name: The Flutter SDK from toolchain.lock.json
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $entry = (Get-Content tool/release/toolchain.lock.json -Raw | ConvertFrom-Json).flutter.archives.'windows-x64'
+          $zip = Join-Path $env:RUNNER_TEMP flutter.zip
+          Invoke-WebRequest -Uri $entry.url -OutFile $zip
+          $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+          if ($sha -ne $entry.sha256) { throw "Flutter archive sha256 $sha, toolchain.lock.json $($entry.sha256)" }
+          & "$env:SystemRoot\System32\tar.exe" -xf $zip -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE) { throw "tar exited with $LASTEXITCODE" }
+          Remove-Item $zip
+          $bin = Join-Path $env:RUNNER_TEMP 'flutter\bin'
+          & "$bin\flutter.bat" config --no-analytics --no-cli-animations
+          if ($LASTEXITCODE) { throw "flutter config exited with $LASTEXITCODE" }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+
+      - name: Azure login for Artifact Signing (OIDC, signing environment)
+        # Runtime state: a signing run whose `signing` environment holds an Azure identity.
+        if: env.AZURE_LOGIN == 'true'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build, sign when the signing environment allows it, package (packaging/windows/build-release.ps1)
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_ENDPOINT: ${{ inputs.signing && secrets.WINDOWS_SIGNING_ENDPOINT || '' }}
+          WINDOWS_SIGNING_ACCOUNT: ${{ inputs.signing && secrets.WINDOWS_SIGNING_ACCOUNT || '' }}
+          WINDOWS_SIGNING_PROFILE: ${{ inputs.signing && secrets.WINDOWS_SIGNING_PROFILE || '' }}
+        run: |
+          pwsh -NoProfile -File packaging/windows/build-release.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Artifacts match the release metadata
+        shell: bash
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+          APP_VERSION: ${{ needs.metadata.outputs.app_version }}
+          SETUP_FILE: ${{ needs.metadata.outputs.windows_setup_file }}
+        run: |
+          set -euo pipefail
+          cd dist
+          expected=$(printf '%s\n' "$SETUP_FILE" windows/SHA256SUMS.txt windows/VERSION.json | sort)
+          actual=$(find . -type f | sed 's|^\./||' | sort)
+          [ "$actual" = "$expected" ] || { find . -type f; echo "::error::dist/ does not hold exactly the expected files"; exit 1; }
+          sha256sum -c windows/SHA256SUMS.txt
+          jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg setup "$SETUP_FILE" '
+            .os == "windows" and .arch == "x64" and .source.commit == $commit and .source.dirty == false
+            and .app.version == $version and [.artifacts[].name] == [$setup]' windows/VERSION.json
+          jq -r '"Windows signing: signed=\(.signing.signed) method=\(.signing.method) \(.signing.reason // "")"' \
+            windows/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-dist
+          path: |
+            dist/*.exe
+            dist/windows/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  assemble:
+    name: Assemble the release files
+    needs: [metadata, package, package-macos, package-windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.metadata.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-dist
+          path: in/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-sources
+          path: in/linux
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-dist
+          path: in/macos
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-dist
+          path: in/windows
+
+      - name: One release of every platform (tool/release/assemble-release.sh)
+        env:
+          COMMIT: ${{ needs.metadata.outputs.commit }}
+        run: tool/release/assemble-release.sh --commit "$COMMIT" --linux in/linux --macos in/macos --windows in/windows --out release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

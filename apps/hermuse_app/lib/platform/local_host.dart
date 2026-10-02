@@ -9,6 +9,8 @@ import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_host/hermuse_host.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 
+import 'plugin_bundle.dart';
+
 /// The desktop host, or null on phones (overridden in `main()`).
 final localHostProvider = Provider<LocalHermesHost?>((_) => null);
 
@@ -242,9 +244,6 @@ final class LocalHermesHost {
     await _supervisor?.stop();
   }
 }
-
-/// Asset folder holding the bundled plugin (see `tool/sync_plugin_assets.dart`).
-const pluginAssetPrefix = 'assets/hermes-plugin/hermuse/';
 
 /// Builds the staged installer for [hermesHome] (desktop install flow), using
 /// the official release script like Hermes Desktop. With a [journalPath]

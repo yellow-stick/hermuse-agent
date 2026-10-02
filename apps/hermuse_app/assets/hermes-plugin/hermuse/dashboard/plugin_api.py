@@ -2,11 +2,13 @@
 
 Loaded by the dashboard plugin system (``hermes_cli/web_server_dashboard.py``)
 from this file path via ``importlib`` — NOT as part of the plugin package — so
-it adds its parent dir to ``sys.path`` to import the sibling ``store`` module
-(stdlib-only, shared with the agent tools) and the ``computer`` package. HTTP
-auth is enforced by Hermes' existing ``/api/`` gate; the computer WebSocket
-(which that gate does not cover) takes a single-use ticket from
-``POST /computer/ticket``, like Hermes' own ``/api/display/ws``.
+it adds its parent dir to ``sys.path`` to import the sibling ``store`` and
+``subscription_bridge`` modules (stdlib-only, shared with the agent plugin),
+``dashboard_restart`` and the ``computer`` package. HTTP auth (the
+``/bridge/*`` and ``/dashboard/*`` routes included) is enforced by Hermes'
+existing ``/api/`` gate; the computer WebSocket (which that gate does not
+cover) takes a single-use ticket from ``POST /computer/ticket``, like Hermes'
+own ``/api/display/ws``.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import logging
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket
 from fastapi.responses import FileResponse, Response
@@ -25,7 +27,9 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import dashboard_restart  # noqa: E402
 import store  # noqa: E402
+import subscription_bridge  # noqa: E402
 from computer import runtime as computer_runtime  # noqa: E402
 from computer import setup as computer_setup  # noqa: E402
 from computer import state as computer_state  # noqa: E402
@@ -41,6 +45,9 @@ try:
     computer_state.reset_control(get_hermes_home())
 except OSError as exc:
     log.warning("hermuse computer: could not reset control: %s", exc)
+
+# A bridge set up earlier comes back with the dashboard (server reboot, crash).
+subscription_bridge.start_if_configured(get_hermes_home())
 
 
 def _root() -> Path:
@@ -330,6 +337,76 @@ def cron_disable():
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
     return {"removed": remove_all(cron_jobs)}
+
+
+# --- Dashboard ---------------------------------------------------------------
+
+
+@router.get("/dashboard")
+def dashboard_status():
+    """This start of the dashboard process: ``boot`` changes once it restarted."""
+    return {"boot": dashboard_restart.BOOT}
+
+
+@router.post("/dashboard/restart", status_code=202)
+def restart_dashboard():
+    """Restarts this dashboard in place once the answer is out (see ``dashboard_restart``)."""
+    try:
+        argv = dashboard_restart.command_line()
+    except dashboard_restart.RestartUnavailable as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    if not dashboard_restart.schedule(argv):
+        raise HTTPException(status_code=409, detail="The dashboard is already restarting.")
+    return {"boot": dashboard_restart.BOOT}
+
+
+# --- Subscription bridge ---------------------------------------------------
+
+
+class BridgeAccountBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=2, max_length=subscription_bridge.MAX_ACCOUNT_BYTES)
+
+
+def _bridge_call(action: Callable[..., Any], *args: Any) -> Any:
+    """Bridge failures as HTTP: bad input 400, unavailable here/now 409, broken 502."""
+    try:
+        return action(get_hermes_home(), *args)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except subscription_bridge.BridgeUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except subscription_bridge.BridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/bridge/status")
+def bridge_status():
+    return subscription_bridge.status(get_hermes_home())
+
+
+@router.post("/bridge/ensure")
+def bridge_ensure():
+    return _bridge_call(subscription_bridge.ensure)
+
+
+@router.post("/bridge/accounts")
+def bridge_upload_account(payload: BridgeAccountBody):
+    return _bridge_call(subscription_bridge.upload_account, payload.name, payload.content)
+
+
+# ``:path`` so a name with "/" (``..%2Fx.json``) reaches the validation (400)
+# instead of missing the route.
+@router.delete("/bridge/accounts/{name:path}")
+def bridge_delete_account(name: str):
+    if not _bridge_call(subscription_bridge.delete_account, name):
+        raise _not_found("account")
+    return {"ok": True, "name": name}
+
+
+@router.get("/bridge/models")
+def bridge_models():
+    return _bridge_call(subscription_bridge.models)
 
 
 # --- Computer --------------------------------------------------------------

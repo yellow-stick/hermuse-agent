@@ -11,12 +11,13 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import 'package:hermuse_host/hermuse_host.dart'
-    show DetectedHermes, localInstanceId;
+    show DetectedHermes, RemoteInstallOutcome, localInstanceId;
 
 import '../computer/computer_viewer.dart';
 import '../host/install_flow.dart';
 import '../host/linux_setup.dart';
 import '../host/linux_setup_gate.dart';
+import '../host/remote_install.dart';
 import '../platform/local_host.dart';
 import '../onboarding/components.dart';
 import '../onboarding/connections.dart';
@@ -30,6 +31,8 @@ import '../product/library.dart';
 import '../product/route.dart';
 import '../sidebar/side_chats.dart';
 import '../thread/thread_view.dart';
+import 'app_update.dart';
+import 'app_update_dialog.dart';
 import 'brand.dart';
 import 'chat_scope.dart';
 import 'instances.dart';
@@ -53,6 +56,8 @@ final class HermuseApp extends StatefulWidget {
 final class HermuseAppState extends State<HermuseApp> {
   ChatListenable? _chat;
 
+  /// The update prompt shows once per launch, above every route.
+  var _updateShown = false;
   @override
   void dispose() {
     _chat?.dispose();
@@ -88,11 +93,15 @@ final class HermuseAppState extends State<HermuseApp> {
                       color: YsPalette.dark.canvasColor,
                       child: KeystoreErrorScreen(error: keystoreError),
                     )
-                  : _Root(
-                      controllerOverride: widget.controllerOverride,
-                      onAdopt: _adopt,
-                      chat: () => _chat!,
-                      current: () => _chat?.controller,
+                  : _UpdateGate(
+                      shown: _updateShown,
+                      onShown: () => _updateShown = true,
+                      child: _Root(
+                        controllerOverride: widget.controllerOverride,
+                        onAdopt: _adopt,
+                        chat: () => _chat!,
+                        current: () => _chat?.controller,
+                      ),
                     ),
             ),
           ),
@@ -107,6 +116,8 @@ enum _Route {
   chat,
   welcome,
   addInstance,
+  remoteInstall,
+  remoteUninstall,
   install,
   instances,
   onboarding,
@@ -140,6 +151,8 @@ final class _Root extends ConsumerStatefulWidget {
 final class _RootState extends ConsumerState<_Root> {
   _Route _route = _Route.chat;
   String? _overlayInstanceId;
+  _Route _connectReturn = _Route.chat;
+  RemoteInstallOutcome? _remoteOutcome;
 
   /// The assistant keeps its state (the checklist's animations) when it
   /// moves between the full screen and the overlay.
@@ -147,6 +160,8 @@ final class _RootState extends ConsumerState<_Root> {
 
   /// Whether the Linux setup assistant runs (Linux only, see `main()`).
   bool get _linux => ref.read(linuxSetupServicesProvider) != null;
+
+  bool get _desktop => ref.read(localHostProvider) != null;
 
   @override
   void initState() {
@@ -163,7 +178,9 @@ final class _RootState extends ConsumerState<_Root> {
     if (next.phase is! SetupFinished) return;
     switch (next.goal) {
       case LinuxSetupGoal.connect:
-        setState(() => _route = _Route.addInstance);
+        setState(
+          () => _route = _desktop ? _Route.remoteInstall : _Route.addInstance,
+        );
       case LinuxSetupGoal.local:
         setState(() {
           _route = _Route.onboarding;
@@ -179,20 +196,45 @@ final class _RootState extends ConsumerState<_Root> {
     }
   }
 
-  /// Connect to a Hermes server; on Linux the keyring comes first.
+  /// Connect to a machine; on Linux the keyring comes first.
   void _connect() {
+    _connectReturn = _route == _Route.instances
+        ? _Route.instances
+        : _Route.chat;
+    _remoteOutcome = null;
     if (_linux && !ref.read(linuxSetupProvider).keystoreVerified) {
       unawaited(
         ref.read(linuxSetupProvider.notifier).prepare(LinuxSetupGoal.connect),
       );
       return;
     }
-    setState(() => _route = _Route.addInstance);
+    setState(
+      () => _route = _desktop ? _Route.remoteInstall : _Route.addInstance,
+    );
+  }
+
+  void _remoteInstalled(RemoteInstallOutcome outcome) => setState(() {
+    _remoteOutcome = outcome;
+    _route = _Route.addInstance;
+  });
+
+  /// Back where connecting started (the instances or the chat): the URL and
+  /// SSH forms switch to each other with their own buttons, not on cancel.
+  void _cancelAdd() => setState(() {
+    _remoteOutcome = null;
+    _route = _connectReturn;
+  });
+
+  @override
+  void dispose() {
+    _remoteOutcome = null;
+    super.dispose();
   }
 
   /// A Hermes was just saved: what it has shows first, its chat opens behind.
   void _added(String instanceId) {
     setState(() {
+      _remoteOutcome = null;
       _route = _Route.components;
       _overlayInstanceId = instanceId;
     });
@@ -242,19 +284,45 @@ final class _RootState extends ConsumerState<_Root> {
     final active = ref.watch(activeThreadProvider);
     final instanceList = instances.value;
     final thread = active.value;
-    // Add a Hermes stays on screen while it saves the first instance, until
-    // it hands over.
-    if (instanceList != null &&
-        (instanceList.isEmpty ||
-            (thread == null && _route == _Route.addInstance))) {
+    // Connection setup does not depend on an open chat. Keep its form alive
+    // while the first instance saves to the keystore and registry.
+    final connection = switch (_route) {
+      _Route.remoteInstall when _desktop => RemoteInstallScreen(
+        onDone: _remoteInstalled,
+        onCancel: () => setState(() => _route = _connectReturn),
+        onDashboard: () => setState(() => _route = _Route.addInstance),
+      ),
+      _Route.remoteUninstall when _desktop => RemoteInstallScreen(
+        remove: true,
+        initialHost: instanceList
+            ?.where((i) => i.id == _overlayInstanceId)
+            .map((i) => i.baseUrl.host)
+            .firstOrNull,
+        onDone: _remoteInstalled,
+        onCancel: () => setState(() => _route = _Route.instances),
+      ),
+      _Route.addInstance => AddInstanceScreen(
+        initialUrl: _remoteOutcome?.baseUrl,
+        initialUsername: _remoteOutcome?.username,
+        initialPassword: _remoteOutcome?.password,
+        autoProbe: _remoteOutcome != null,
+        onDone: _added,
+        onCancel: _cancelAdd,
+        // Not after SSH setup handed its dashboard over: SSH is done.
+        onSsh: _desktop && _remoteOutcome == null
+            ? () => setState(() => _route = _Route.remoteInstall)
+            : null,
+      ),
+      _ => null,
+    };
+    if (connection != null) {
+      return ColoredBox(color: palette.canvasColor, child: connection);
+    }
+    if (instanceList != null && instanceList.isEmpty) {
       final host = ref.read(localHostProvider);
       return ColoredBox(
         color: palette.canvasColor,
         child: switch (_route) {
-          _Route.addInstance => AddInstanceScreen(
-            onDone: _added,
-            onCancel: () => setState(() => _route = _Route.chat),
-          ),
           _Route.install when host != null => _InstallRoute(
             host: host,
             onDone: () => setState(() => _route = _Route.chat),
@@ -309,7 +377,7 @@ final class _RootState extends ConsumerState<_Root> {
           _route = route;
           _overlayInstanceId = overlayId;
         }),
-        onAdded: _added,
+        onConnect: _connect,
         onAdopt: widget.onAdopt,
         chat: widget.chat,
         current: widget.current,
@@ -399,7 +467,80 @@ final class _InstallRouteState extends State<_InstallRoute> {
   );
 }
 
-/// Loads the chat controller and shows the chat or an instance screen.
+/// Update prompt above the shell: one feed check per launch, shown once.
+///
+/// The check runs through the shared [appUpdateProvider] (daily cadence,
+/// per-version skip in the settings table). Only [AppUpdateAvailable] opens
+/// the dialog; failures stay silent and retry on the next launch.
+final class _UpdateGate extends ConsumerStatefulWidget {
+  const _UpdateGate({
+    required this.child,
+    required this.shown,
+    required this.onShown,
+  });
+
+  final Widget child;
+  final bool shown;
+  final VoidCallback onShown;
+
+  @override
+  ConsumerState<_UpdateGate> createState() => _UpdateGateState();
+}
+
+final class _UpdateGateState extends ConsumerState<_UpdateGate> {
+  final _dialog = OverlayPortalController();
+  var _open = false;
+
+  void _sync(AppUpdateAvailable? available) {
+    final show = available != null && !widget.shown && !_open && mounted;
+    if (show && !_dialog.isShowing) {
+      _open = true;
+      widget.onShown();
+      _dialog.show();
+    } else if (!show && _open) {
+      _open = false;
+      if (_dialog.isShowing) _dialog.hide();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = currentAppPlatform();
+    final status = ref.watch(
+      appUpdateProvider(
+        currentVersion: currentAppVersion(),
+        platform: platform,
+      ),
+    );
+    final available = switch (status) {
+      AsyncData(value: final AppUpdateAvailable a) => a,
+      _ => null,
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync(available));
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => available == null
+          ? const SizedBox.shrink()
+          : AppUpdateDialog(
+              check: available.check,
+              platform: platform,
+              onClose: () => setState(() => _open = false),
+              onDismissVersion: () => unawaited(
+                ref
+                    .read(
+                      appUpdateProvider(
+                        currentVersion: currentAppVersion(),
+                        platform: platform,
+                      ).notifier,
+                    )
+                    .dismiss(available.check.release!.tag),
+              ),
+            ),
+      child: widget.child,
+    );
+  }
+}
+
 final class _ChatRoute extends ConsumerWidget {
   const _ChatRoute({
     required this.thread,
@@ -407,7 +548,7 @@ final class _ChatRoute extends ConsumerWidget {
     required this.route,
     required this.overlayInstanceId,
     required this.onRoute,
-    required this.onAdded,
+    required this.onConnect,
     required this.onAdopt,
     required this.chat,
     required this.current,
@@ -419,8 +560,7 @@ final class _ChatRoute extends ConsumerWidget {
   final String? overlayInstanceId;
   final void Function(_Route route, [String? overlayId]) onRoute;
 
-  /// Add a Hermes saved one.
-  final ValueChanged<String> onAdded;
+  final VoidCallback onConnect;
   final void Function(ChatController) onAdopt;
   final ChatListenable Function() chat;
   final ChatController? Function() current;
@@ -429,19 +569,12 @@ final class _ChatRoute extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = YsTheme.of(context);
     switch (route) {
-      case _Route.addInstance:
-        return ColoredBox(
-          color: palette.canvasColor,
-          child: AddInstanceScreen(
-            onDone: onAdded,
-            onCancel: () => onRoute(_Route.chat),
-          ),
-        );
       case _Route.instances:
         return ColoredBox(
           color: palette.canvasColor,
           child: InstancesScreen(
-            onAdd: () => onRoute(_Route.addInstance),
+            addOverSsh: ref.read(localHostProvider) != null,
+            onAdd: onConnect,
             onInstall:
                 ref.read(localHostProvider) != null &&
                     !instances.any((i) => i.kind == InstanceKind.local)
@@ -454,9 +587,18 @@ final class _ChatRoute extends ConsumerWidget {
                       : () => onRoute(_Route.install)
                 : null,
             onClose: () => onRoute(_Route.chat),
+            onOpen: (id) {
+              onRoute(_Route.chat);
+              unawaited(
+                ref.read(activeThreadProvider.notifier).openInstance(id),
+              );
+            },
             onSetup: (id) => onRoute(_Route.onboarding, id),
             onComponents: (id) => onRoute(_Route.components, id),
             onConnections: (id) => onRoute(_Route.connections, id),
+            onRemoveFromServer: ref.read(localHostProvider) != null
+                ? (id) => onRoute(_Route.remoteUninstall, id)
+                : null,
           ),
         );
       case _Route.onboarding:
@@ -478,10 +620,16 @@ final class _ChatRoute extends ConsumerWidget {
                           : active.openSetup(setup));
                     },
                     onSkipToChat: () => onRoute(_Route.chat),
+                    onServerSetup: instance.kind == InstanceKind.remote
+                        ? () => onRoute(_Route.components, instance.id)
+                        : null,
                   )
                 : ConnectionsScreen(
                     instance: instance,
                     onBack: () => onRoute(_Route.instances),
+                    onServerSetup: instance.kind == InstanceKind.remote
+                        ? () => onRoute(_Route.components, instance.id)
+                        : null,
                   ),
           );
         }
@@ -500,6 +648,9 @@ final class _ChatRoute extends ConsumerWidget {
         }
       // Shown by the root; an instance deleted meanwhile leaves the chat.
       case _Route.components:
+      case _Route.addInstance:
+      case _Route.remoteInstall:
+      case _Route.remoteUninstall:
       case _Route.welcome:
       case _Route.chat:
         break;

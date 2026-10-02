@@ -13,7 +13,13 @@ import 'route.dart';
 import 'scope.dart';
 import 'screens.dart';
 
-/// Connections page: "Connectors" card grid for one instance.
+/// Connections page: the model accounts of one instance (desktop
+/// `ConnectionsScreen` parity).
+///
+/// Subscription sign-ins come first ([_featuredSignIns]), then the
+/// connected providers; "Show other providers" unfolds the available ones
+/// and the custom endpoint form. A connected provider never folds away and
+/// a search shows every match.
 ///
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
@@ -24,11 +30,16 @@ class HermuseConnections extends StatefulComponent {
   const HermuseConnections({
     required this.instance,
     required this.onBack,
+    this.lead,
     super.key,
   });
 
   final HermesInstance instance;
   final VoidCallback onBack;
+
+  /// Shown above the page head: the onboarding stepper when the page is the
+  /// onboarding's Accounts step (desktop `ConnectionsScreen` parity).
+  final Component? lead;
 
   @override
   State<HermuseConnections> createState() => _HermuseConnectionsState();
@@ -45,6 +56,10 @@ class HermuseConnections extends StatefulComponent {
       color: .variable('--content-muted'),
     ),
     css('.hermuse-conn-retry-row').styles(display: .flex),
+    css('.hermuse-conn-more').styles(
+      display: .flex,
+      margin: .only(top: YsSpace.xs.px),
+    ),
     css('.hermuse-conn-group').styles(
       margin: .only(top: 8.px),
       fontSize: 13.px,
@@ -135,6 +150,32 @@ class HermuseConnections extends StatefulComponent {
       flexDirection: .column,
       gap: .all(10.px),
     ),
+    // A featured sign-in is a taller row: a bigger logo tile, the title a
+    // step up; its body still lines up under the title.
+    css('.hermuse-conn-featured', [
+      css('.hermuse-conn-head').styles(
+        padding: .symmetric(vertical: YsSpace.md.px, horizontal: 14.px),
+        gap: .all(YsSpace.md.px),
+      ),
+      css('.hermuse-conn-logo').styles(
+        width: YsLayout.activityTileSize.px,
+        height: YsLayout.activityTileSize.px,
+        radius: .circular(YsRadius.row.px),
+        fontSize: YsType.monogram.size.px,
+        lineHeight: YsType.monogram.lineHeight.px,
+      ),
+      css('.hermuse-conn-name').styles(
+        fontSize: YsType.heading.size.px,
+        lineHeight: YsType.heading.lineHeight.px,
+      ),
+      css('.hermuse-conn-detail').styles(
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
+      ),
+      css('.hermuse-conn-body').styles(
+        padding: .only(left: (YsLayout.activityTileSize + YsSpace.md + 14).px),
+      ),
+    ]),
     css('.hermuse-conn-device').styles(
       padding: .symmetric(vertical: 12.px, horizontal: 12.px),
       radius: .circular(YsRadius.row.px),
@@ -194,6 +235,10 @@ class HermuseConnections extends StatefulComponent {
 class _HermuseConnectionsState extends State<HermuseConnections> {
   var _query = '';
 
+  /// "Show other providers" unfolded the available providers and the custom
+  /// endpoint form.
+  var _others = false;
+
   @override
   Component build(BuildContext context) => HermuseWatch(
     provider: connectionCardsProvider(component.instance.id),
@@ -206,40 +251,58 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
   ) {
     final state = connections.value;
     final needle = _query.trim().toLowerCase();
-    final cards = [
+    bool matches(String text) => text.toLowerCase().contains(needle);
+    // A featured sign-in is found by what its row shows, too.
+    bool featuredMatches(ConnectionCard card, _SignIn signIn) =>
+        matches(card.name) ||
+        matches('Sign in with ${signIn.product}') ||
+        matches(signIn.plan);
+    // Bridge cards sign in through the desktop sidecar only.
+    final (signIns, rest) = _featuredSignIns([
       for (final card in state?.cards ?? const <ConnectionCard>[])
-        if (card.flow != ConnectionFlow.bridge &&
-            (needle.isEmpty || card.name.toLowerCase().contains(needle)))
-          card,
+        if (card.flow != ConnectionFlow.bridge) card,
+    ]);
+    final featured = [
+      for (final (card, signIn) in signIns)
+        if (featuredMatches(card, signIn)) (card, signIn),
+    ];
+    final others = [
+      for (final card in rest)
+        if (matches(card.name)) card,
     ];
     final connected = [
-      for (final card in cards)
+      for (final card in others)
         if (card.state == ConnectionCardState.connected) card,
     ];
     final available = [
-      for (final card in cards)
+      for (final card in others)
         if (card.state != ConnectionCardState.connected) card,
     ];
-    Component list(List<ConnectionCard> group) =>
-        div(classes: 'hermuse-conn-list', [
-          for (final card in group)
-            _ConnectionCard(
-              key: ValueKey(card.id),
-              instanceId: component.instance.id,
-              card: card,
-              pendingLogin: state?.pendingLogin,
-            ),
-        ]);
+    // Connected providers never fold away and a search shows every match;
+    // with no sign-in to feature, the other providers are the whole page.
+    final foldable = needle.isEmpty && signIns.isNotEmpty;
+    final unfolded = !foldable || _others;
+    Component row(ConnectionCard card, [_SignIn? signIn]) => _ConnectionCard(
+      key: ValueKey(card.id),
+      instanceId: component.instance.id,
+      card: card,
+      signIn: signIn,
+      pendingLogin: state?.pendingLogin,
+    );
+    Component list(List<Component> rows) =>
+        div(classes: 'hermuse-conn-list', rows);
     // The drawing loops while the list loads and shows a pulled plug when
     // it cannot load (desktop `ConnectionsScreen` parity).
     final failed = connections.hasError && state == null;
     return div(classes: 'hermuse-screen hermuse-screen-top', [
       div(classes: 'hermuse-list-card', [
+        ?component.lead,
         HermuseDialogHead(
           art: failed ? YsArt.unreachable : YsArt.accounts,
           busy: connections.isLoading,
-          title: 'Connections',
-          helper: 'Model accounts ${component.instance.label} can use.',
+          title: 'Model accounts',
+          helper:
+              'Subscriptions and API keys ${component.instance.label} can use.',
           trailing: YsButton.icon(
             icon: YsIcon.close,
             label: 'Back',
@@ -271,22 +334,92 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
             ),
           ]),
         ] else ...[
+          if (featured.isNotEmpty) ...[
+            p(classes: 'hermuse-conn-group', [.text('Use your subscription')]),
+            list([for (final (card, signIn) in featured) row(card, signIn)]),
+          ],
           if (connected.isNotEmpty) ...[
             p(classes: 'hermuse-conn-group', [.text('Connected')]),
-            list(connected),
+            list([for (final card in connected) row(card)]),
           ],
-          if (available.isNotEmpty) ...[
-            p(classes: 'hermuse-conn-group', [.text('Available')]),
-            list(available),
+          if (foldable)
+            div(classes: 'hermuse-conn-more', [
+              YsButton.neutral(
+                label: _others
+                    ? 'Hide other providers'
+                    : 'Show other providers',
+                onPressed: () => setState(() => _others = !_others),
+              ),
+            ]),
+          if (unfolded) ...[
+            if (available.isNotEmpty) ...[
+              p(classes: 'hermuse-conn-group', [.text('Available')]),
+              list([for (final card in available) row(card)]),
+            ],
+            if (featured.isEmpty && others.isEmpty)
+              p(classes: 'hermuse-conn-sub', [.text('No connection matches.')]),
+            p(classes: 'hermuse-conn-group', [.text('Custom endpoint')]),
+            _CustomEndpointCard(instanceId: component.instance.id),
           ],
-          if (cards.isEmpty)
-            p(classes: 'hermuse-conn-sub', [.text('No connection matches.')]),
-          p(classes: 'hermuse-conn-group', [.text('Custom endpoint')]),
-          _CustomEndpointCard(instanceId: component.instance.id),
         ],
       ]),
     ]);
   }
+}
+
+/// The product and plan a featured sign-in names in place of its card's
+/// name and detail ("Sign in with ChatGPT / Codex", "Use your ChatGPT
+/// Plus/Pro subscription").
+typedef _SignIn = ({String product, String plan});
+
+/// What each subscription-bridge sign-in is called on its featured row, by
+/// provider name (the web app does not depend on `cliproxy_client`).
+const _bridgeSignIns = <String, _SignIn>{
+  'anthropic': (product: 'Claude Code', plan: 'Claude Pro/Max'),
+  'codex': (product: 'Codex', plan: 'ChatGPT Plus/Pro'),
+  'meta': (product: 'Muse Code', plan: 'Meta Muse Code'),
+  'antigravity': (product: 'Antigravity', plan: 'Google Antigravity'),
+  'kimi': (product: 'Kimi', plan: 'Kimi'),
+  'kimiAi': (product: 'Kimi.ai', plan: 'Kimi.ai'),
+  'devin': (product: 'Devin', plan: 'Devin'),
+  'xai': (product: 'Grok', plan: 'SuperGrok'),
+};
+
+/// The subscription sign-ins featured at the top of the page, then every
+/// other card (desktop `_featuredSignIns` parity: same rules).
+///
+/// Every subscription-bridge card is featured: each OAuth sign-in the
+/// CLIProxyAPI bridge offers. Without bridge cards (the web: no sidecar)
+/// the Hermes `openai-codex` device-code card stands in for Codex; the
+/// other subscriptions need the bridge. The Hermes cards a featured bridge
+/// replaces are other providers.
+(List<(ConnectionCard, _SignIn)>, List<ConnectionCard>) _featuredSignIns(
+  List<ConnectionCard> cards,
+) {
+  final featured = <(ConnectionCard, _SignIn)>[
+    for (final card in cards)
+      if (_bridgeSignIns[card.bridgeSpec?.provider.name] case final signIn?)
+        (card, signIn),
+  ];
+  if (featured.isEmpty) {
+    final codex = cards
+        .where(
+          (c) => c.id == 'openai-codex' && c.flow == ConnectionFlow.deviceCode,
+        )
+        .firstOrNull;
+    if (codex != null) {
+      featured.add((
+        codex,
+        (product: 'ChatGPT / Codex', plan: 'ChatGPT Plus/Pro'),
+      ));
+    }
+  }
+  final ids = {for (final (card, _) in featured) card.id};
+  final others = [
+    for (final card in cards)
+      if (!ids.contains(card.id)) card,
+  ];
+  return (featured, others);
 }
 
 class _ConnectionCard extends StatefulComponent {
@@ -294,12 +427,17 @@ class _ConnectionCard extends StatefulComponent {
     required this.instanceId,
     required this.card,
     required this.pendingLogin,
+    this.signIn,
     super.key,
   });
 
   final String instanceId;
   final ConnectionCard card;
   final DeviceCodeLogin? pendingLogin;
+
+  /// Set on a featured subscription sign-in: a taller row naming its
+  /// product and plan (desktop `_ConnectionCard` parity).
+  final _SignIn? signIn;
 
   @override
   State<_ConnectionCard> createState() => _ConnectionCardState();
@@ -323,6 +461,22 @@ class _ConnectionCardState extends State<_ConnectionCard> {
     // An in-flight login keeps its row open.
     final open = _open || isPending || _error != null;
     final connected = card.state == ConnectionCardState.connected;
+    // A featured sign-in is a taller row that names its product once signed
+    // in and invites to sign in until then; progress and errors replace its
+    // plan line.
+    final signIn = component.signIn;
+    final title = signIn == null
+        ? card.name
+        : connected
+        ? signIn.product
+        : 'Sign in with ${signIn.product}';
+    final idle = card.state == ConnectionCardState.disconnected;
+    final subtitle = signIn != null && (idle || card.detail.isEmpty)
+        ? 'Use your ${signIn.plan} subscription'
+        : card.detail;
+    final itemClasses = signIn == null
+        ? 'hermuse-conn-item'
+        : 'hermuse-conn-item hermuse-conn-featured';
     final (action, actionClass) = switch ((card.state, card.flow)) {
       (ConnectionCardState.connected, _) => (
         'Manage',
@@ -344,17 +498,17 @@ class _ConnectionCardState extends State<_ConnectionCard> {
       ConnectionCardState.error => (YsTheme.error, 'error'),
       ConnectionCardState.disconnected => null,
     };
-    return div(classes: 'hermuse-conn-item', [
+    return div(classes: itemClasses, [
       YsPressable(
         onPressed: () => setState(() => _open = !open),
-        label: '${card.name}: $action',
+        label: '$title: $action',
         classes: 'hermuse-conn-head',
         builder: (context, press) => .fragment([
           span(classes: 'hermuse-conn-logo', [.text(_letter(card.name))]),
           span(classes: 'hermuse-conn-title', [
-            span(classes: 'hermuse-conn-name', [.text(card.name)]),
-            if (card.detail.isNotEmpty && card.detail != card.name)
-              span(classes: 'hermuse-conn-detail', [.text(card.detail)]),
+            span(classes: 'hermuse-conn-name', [.text(title)]),
+            if (subtitle.isNotEmpty && subtitle != title)
+              span(classes: 'hermuse-conn-detail', [.text(subtitle)]),
           ]),
           if (dot case (final color, final name))
             YsPing(

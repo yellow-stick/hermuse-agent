@@ -210,9 +210,16 @@ expiré / erreur), bouton Connecter / Déconnecter, modèles disponibles.
   `GET /v0/management/auth-files` (CLIProxyAPI).
 - Choix du modèle par défaut : `/api/model/options` → `/api/model/set`.
 - **Instance distante** : les cartes natives marchent telles quelles (Hermes fait l'OAuth
-  côté serveur). Les cartes « pont » exigent CLIProxyAPI sur la même machine que Hermes ;
-  sur un VPS, on l'y installe (manuel ou via SSH, phase ultérieure) et Hermuse parle à son
-  API de gestion à travers l'accès existant.
+  côté serveur). Les cartes « pont » exigent CLIProxyAPI sur la même machine que Hermes :
+  le plugin Hermuse l'installe et le fait tourner à côté de lui
+  (`hermes-plugin/hermuse/subscription_bridge.py`, même version épinglée et mêmes sommes
+  que `cliproxy.lock`, Linux x86-64/ARM64, sans root). La connexion OAuth reste sur le
+  CLIProxyAPI du bureau (le rappel du navigateur doit arriver sur cette machine), puis
+  l'app envoie le fichier de compte au serveur (`POST /api/plugins/hermuse/bridge/accounts`),
+  remet les comptes du sidecar comme avant la connexion (un seul CLIProxyAPI rafraîchit
+  chaque jeton) et enregistre l'endpoint Hermes sur `http://127.0.0.1:<port>/v1` du
+  serveur. Sur le web, pas de sidecar pour le rappel OAuth : les cartes pont restent
+  masquées.
 - Les cartes sont décrites par des données (id, nom, logo, chemin, flux), pas codées écran
   par écran : ajouter un fournisseur = une entrée.
 

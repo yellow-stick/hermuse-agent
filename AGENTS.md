@@ -52,12 +52,13 @@ cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
 
-Web deploy: `.github/workflows/web.yml` builds `apps/hermuse_web` and deploys it
-with the Netlify CLI to project `hermuse-agent` (https://hermuse.app): production
-on push to `main`, draft alias `pr-<N>` on pull requests of this repository once
-ready for review; merge groups only build. Netlify's Git builds
-are stopped; `netlify.toml` (headers, manual deploy commands) is the only site
-config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
+Web deploy: `.github/workflows/web-build.yml` builds `apps/hermuse_web` and the
+Netlify CLI deploys it to project `hermuse-agent` (https://hermuse.app):
+production from `web-deploy.yml` on push to `main` touching the web app (or on
+dispatch), draft alias `pr-<N>` from `web-pr.yml` on pull requests of this
+repository once ready for review; `web-queue.yml` only builds in the merge
+queue. Netlify's Git builds are stopped; `netlify.toml` (headers, manual deploy
+commands) is the only site config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
 
 Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
 (`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with
@@ -84,7 +85,7 @@ Commit subject: `<Area>: <what changed>` — one line, English, present tense, l
 
 Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yellow-stick/orca-worktrees`), cut from `origin/main`. Never commit to `main` directly.
 
-Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review runs the checks and the builds of every platform, and the merge queue runs the installed-package smoke tests before merging (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
+Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review and the merge queue run the checks and the builds of every platform (`ci.yml`, required check `CI`) and the web build (required check `Web`). The installed-package smoke tests run only for a release tag (`release.yml`) and for a manual test run (`smoke.yml`), never on pull requests nor in the merge queue (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
 
 ## Validation per area
 

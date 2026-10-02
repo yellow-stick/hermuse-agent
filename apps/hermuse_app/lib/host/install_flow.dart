@@ -67,6 +67,9 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   /// Whether the installer of the missing prerequisites was opened.
   bool _prereqsRequested = false;
 
+  /// Whether that installer is being opened: Install and Check again wait.
+  bool _requestingPrereqs = false;
+
   /// Whether a check found prerequisites missing: once present they were
   /// installed now, not found in place.
   bool _toolsWereMissing = false;
@@ -107,6 +110,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       setState(() {
         _phase = _Phase.supervising;
         _activity = _Activity.startingFound;
+        _error = null;
       });
       await _superviseAndFinish();
       return;
@@ -115,6 +119,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       _phase = _Phase.working;
       _activity = _Activity.checkingTools;
       _error = null;
+      _failedStage = null;
       _toolsFailed = false;
     });
     try {
@@ -158,6 +163,10 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
   /// Opens the installer of the missing prerequisites (macOS: Apple's
   /// Command Line Tools dialog); the user then checks again.
   Future<void> _installPrerequisites() async {
+    setState(() {
+      _requestingPrereqs = true;
+      _error = null;
+    });
     try {
       await _installer.installPrerequisites();
       if (mounted) setState(() => _prereqsRequested = true);
@@ -166,6 +175,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
+    if (mounted) setState(() => _requestingPrereqs = false);
   }
 
   Future<void> _runStages() async {
@@ -208,6 +218,7 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
     setState(() {
       _phase = _Phase.supervising;
       _activity = _Activity.startingInstalled;
+      _failedStage = null;
     });
     await _superviseAndFinish();
   }
@@ -304,7 +315,8 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       _Activity.checkingTools => 'Checking prerequisites…',
       _Activity.readingPlan => 'Reading install plan…',
       _Activity.startingFound =>
-        'Found ${widget.detected?.version ?? 'Hermes'} — starting it…',
+        '${widget.detected?.version ?? 'Hermes'} is already installed — '
+            'starting it…',
       _Activity.startingInstalled => 'Install finished — starting Hermes…',
     },
     _Phase.stages => 'Installing Hermes Agent…',
@@ -328,7 +340,10 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       actions: actions,
     );
     if (widget.detected != null) {
-      return item(YsStepState.skipped, 'Not needed — Hermes is already here');
+      return item(
+        YsStepState.skipped,
+        'Not needed — Hermes is already installed',
+      );
     }
     // The Windows installer provisions its own tools.
     if (Platform.isWindows) {
@@ -349,6 +364,9 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
               notes: [
                 if (_error case final error?)
                   YsChecklistNote(error, tone: YsNoteTone.alert),
+              ],
+              actions: [
+                YsButton.neutral(label: 'Check again', onPressed: _start),
               ],
             )
           : item(YsStepState.pending, 'Waiting');
@@ -374,16 +392,19 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
         actions: [
           if (prereqs.installable && !_prereqsRequested)
             YsButton.neutral(
-              label: 'Install',
-              onPressed: _installPrerequisites,
+              label: _requestingPrereqs ? 'Opening the installer…' : 'Install',
+              onPressed: _requestingPrereqs ? null : _installPrerequisites,
             ),
-          YsButton.neutral(label: 'Check again', onPressed: _start),
+          YsButton.neutral(
+            label: 'Check again',
+            onPressed: _requestingPrereqs ? null : _start,
+          ),
         ],
       );
     }
     return _toolsWereMissing
         ? item(YsStepState.done, 'Installed now')
-        : item(YsStepState.found, 'Found — reused');
+        : item(YsStepState.found, 'Already installed');
   }
 
   YsChecklistItem _hermes() {
@@ -433,8 +454,8 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
         // An install found in place is started, not installed.
         return _activity == _Activity.startingFound
             ? item(YsStepState.checking, switch (widget.detected?.semver) {
-                final version? => 'Found $version — starting it…',
-                null => 'Found — starting it…',
+                final version? => 'Already installed · $version — starting it…',
+                null => 'Already installed — starting it…',
               })
             : item(YsStepState.working, 'Starting it…');
       case _Phase.failed when _toolsBlock:
@@ -460,7 +481,9 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
               YsButton.neutral(
                 label: 'Retry this stage',
                 onPressed: _retryStage,
-              ),
+              )
+            else
+              YsButton.neutral(label: 'Try again', onPressed: _start),
           ],
         );
     }

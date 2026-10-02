@@ -531,7 +531,8 @@ enum YsStepState {
   /// Being looked at: a short arc scans the ring, the glyph breathes.
   checking,
 
-  /// Already in place and working: a calm tick on a soft disc, not drawn.
+  /// Already in place and working, nothing done now: a calm info-blue tick
+  /// on a soft info disc, not drawn — set apart from the green [done].
   found,
 
   /// In progress: an arc sweeps the ring, or fills it to a known progress.
@@ -803,7 +804,7 @@ abstract final class YsPingMotion {
   static const reach = 2.6;
 }
 
-/// Composer action changing between voice, send and stop: the new glyph
+/// Composer action changing between send and stop: the new glyph
 /// turns in [turn] of a turn and grows from [from] scale over [swap] ms
 /// ([YsEase.settle]) while the disc behind it fills.
 abstract final class YsMorphMotion {
