@@ -17,6 +17,10 @@ if [ ! -d /proc ]; then
   exit 0
 fi
 
+# Keep the sweep's own subshells, find, sed and sort outside the worktree.
+# Otherwise each scan discovers fresh helpers and reports them as survivors.
+cd / || exit 1
+
 # Never kill this script or the Orca shell that runs it.
 self_chain=" "
 pid=$$
