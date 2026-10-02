@@ -129,6 +129,36 @@ void main() {
     );
   });
 
+  test('automations list the demo jobs; actions are refused', () async {
+    final board = await container.read(automationsProvider(ava.id).future);
+    expect(board.schedulerStopped, isFalse);
+    expect(board.automations.map((a) => a.name), [
+      'Evening recap',
+      'Hermuse reflection (nightly)',
+      'Hermuse feed (daily)',
+      'Hermuse goals check-in (weekly)',
+      'Hermuse ideas (weekly)',
+    ]);
+    final recap = board.automations.first;
+    expect(recap.owner, AutomationOwner.user);
+    expect(recap.nextRunAt, DateTime(2026, 9, 30, 18));
+    expect(recap.lastRunAt, DateTime(2026, 9, 29, 18));
+    expect(recap.lastOutcome, AutomationOutcome.ok);
+    expect(
+      (await container.read(automationsProvider(demoInstances[1].id).future))
+          .automations
+          .where((a) => a.owner == AutomationOwner.user),
+      isEmpty,
+    );
+
+    await container
+        .read(automationsProvider(ava.id).notifier)
+        .perform(recap, AutomationAction.pause);
+    final after = container.read(automationsProvider(ava.id)).value!;
+    expect(after.error, contains(demoReadOnlyMessage));
+    expect(after.automations.first.paused, isFalse);
+  });
+
   test('seeding again replaces an earlier demo', () async {
     await db.upsertSession(
       SessionRow(

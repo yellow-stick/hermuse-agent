@@ -7,6 +7,10 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
   and side chats (one pinned, one archived), reasoning and tool-call rows.
 - Feed, Ideas, Goals and Library (artifacts, system files, reflections) filled
   from the same fictional content.
+- The profile panel's Automations tab lists fictional Hermes cron jobs: the
+  four Hermuse schedules (feed, ideas, goals check-in, reflection) on both
+  instances, plus Ava's own "Evening recap". Pause, run now and delete are
+  refused with the read-only message.
 - Nothing can be written: the composer is replaced by a note, and adding
   instances, new side chats, rename/archive/delete, reply and the agent's
   computer are hidden. Anything that still reaches the backend (feed reactions,
@@ -20,7 +24,8 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
 
 - `DemoTransport` replaces the Hermes WebSocket: `session.resume` returns the
   transcripts of `lib/src/content.dart`, every other call is refused.
-- `demoPluginClient` answers the Hermuse plugin routes (`GET` only).
+- `demoPluginClient` answers the Hermuse plugin routes and Hermes' cron job
+  list (`GET` only).
 - `seedDemo` fills a separate browser database (`hermuse-demo`, never the
   app's own `hermuse`) with the instances, the chat index and the search
   cache, on every page load.

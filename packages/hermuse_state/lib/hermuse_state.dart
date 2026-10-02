@@ -1,8 +1,9 @@
 /// Shared Riverpod state of the Hermuse apps.
 library;
 
+export 'src/activity.dart';
 export 'src/app_update.dart';
-
+export 'src/automations.dart';
 export 'src/computer.dart';
 export 'src/connections.dart';
 export 'src/model_selection.dart';

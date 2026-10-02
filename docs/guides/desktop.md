@@ -236,15 +236,18 @@ preparation.
 
 In **Hermes instances** (**Settings** at the bottom of the rail), choose
 **Model accounts** on your Hermes and add the AI accounts and subscriptions you
-already have. Hermuse Agent does not come with a model account: you sign in or
-enter your API keys yourself. Then send your agent a first task, for example:
+already have, or your own OpenAI- or Anthropic-compatible endpoint (see
+[Use your own endpoint](server.md#use-your-own-endpoint)). Hermuse Agent does
+not come with a model account: you sign in or enter your API keys yourself.
+Then send your agent a first task, for example:
 
 > Plan a walk in Nantes for me: open OpenStreetMap centered on the Château des
 > ducs de Bretagne, then open the Wikipedia page of the château in a new tab,
 > and give me 3 things to see nearby.
 
 See [The agent's computer](agent-computer.md) for the live viewer and **Take
-control**.
+control**, and [Activity, Approvals and Automations](profile-panel.md) for the
+profile panel next to the chat.
 
 ## Your data on Linux
 

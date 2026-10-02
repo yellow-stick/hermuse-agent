@@ -668,10 +668,20 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       if (profileOpen)
         HermusePanel(
           agentName: state.agentName,
-          activity: state.activity,
+          instanceId: controller.instanceId,
+          threadIds: {for (final t in state.threads) t.id},
+          approvals: state.approvals,
           tab: _tab,
           onTab: (t) => setState(() => _tab = t),
           onClose: () => setState(() => _panelOverride = false),
+          onOpenThread: controller.openThread,
+          onOpenApproval: (threadId) {
+            controller.openThread(threadId);
+            // Narrow layouts overlay the panel on the chat: show the chat.
+            if (_shellKind != YsShell.wide) {
+              setState(() => _panelOverride = false);
+            }
+          },
           onOpenComputer: hermuseDemo ? null : controller.openComputer,
         ),
       if (profileOpen)

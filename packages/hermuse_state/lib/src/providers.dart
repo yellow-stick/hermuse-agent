@@ -612,6 +612,19 @@ final class _DatabaseObserver implements ChatObserver {
     unawaited(_db.deleteSession(ref.instanceId, ref.sessionId));
   }
 
+  @override
+  void toolCompleted(ThreadRef ref, ActivityItem item) {
+    unawaited(
+      _db.addActivity(
+        instanceId: ref.instanceId,
+        sessionId: item.sessionId,
+        tool: item.tool,
+        summary: item.summary,
+        at: item.at,
+      ),
+    );
+  }
+
   /// Caches messages that carry a transcript row id (`row-<n>`); local
   /// placeholders are cached once the turn reports its persisted rows.
   @override

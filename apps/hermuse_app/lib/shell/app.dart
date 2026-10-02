@@ -898,27 +898,16 @@ final class _ShellState extends ConsumerState<_Shell> {
 
   void _onChatChanged() => setState(() {});
 
-  void _openApproval(PendingApprovalCard card) {
-    widget.controller.openThread(card.threadId);
-    if (_panelOpenOverride ?? true) {
+  /// Opens a thread from the panel (an approval, an activity row); the
+  /// panel, an overlay off the wide layout, gets out of the way.
+  void _openFromPanel(String threadId) {
+    widget.controller.openThread(threadId);
+    final wide =
+        YsShell.forWidth(MediaQuery.sizeOf(context).width) == YsShell.wide;
+    if (!wide && (_panelOpenOverride ?? false)) {
       setState(() => _panelOpenOverride = false);
     }
   }
-
-  List<PendingApprovalCard> _approvals(ChatState state) => [
-    for (final thread in state.threads)
-      for (final message in thread.messages)
-        for (final block in message.blocks)
-          if (block is ChoiceBlock &&
-              block.customPlaceholder.isEmpty &&
-              block.selected == null)
-            PendingApprovalCard(
-              threadId: thread.id,
-              threadTitle: thread.title,
-              messageId: message.id,
-              prompt: block.prompt,
-            ),
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -955,10 +944,11 @@ final class _ShellState extends ConsumerState<_Shell> {
     void closePanel() => setState(() => _panelOpenOverride = false);
     void openPanel() => setState(() => _panelOpenOverride = true);
     final panel = ProfilePanel(
+      instanceId: widget.controller.instanceId,
       agentName: state.agentName,
-      activity: state.activity,
-      approvals: _approvals(state),
-      onOpenApproval: _openApproval,
+      approvals: state.approvals,
+      threadIds: {for (final thread in state.threads) thread.id},
+      onOpenThread: _openFromPanel,
       onOpenComputer: widget.controller.openComputer,
       onClose: closePanel,
     );

@@ -11,7 +11,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
   HermuseDatabase(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -21,6 +21,11 @@ final class HermuseDatabase extends _$HermuseDatabase {
         // Side chat archive and pins.
         await m.addColumn(sessions, sessions.archived);
         await m.addColumn(sessions, sessions.pinnedAt);
+      }
+      if (from < 3) {
+        // The profile panel's Activity.
+        await m.createTable(activity);
+        await m.createIndex(activityByTime);
       }
     },
     beforeOpen: (details) async {
@@ -251,6 +256,51 @@ final class HermuseDatabase extends _$HermuseDatabase {
     ).get();
     return [for (final r in rows) r.m];
   }
+
+  // ----------------------------------------------------------------- activity
+
+  /// Rows kept per instance; older ones go as new ones arrive.
+  static const activityKept = 500;
+
+  /// Records a finished tool of [instanceId] and drops what falls past
+  /// [activityKept].
+  Future<void> addActivity({
+    required String instanceId,
+    required String sessionId,
+    required String tool,
+    required String summary,
+    required DateTime at,
+  }) => transaction(() async {
+    await into(activity).insert(
+      ActivityCompanion.insert(
+        instanceId: instanceId,
+        sessionId: sessionId,
+        tool: tool,
+        summary: Value(summary),
+        at: at.millisecondsSinceEpoch,
+      ),
+    );
+    await customStatement(
+      'DELETE FROM activity WHERE instance_id = ? AND id NOT IN '
+      '(SELECT id FROM activity WHERE instance_id = ? '
+      'ORDER BY at DESC, id DESC LIMIT ?)',
+      [instanceId, instanceId, activityKept],
+    );
+  });
+
+  /// Activity of [instanceId], newest first.
+  Stream<List<ActivityRow>> watchActivity(
+    String instanceId, {
+    int limit = 200,
+  }) =>
+      (select(activity)
+            ..where((t) => t.instanceId.equals(instanceId))
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.at),
+              (t) => OrderingTerm.desc(t.id),
+            ])
+            ..limit(limit))
+          .watch();
 
   // ----------------------------------------------------------------- settings
 
