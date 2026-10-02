@@ -1,0 +1,48 @@
+# Static build of the web app (apps/hermuse_web, `jaspr build`), uploaded as
+# the `web` artifact of the calling run. Its analysis and tests run in the
+# checks of every pull request and merge group (ci.yml, build.yml).
+#
+# Callers (workflow_call only): web-pr.yml (pull requests, then a preview),
+# web-queue.yml (merge groups, build only), web-deploy.yml (production).
+#
+# Actions are pinned by commit (tag in the trailing comment); the Flutter SDK
+# comes from tool/release/toolchain.lock.json, checked by SHA-256.
+name: Web build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  JASPR_CLI_VERSION: 0.23.5
+
+jobs:
+  build:
+    name: Jaspr build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The Flutter SDK from toolchain.lock.json
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/flutter.tar.xz" "$(jq -er '.flutter.url' "$lock")"
+          echo "$(jq -er '.flutter.sha256' "$lock")  $RUNNER_TEMP/flutter.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/flutter.tar.xz" -C "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/flutter.tar.xz"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-cli-animations
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+          echo "$HOME/.pub-cache/bin" >>"$GITHUB_PATH"
+      - run: flutter pub get --enforce-lockfile
+      - run: dart pub global activate jaspr_cli "$JASPR_CLI_VERSION"
+      - run: jaspr build
+        working-directory: apps/hermuse_web
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web
+          path: apps/hermuse_web/build/jaspr
+          include-hidden-files: false
+          retention-days: 7

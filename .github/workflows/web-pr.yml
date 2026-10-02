@@ -1,0 +1,124 @@
+# Web app of a pull request: build, then a Netlify draft deploy under the
+# alias pr-<N> (project `hermuse-agent`), its URL in the job summary.
+#
+#   changes -> build (web-build.yml) -> deploy (preview) -> Web
+#
+# Triggers: a pull request opened, pushed to, reopened or marked ready for
+# review. A draft runs nothing: marking it ready for review starts the run. A
+# new push cancels the run it supersedes. `changes` compares the merge commit
+# with its base; when none of the web app's inputs changed (apps/hermuse_web,
+# packages, pubspec.*, netlify.toml, the toolchain lock, the web workflows),
+# nothing is built. Pull requests from forks, and Dependabot's, get no
+# repository secrets: they build without a preview. Secrets: NETLIFY_AUTH_TOKEN,
+# NETLIFY_SITE_ID.
+#
+# Required check of main: `Web`, the last job, here and in the merge queue
+# (web-queue.yml). It runs whatever happened before it and passes only when
+# every job succeeded or was skipped.
+#
+# Actions are pinned by commit (tag in the trailing comment).
+name: Web preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  NETLIFY_CLI_VERSION: 27.10.1
+
+jobs:
+  changes:
+    name: Changes
+    # Draft skip: a draft pull request runs nothing; `ready_for_review` starts its run.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      web: ${{ steps.paths.outputs.web }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit and its first parent, the base it merges onto.
+          fetch-depth: 2
+      - name: Does the change touch the web app
+        id: paths
+        run: |
+          set -euo pipefail
+          web=true
+          # A change set that cannot be computed builds.
+          if git diff --name-only HEAD^1 HEAD >"$RUNNER_TEMP/changed"; then
+            echo "Changed against $(git rev-parse HEAD^1):"
+            cat "$RUNNER_TEMP/changed"
+            web=false
+            while IFS= read -r file; do
+              # The web app's inputs (listed in web-queue.yml and web-deploy.yml too), the web workflows.
+              case $file in
+                apps/hermuse_web/* | packages/* | pubspec.yaml | pubspec.lock | netlify.toml | \
+                  tool/release/toolchain.lock.json | .github/workflows/web-*.yml) web=true ;;
+              esac
+            done <"$RUNNER_TEMP/changed"
+          fi
+          echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: changes
+    # Web paths filter: a change outside the web app's inputs builds nothing.
+    if: needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/web-build.yml
+    permissions:
+      contents: read
+
+  deploy:
+    name: Deploy preview
+    needs: build
+    # Fork guard: forks, and Dependabot (run like a fork), get no repository secrets: no preview.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (netlify.toml: headers)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web
+          path: apps/hermuse_web/build/jaspr
+      - name: Deploy preview
+        run: |
+          set -euo pipefail
+          npx --yes "netlify-cli@$NETLIFY_CLI_VERSION" deploy --no-build --dir=apps/hermuse_web/build/jaspr \
+            --alias="pr-${{ github.event.pull_request.number }}" \
+            --message="PR #${{ github.event.pull_request.number }}" --json | tee deploy.json
+          echo "Preview: $(jq -r .deploy_url deploy.json)" >>"$GITHUB_STEP_SUMMARY"
+
+  web:
+    name: Web
+    needs: [changes, build, deploy]
+    # Gate: always runs, to fail when a job above failed or was cancelled.
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          if ! jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null; then
+            echo "::error::a job failed or was cancelled"
+            exit 1
+          fi
