@@ -20,7 +20,7 @@ as pull requests from forks (`CONTRIBUTING.md`).
 - `packages/hermuse_state/` — shared Riverpod state for both apps.
 - `packages/hermuse_host/` — desktop only: Hermes install, supervision, bridge sidecar.
 - `hermes-plugin/hermuse/` — Hermes plugin: Feed, Ideas, Goals, Library, Reflections, agent's computer. Python, stdlib-only store.
-- `demo/` — read-only web demo (`hermuse_demo`): fictional instances, chats and plugin data answered in the browser; `demo/build.sh` builds the web app with `HERMUSE_DEMO=true` into `demo/build/web` for Netlify.
+- `demo/` — read-only web demo (`hermuse_demo`): fictional instances, chats and plugin data answered in the browser; `demo/build.sh` builds the web app with `HERMUSE_DEMO=true` into `demo/build/web`, published at https://demo.hermuse.app.
 - `.agents/skills/` — 41 vendored skills (dart-*, flutter-*, jaspr-*, riverpod, …). Read the matching skill before working in its area.
 
 ## Architecture rules
@@ -52,13 +52,18 @@ cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
 
-Web deploy: `.github/workflows/web-build.yml` builds `apps/hermuse_web` and the
-Netlify CLI deploys it to project `hermuse-agent` (https://hermuse.app):
-production from `web-deploy.yml` on push to `main` touching the web app (or on
-dispatch), draft alias `pr-<N>` from `web-pr.yml` on pull requests of this
-repository once ready for review; `web-queue.yml` only builds in the merge
-queue. Netlify's Git builds are stopped; `netlify.toml` (headers, manual deploy
-commands) is the only site config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
+Web deploy: the real web app is not hosted by Yellow Stick; each user's
+`hermuse_relay` serves it on their own server (`docs/guides/web-app-and-relay.md`).
+Netlify publishes only the read-only demo, project `hermuse-demo`
+(https://demo.hermuse.app). `.github/workflows/web-build.yml` runs `jaspr build`
+of `apps/hermuse_web` as a check, then `demo/build.sh`, and the Netlify CLI
+deploys `demo/build/web`: production from `web-deploy.yml` on push to `main`
+touching the web inputs (or on dispatch), draft alias `pr-<N>` from `web-pr.yml`
+on pull requests of this repository once ready for review; `web-queue.yml` only
+builds in the merge queue. The project has no Git builds; `netlify.toml`
+(headers, manual deploy commands) is the only site config. Secrets:
+`NETLIFY_AUTH_TOKEN`, `NETLIFY_DEMO_SITE_ID`. The product homepage is
+https://hermuse.app (`yellow-stick/hermuse-website`).
 
 Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
 (`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with

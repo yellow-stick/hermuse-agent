@@ -11,6 +11,11 @@ server side and never hands it to the browser.
 
 The desktop apps do not need the relay; they connect to Hermes directly.
 
+Yellow Stick does not host the web app for you: you serve it from your own
+server, at your own address or domain, with the relay below. To look around
+first, the read-only demo at https://demo.hermuse.app runs the same web app
+with fictional chats, without any Hermes.
+
 ## 1. Build the web app
 
 ```bash
@@ -38,7 +43,9 @@ dart run bin/server.dart          # or: dart compile exe bin/server.dart -o serv
 | `HERMUSE_RELAY_DB` | SQLite file with the registered Hermes instances. |
 
 In production, put the relay behind HTTPS (Caddy, nginx, your platform's
-ingress) at the address given in `HERMUSE_RELAY_ORIGIN`.
+ingress) at the address given in `HERMUSE_RELAY_ORIGIN`: your server's address
+or a domain of your own pointing to it. The web app it serves stays out of
+search engines (a `noindex` robots meta).
 
 ## 3. Register your Hermes
 
