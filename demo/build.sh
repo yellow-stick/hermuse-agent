@@ -10,6 +10,8 @@ set -euo pipefail
 demo="$(cd "$(dirname "$0")" && pwd)"
 web="$demo/../apps/hermuse_web"
 
+# A previous build of the real web app must not end up in the demo output.
+rm -rf "$web/build/jaspr"
 (cd "$web" && jaspr build --dart-define=HERMUSE_DEMO=true "$@")
 
 # A cold first build has been seen to leave only index.html behind.
