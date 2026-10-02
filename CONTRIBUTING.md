@@ -21,16 +21,18 @@ of the project and of this flow.
 2. **Draft while you work.** A draft pull request runs no CI.
 3. **Ready for review.** Marking it ready runs the checks (analysis, format,
    Dart and Flutter tests, plugin tests against the pinned Hermes Agent, lint
-   of the workflows and release scripts) and builds the Linux, macOS and
-   Windows packages and the web app. A pull request that only changes
-   documentation builds nothing; each new push cancels the run it supersedes.
-   Pull requests from forks run without secrets, so the web preview is only
-   deployed for branches of this repository.
+   of the workflows and release scripts), builds the Linux, macOS and Windows
+   packages and the web app, then installs and starts the Linux packages in
+   Ubuntu 24.04, Ubuntu 26.04 and Debian 13 containers (the compat smoke
+   legs). A pull request that only changes documentation builds nothing; each
+   new push cancels the run it supersedes. Pull requests from forks run
+   without secrets, so the web preview is only deployed for branches of this
+   repository.
 4. **Review and merge queue.** The maintainer reviews every pull request (code
    owner). An approved one goes through the merge queue: the merged result is
-   checked and built again for every platform before `main` moves, unless its
-   pull request run already checked that exact result (a branch up to date
-   with `main`): the queue then passes in about a minute. The
+   checked, built and run through the compat legs again before `main` moves,
+   unless its pull request run already checked that exact result (a branch up
+   to date with `main`): the queue then passes in about a minute. The other
    installed-package smoke tests do not run there: they run for each release
    and in manual test runs ([CI at a glance](#ci-at-a-glance)).
 5. **One squashed commit.** Pull requests are squash-merged only: the pull
@@ -84,8 +86,8 @@ One workflow per scenario, in `.github/workflows/`:
 | When | Workflow | What runs |
 | --- | --- | --- |
 | Draft pull request | `ci.yml`, `web-pr.yml` | Nothing |
-| Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web app and demo builds, and a demo preview |
-| Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview; nothing when a passing run already checked the same tree (`tool/ci/tree-passed.sh`) |
+| Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the compat smoke legs (the `.deb` and AppImage installed and started in Ubuntu 24.04, Ubuntu 26.04 and Debian 13 containers), the web app and demo builds, and a demo preview |
+| Merge queue | `ci.yml`, `web-queue.yml` | The same checks, builds and compat legs, without preview; nothing when a passing run already checked the same tree (`tool/ci/tree-passed.sh`) |
 | Push to `main` touching the web app or the demo | `web-deploy.yml` | The read-only demo deployed to https://demo.hermuse.app |
 | Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below, then the published-release check |
 | Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |
@@ -100,8 +102,10 @@ not concern it).
 The installed-package smoke tests run on fresh Ubuntu 22.04 and Debian 12
 machines (`.deb` and AppImage: first launch, Docker variants, adopting an
 existing Hermes Agent, upgrade and removal), on newer distributions, on macOS
-and on Windows. The maintainer runs them on a branch with
-`gh workflow run smoke.yml --ref <branch>`, all of them or, with
+and on Windows. Only the compat legs, on the newer distributions in
+containers, also run with every build of a pull request and of the merge
+queue; all of them run for each release. The maintainer runs them on a branch
+with `gh workflow run smoke.yml --ref <branch>`, all of them or, with
 `-f legs=<regex>`, those whose name matches (the names are listed in
 `packaging/smoke/proof_summary.py`); such a run never signs nor publishes.
 

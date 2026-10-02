@@ -11,8 +11,9 @@
 #        -> smoke-windows (on the runner)+
 #
 # Callers (workflow_call only): release.yml (every leg, before the release
-# approval) and smoke.yml (a manual test run, every leg or those its `legs`
-# filter selects). Pull requests and the merge queue run no leg.
+# approval), smoke.yml (a manual test run, every leg or those its `legs`
+# filter selects) and ci.yml (pull requests and the merge queue: the compat
+# legs only, filter ^compat-; the other jobs skip on their empty matrices).
 #
 # A leg's verdict is its result files, not the scenario runner's exit status;
 # its evidence is uploaded even when it fails, and the report rolls up every
