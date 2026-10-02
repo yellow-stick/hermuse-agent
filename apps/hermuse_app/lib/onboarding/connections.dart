@@ -482,7 +482,11 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
               ),
               child: Row(
                 children: [
-                  _Logo(name: card.name, featured: featured),
+                  _Logo(
+                    name: card.name,
+                    logoKey: card.logoKey,
+                    featured: featured,
+                  ),
                   SizedBox(width: featured ? YsSpace.md : 10),
                   Expanded(
                     child: Column(
@@ -853,10 +857,17 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
       };
 }
 
+/// The row's tile: the provider's mark ([YsProviderLogo.forKey] of
+/// [logoKey]), or the initial of [name] when there is none.
 final class _Logo extends StatelessWidget {
-  const _Logo({required this.name, required this.featured});
+  const _Logo({
+    required this.name,
+    required this.logoKey,
+    required this.featured,
+  });
 
   final String name;
+  final String logoKey;
 
   /// The bigger tile of a featured sign-in.
   final bool featured;
@@ -869,6 +880,7 @@ final class _Logo extends StatelessWidget {
     final type = featured
         ? YsType.monogram
         : const YsTextStyle(12, 16, YsWeight.semibold);
+    final logo = YsProviderLogo.forKey(logoKey);
     return SizedBox(
       width: size,
       height: size,
@@ -878,10 +890,14 @@ final class _Logo extends StatelessWidget {
           borderRadius: BorderRadius.circular(featured ? YsRadius.row : 6),
         ),
         child: Center(
-          child: Text(
-            trimmed.isEmpty ? '?' : trimmed.characters.first.toUpperCase(),
-            style: type.flutter.copyWith(color: palette.contentColor),
-          ),
+          child: logo != null
+              ? YsProviderMark(logo, size: featured ? size * 0.55 : 16)
+              : Text(
+                  trimmed.isEmpty
+                      ? '?'
+                      : trimmed.characters.first.toUpperCase(),
+                  style: type.flutter.copyWith(color: palette.contentColor),
+                ),
         ),
       ),
     );
