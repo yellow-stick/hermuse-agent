@@ -1,0 +1,256 @@
+# Published-release check of Hermuse Agent: the files a user downloads from
+# the release page, fetched by their public URL without credentials, match the
+# SHA256SUMS.txt the release run tested, then install and start on a clean
+# GitHub-hosted runner of each platform:
+#
+#   linux    the .deb installed with APT on Ubuntu 24.04, started under Xvfb
+#   macos    the .dmg mounted, the app copied to /Applications, started (macOS 15)
+#   windows  the Setup.exe installed for the current user (/VERYSILENT), the
+#            installed hermuse_app.exe started (Windows Server 2025)
+#
+# Each start must show the window "Hermuse Agent" within 3 minutes and keep the
+# app running 20 s after it. The evidence (download checksums, install logs,
+# process, screenshot) is uploaded even when a check fails.
+#
+# Caller (workflow_call only): release.yml, after Publish. The release is
+# public by then: a failure here fails the release run but unpublishes nothing,
+# and a published file is never replaced: the fix goes into the next release
+# (fix forward).
+#
+# Actions are pinned by commit (tag in the trailing comment).
+name: Published release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The published release tag (hermuse/vX.Y.Z[-rc.N])
+        type: string
+        required: true
+      sha256sums:
+        description: SHA-256 of the SHA256SUMS.txt the release run tested and published
+        type: string
+        required: true
+      deb_file:
+        description: File name of the .deb (build.yml's `deb_file` output)
+        type: string
+        required: true
+      dmg_file:
+        description: File name of the macOS .dmg (build.yml's `dmg_file` output)
+        type: string
+        required: true
+      windows_setup_file:
+        description: File name of the Windows Setup.exe (build.yml's `windows_setup_file` output)
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ inputs.tag }}
+  SHA256SUMS: ${{ inputs.sha256sums }}
+
+jobs:
+  linux:
+    name: Download and start (Linux .deb)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      FILE: ${{ inputs.deb_file }}
+    steps:
+      - name: The public download matches the tested SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence" download
+          cd download
+          # As a user gets them: the public URLs, no credentials.
+          for file in SHA256SUMS.txt "$FILE"; do
+            curl -fsSL --proto '=https' --retry 5 --retry-delay 10 --retry-all-errors -o "$file" "$BASE_URL/$file"
+          done
+          echo "$SHA256SUMS  SHA256SUMS.txt" | sha256sum -c -
+          awk -v f="$FILE" '$2 == f' SHA256SUMS.txt | sha256sum -c - | tee "$RUNNER_TEMP/evidence/checksum.txt"
+
+      - name: Install the .deb with APT
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends xvfb xauth x11-utils imagemagick dbus
+          sudo apt-get install -y -q "./download/$FILE" 2>&1 | tee "$RUNNER_TEMP/evidence/apt-install.log"
+          dpkg-query -W hermuse-agent | tee -a "$RUNNER_TEMP/evidence/apt-install.log"
+
+      - name: Start it under Xvfb, alive 20 s after its window opened
+        run: |
+          set -euo pipefail
+          evidence=$RUNNER_TEMP/evidence
+          export DISPLAY=:99 XAUTHORITY=$RUNNER_TEMP/Xauthority
+          window() { xwininfo -root -tree 2>/dev/null | grep -qF '"Hermuse Agent"'; }
+          alive() { pgrep -x hermuse_app >/dev/null; }
+          cd "$(mktemp -d)"
+          xvfb-run --server-num=99 --auth-file="$XAUTHORITY" --server-args='-screen 0 1600x1000x24' \
+            dbus-run-session -- hermuse-agent >"$evidence/app.log" 2>&1 &
+          started=$SECONDS
+          until window; do
+            if [ $((SECONDS - started)) -ge 180 ]; then
+              echo "::error::no window titled 'Hermuse Agent' within 180 s"
+              exit 1
+            fi
+            if [ $((SECONDS - started)) -ge 15 ] && ! alive; then
+              echo "::error::Hermuse Agent exited before its window opened (app.log in the evidence)"
+              exit 1
+            fi
+            sleep 3
+          done
+          sleep 20
+          alive || { echo "::error::Hermuse Agent did not stay alive 20 s after its window opened"; exit 1; }
+          window || { echo "::error::the 'Hermuse Agent' window closed"; exit 1; }
+          pgrep -a -x hermuse_app >"$evidence/process.txt"
+          xwininfo -root -tree >"$evidence/windows.txt"
+          import -window root "$evidence/window.png" || echo "::warning::no screenshot"
+          pkill -x hermuse_app || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when a check above failed.
+        if: always()
+        with:
+          name: published-release-linux
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 90
+
+  macos:
+    name: Download and start (macOS .dmg)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      FILE: ${{ inputs.dmg_file }}
+    steps:
+      - name: The public download matches the tested SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence" download
+          cd download
+          # As a user gets them: the public URLs, no credentials (curl sets no quarantine attribute).
+          for file in SHA256SUMS.txt "$FILE"; do
+            curl -fsSL --proto '=https' --retry 5 --retry-delay 10 --retry-all-errors -o "$file" "$BASE_URL/$file"
+          done
+          echo "$SHA256SUMS  SHA256SUMS.txt" | shasum -a 256 -c -
+          awk -v f="$FILE" '$2 == f' SHA256SUMS.txt | shasum -a 256 -c - | tee "$RUNNER_TEMP/evidence/checksum.txt"
+
+      - name: Copy the app from the .dmg to /Applications
+        run: |
+          set -euo pipefail
+          mnt=$RUNNER_TEMP/dmg
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "download/$FILE" | tee "$RUNNER_TEMP/evidence/hdiutil.log"
+          ditto "$mnt/Hermuse Agent.app" "/Applications/Hermuse Agent.app"
+          hdiutil detach "$mnt" | tee -a "$RUNNER_TEMP/evidence/hdiutil.log"
+
+      - name: Start it, alive 20 s after its window opened
+        run: |
+          set -euo pipefail
+          evidence=$RUNNER_TEMP/evidence
+          app='/Applications/Hermuse Agent.app'
+          # The window server's windows of the app, through System Events (Accessibility, granted on the runner).
+          window() {
+            osascript -e 'tell application "System Events" to get name of every window of (every process whose bundle identifier is "com.yellowstick.hermuseApp")' \
+              2>>"$evidence/osascript.log" | grep -q 'Hermuse Agent'
+          }
+          alive() { pgrep -f "$app/Contents/MacOS/" >/dev/null; }
+          open "$app"
+          started=$SECONDS
+          until window; do
+            if [ $((SECONDS - started)) -ge 180 ]; then
+              echo "::error::no window titled 'Hermuse Agent' within 180 s"
+              exit 1
+            fi
+            if [ $((SECONDS - started)) -ge 15 ] && ! alive; then
+              echo "::error::Hermuse Agent exited before its window opened"
+              exit 1
+            fi
+            sleep 3
+          done
+          sleep 20
+          alive || { echo "::error::Hermuse Agent did not stay alive 20 s after its window opened"; exit 1; }
+          window || { echo "::error::the 'Hermuse Agent' window closed"; exit 1; }
+          pgrep -fl "$app/Contents/MacOS/" >"$evidence/process.txt"
+          screencapture -x "$evidence/window.png" || echo "::warning::no screenshot"
+          osascript -e 'tell application id "com.yellowstick.hermuseApp" to quit' || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when a check above failed.
+        if: always()
+        with:
+          name: published-release-macos
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 90
+
+  windows:
+    name: Download and start (Windows Setup.exe)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      FILE: ${{ inputs.windows_setup_file }}
+    steps:
+      - name: The public download matches the tested SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence" download
+          cd download
+          # As a user gets them: the public URLs, no credentials (curl marks no Zone.Identifier).
+          for file in SHA256SUMS.txt "$FILE"; do
+            curl -fsSL --proto '=https' --retry 5 --retry-delay 10 --retry-all-errors -o "$file" "$BASE_URL/$file"
+          done
+          echo "$SHA256SUMS  SHA256SUMS.txt" | sha256sum -c -
+          awk -v f="$FILE" '$2 == f' SHA256SUMS.txt | sha256sum -c - | tee "$RUNNER_TEMP/evidence/checksum.txt"
+
+      - name: Install it for the current user, start it, alive 20 s after its window opened
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:RUNNER_TEMP 'evidence'
+          $log = Join-Path $evidence 'setup-install.log'
+          $setup = (Resolve-Path (Join-Path 'download' $env:FILE)).Path
+          $install = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"" `
+            -Wait -PassThru
+          if ($install.ExitCode) { throw "Setup.exe /VERYSILENT exited with $($install.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Hermuse Agent\hermuse_app.exe'
+          if (-not (Test-Path $exe)) { throw "no $exe after the per-user install" }
+          $app = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $null = $app.Handle # keeps the exit code readable
+          $started = Get-Date
+          while ($true) {
+            Start-Sleep -Seconds 3
+            $app.Refresh()
+            if ($app.HasExited) { throw "Hermuse Agent exited ($($app.ExitCode)) before its window opened" }
+            if ($app.MainWindowTitle -eq 'Hermuse Agent') { break }
+            if (((Get-Date) - $started).TotalSeconds -ge 180) {
+              throw "no window titled 'Hermuse Agent' within 180 s (main window: '$($app.MainWindowTitle)')"
+            }
+          }
+          Start-Sleep -Seconds 20
+          $app.Refresh()
+          if ($app.HasExited) { throw "Hermuse Agent did not stay alive 20 s after its window opened ($($app.ExitCode))" }
+          if ($app.MainWindowTitle -ne 'Hermuse Agent') { throw "the 'Hermuse Agent' window closed (main window: '$($app.MainWindowTitle)')" }
+          "pid $($app.Id), $exe, main window '$($app.MainWindowTitle)', alive 20 s after it opened" |
+            Tee-Object -FilePath (Join-Path $evidence 'process.txt')
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $bitmap.Save((Join-Path $evidence 'window.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+          } catch {
+            "::warning::no screenshot: $_"
+          }
+          Stop-Process -Id $app.Id -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Evidence: uploaded even when a check above failed.
+        if: always()
+        with:
+          name: published-release-windows
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 90

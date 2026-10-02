@@ -87,11 +87,12 @@ One workflow per scenario, in `.github/workflows/`:
 | Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web app and demo builds, and a demo preview |
 | Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview; nothing when a passing run already checked the same tree (`tool/ci/tree-passed.sh`) |
 | Push to `main` touching the web app or the demo | `web-deploy.yml` | The read-only demo deployed to https://demo.hermuse.app |
-| Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below |
+| Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below, then the published-release check |
 | Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |
 
 `build.yml` (checks and packages), `smoke-legs.yml` (smoke scenarios) and
-`web-build.yml` are the steps these workflows share. The required checks of
+`web-build.yml` are the steps these workflows share; `published-release.yml`
+is the published-release check of `release.yml`. The required checks of
 `main` are `CI` and `Web`: the last job of their workflows, which passes only
 when every job before it succeeded or was skipped (a draft, a change that does
 not concern it).
@@ -106,22 +107,56 @@ and on Windows. The maintainer runs them on a branch with
 
 ## Releases
 
-1. The maintainer sets the version in `apps/hermuse_app/pubspec.yaml`, merges
-   it and tags that commit `hermuse/vX.Y.Z` (or `hermuse/vX.Y.Z-rc.N`). Only
-   administrators can create these tags, and a tag that does not name the
-   pubspec version is refused.
-2. The tag runs the full matrix: checks, the packages of every platform (the
-   macOS and Windows ones signed with the secrets of the `signing`
-   environment), every smoke scenario, the assembly and the provenance
-   attestation.
-3. The one approval: the maintainer approves the `release` environment, whose
-   capped model test account, when configured, runs a real conversation.
-4. The release goes out as a public **pre-release** with the tested bytes. A
-   failed or missing automated result blocks it; what the run could not prove
-   (model conversation, signatures, manual gates, checks outside CI) is listed
-   under "Not yet proven" in its notes. A published file is never replaced.
-5. Once those points are checked, the maintainer makes it the latest release:
+The maintainer cuts a release with `tool/release/release.sh`, from a clean
+checkout at `origin/main`, with `gh` logged in as an administrator: only
+administrators can create `hermuse/v*` tags, so no workflow can.
+
+```bash
+tool/release/release.sh --dry-run patch   # what it would do; nothing is pushed or created
+tool/release/release.sh patch             # or minor, major, rc, X.Y.Z, X.Y.Z-rc.N
+```
+
+1. **Release pull request.** The script bumps the version of
+   `apps/hermuse_app/pubspec.yaml` on `origin/main` (the build number goes up
+   by one) and, for a final version, updates the download names in the README
+   and the desktop guide. It opens `Release: Hermuse Agent X.Y.Z` from
+   `yellow-stick/release-X.Y.Z`, with the commits since the previous tag,
+   turns auto-merge on and waits for the merge queue; a failed check stops it.
+2. **Tag.** It tags the squash commit of that pull request `hermuse/vX.Y.Z`
+   and pushes the tag. A tag that does not name the pubspec version is
+   refused.
+3. **Release run.** The tag runs the full matrix: checks, the packages of
+   every platform (the macOS and Windows ones signed with the secrets of the
+   `signing` environment), every smoke scenario, the assembly and the
+   provenance attestation. The script follows the run and prints the failed
+   jobs with the end of their log.
+4. **The one approval.** The maintainer approves the `release` environment
+   (the script prints where), whose capped model test account, when
+   configured, runs a real conversation.
+5. **Public pre-release.** The release goes out as a public **pre-release**
+   with the tested bytes. A failed or missing automated result blocks it; what
+   the run could not prove (model conversation, signatures, manual gates,
+   checks outside CI) is listed under "Not yet proven" in its notes. A
+   published file is never replaced.
+6. **Published-release check.** The run then downloads the published files by
+   their public URL, as a user would, checks them against `SHA256SUMS.txt`,
+   and installs and starts them on clean Linux, macOS and Windows runners. A
+   failure there fails the run but cannot unpublish anything: the fix goes
+   into the next release (fix forward). The script exits once the run
+   succeeded, with the release URL.
+7. **Promotion.** Once the points under "Not yet proven" are checked, the
+   maintainer makes it the latest release:
    `gh release edit hermuse/vX.Y.Z --prerelease=false --latest`.
 
-To run a release again, dispatch it on its tag:
+Release candidates take the same path: `tool/release/release.sh rc` cuts
+`hermuse/vX.Y.Z-rc.N`, after a final version the first release candidate of
+the next patch, after a release candidate the next one (`X.Y.Z-rc.1` gives
+the first one of a minor or a major). A release candidate stays a pre-release
+and leaves the download names of the docs on the last final release;
+`tool/release/release.sh patch` then releases its final version.
+
+An interrupted script resumes where it stopped:
+`tool/release/release.sh tag [X.Y.Z]` waits for the release pull request if it
+is still open, then tags it; `tool/release/release.sh watch [X.Y.Z]` follows
+the release run. To run a release again, dispatch it on its tag:
 `gh workflow run release.yml --ref hermuse/vX.Y.Z -f tag=hermuse/vX.Y.Z`.

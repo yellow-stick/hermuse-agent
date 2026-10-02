@@ -94,6 +94,8 @@ Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yel
 
 Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review and the merge queue run the checks and the builds of every platform (`ci.yml`, required check `CI`) and the web build (required check `Web`). The merge queue skips them when a passing run already checked the same tree (a branch up to date with `main`, `tool/ci/tree-passed.sh`): update the branch before queueing to merge in about a minute. The installed-package smoke tests run only for a release tag (`release.yml`) and for a manual test run (`smoke.yml`), never on pull requests nor in the merge queue (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
 
+Releases: the maintainer cuts them with `tool/release/release.sh` (release pull request, tag, release run followed to its end; `--dry-run` shows the plan), never by hand-tagging (`CONTRIBUTING.md`, Releases).
+
 ## Validation per area
 
 - Dart/Flutter change: `melos run analyze` + the package's tests (`melos run test:dart` / `test:flutter`).
