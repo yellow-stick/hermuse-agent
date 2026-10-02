@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:cliproxy_client/cliproxy_client.dart'
+    show BridgeConnection, BridgeHost, bridgeCardSpecs;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -284,7 +286,7 @@ void main() {
       addTearDown(harness.dispose);
       await _pumpConnections(tester, harness);
 
-      expect(find.text('Connections'), findsOneWidget);
+      expect(find.text('Model accounts'), findsOneWidget);
       expect(find.text('Nous'), findsOneWidget);
       // Rows are compact: tapping one expands its flow.
       await tester.tap(find.text('Nous'));
@@ -393,6 +395,225 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Invalid API key (401).'), findsOneWidget);
     });
+
+    testWidgets('subscription sign-ins lead, other providers fold away', (
+      tester,
+    ) async {
+      final harness = _Harness(
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({
+            'providers': [
+              {
+                'id': 'openai-codex',
+                'name': 'ChatGPT or Codex Subscription',
+                'flow': 'device_code',
+                'status': {'logged_in': false},
+              },
+              {
+                'id': 'anthropic',
+                'name': 'Anthropic OAuth',
+                'flow': 'external',
+                'status': {'logged_in': false},
+              },
+              {
+                'id': 'nous',
+                'name': 'Nous Portal',
+                'flow': 'device_code',
+                'status': {'logged_in': true},
+              },
+            ],
+          }),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async =>
+              _json({'endpoints': []}),
+          'GET /api/env': (_) async => _json({}),
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      await _pumpConnections(tester, harness);
+
+      // No bridge host (like the web): Codex signs in through Hermes, and
+      // Claude, which needs a terminal there, waits with the others.
+      expect(find.text('Use your subscription'), findsOneWidget);
+      expect(find.text('Sign in with ChatGPT / Codex'), findsOneWidget);
+      expect(
+        find.text('Use your ChatGPT Plus/Pro subscription'),
+        findsOneWidget,
+      );
+      expect(find.text('Sign in with Claude Code'), findsNothing);
+      // A connected provider never folds away.
+      expect(find.text('Nous Portal'), findsOneWidget);
+      expect(find.text('Anthropic OAuth'), findsNothing);
+      expect(find.text('Add custom endpoint'), findsNothing);
+
+      await tester.tap(find.text('Show other providers'));
+      await tester.pump();
+      expect(find.text('Anthropic OAuth'), findsOneWidget);
+      expect(find.text('Add custom endpoint'), findsOneWidget);
+      await tester.tap(find.text('Hide other providers'));
+      await tester.pump();
+      expect(find.text('Anthropic OAuth'), findsNothing);
+
+      // A search shows every match, folded or not, featured rows by what
+      // they read.
+      await tester.enterText(find.byType(EditableText).first, 'anthropic');
+      await tester.pump();
+      expect(find.text('Anthropic OAuth'), findsOneWidget);
+      expect(find.text('Sign in with ChatGPT / Codex'), findsNothing);
+      expect(find.text('Show other providers'), findsNothing);
+      await tester.enterText(find.byType(EditableText).first, 'sign in');
+      await tester.pump();
+      expect(find.text('Sign in with ChatGPT / Codex'), findsOneWidget);
+      expect(find.text('Anthropic OAuth'), findsNothing);
+    });
+
+    testWidgets('desktop features every subscription bridge', (tester) async {
+      final harness = _Harness(
+        bridgeHost: const _StoppedBridgeHost(),
+        // On this machine: the bridge stays on the desktop sidecar.
+        baseUrl: 'http://127.0.0.1:9119',
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({
+            'providers': [
+              {
+                'id': 'openai-codex',
+                'name': 'ChatGPT or Codex Subscription',
+                'flow': 'device_code',
+                'status': {'logged_in': false},
+              },
+              {
+                'id': 'claude-code',
+                'name': 'Claude Code',
+                'flow': 'external',
+                'status': {'logged_in': false},
+              },
+            ],
+          }),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async =>
+              _json({'endpoints': []}),
+          'GET /api/env': (_) async => _json({}),
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      await _pumpConnections(tester, harness);
+
+      expect(find.text('Sign in with Claude Code'), findsOneWidget);
+      expect(find.text('Use your Claude Pro/Max subscription'), findsOneWidget);
+      expect(find.text('Sign in with Codex'), findsOneWidget);
+      expect(find.text('Sign in with Muse Code'), findsOneWidget);
+      expect(find.text('Sign in with Grok'), findsOneWidget);
+      expect(find.text('Sign in with ChatGPT / Codex'), findsNothing);
+      // The Hermes cards the bridges replace wait under other providers.
+      expect(find.text('Claude Code'), findsNothing);
+
+      await tester.tap(find.text('Sign in with Claude Code'));
+      await tester.pump();
+      expect(find.textContaining('Personal use only'), findsOneWidget);
+      await tester.tap(find.text('Sign in with Claude Code'));
+      await tester.pump();
+
+      // Eight sign-ins: the toggle and the rest sit below the fold.
+      final page = find.byType(Scrollable).first;
+      Future<void> reveal(String text) =>
+          tester.scrollUntilVisible(find.text(text), 200, scrollable: page);
+      await reveal('Show other providers');
+      await tester.tap(find.text('Show other providers'));
+      await tester.pump();
+      await reveal('Claude Code');
+      await reveal('ChatGPT or Codex Subscription');
+    });
+
+    testWidgets('a server without the bridge plugin leads to its update', (
+      tester,
+    ) async {
+      final harness = _Harness(
+        bridgeHost: const _StoppedBridgeHost(),
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({'providers': []}),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async =>
+              _json({'endpoints': []}),
+          'GET /api/env': (_) async => _json({}),
+          // Plugin 0.2: no bridge routes, but the plugin answers.
+          'GET $hermuseBridgeRoute/status': (_) async =>
+              _json({'detail': 'Not Found'}, 404),
+          'GET $hermusePluginRoute/files': (_) async => _json({'files': []}),
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      var opened = 0;
+      await _pumpConnections(tester, harness, onServerSetup: () => opened++);
+
+      expect(find.text('Retry'), findsNothing);
+      final bridges = bridgeCardSpecs.length;
+      expect(find.text('Update plugin'), findsNWidgets(bridges));
+      expect(find.text(serverBridgeUpdatePlugin), findsNWidgets(bridges));
+
+      await tester.tap(find.text('Sign in with Claude Code'));
+      await tester.pump();
+      await tester.tap(find.text('Update the plugin'));
+      expect(opened, 1);
+    });
+
+    testWidgets('custom endpoint Add enables once filled in, then saves', (
+      tester,
+    ) async {
+      final calls = <String>[];
+      final harness = _Harness(
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({'providers': []}),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async =>
+              _json({'endpoints': []}),
+          'GET /api/env': (_) async => _json({}),
+          'POST /api/providers/custom-endpoints/validate': (_) async {
+            calls.add('validate');
+            return _json({
+              'ok': true,
+              'resolved_base_url': 'http://localhost:1234/v1',
+              'models': ['local-model'],
+            });
+          },
+          'POST /api/providers/custom-endpoints': (_) async {
+            calls.add('save');
+            return _json({'id': 'local'});
+          },
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      await _pumpConnections(tester, harness);
+
+      // Nothing to feature: the other providers show without unfolding.
+      await tester.tap(find.widgetWithText(YsButton, 'Add custom endpoint'));
+      await tester.pump();
+      final fields = find.byType(EditableText);
+      await tester.enterText(fields.at(1), 'Local model');
+      await tester.enterText(fields.at(2), 'http://localhost:1234');
+      await tester.pump();
+      final add = find.widgetWithText(YsButton, 'Add');
+      await tester.ensureVisible(add);
+      await tester.pump();
+      await tester.tap(add);
+      await tester.pumpAndSettle();
+      expect(calls, ['validate', 'save']);
+    });
   });
 }
 
@@ -401,10 +622,21 @@ http.Response _json(Object? payload, [int status = 200]) =>
 
 /// Scripted harness: memory DB + fake transport + MockClient REST.
 final class _Harness {
-  _Harness({required this.rpc, this.rest = const {}});
+  _Harness({
+    required this.rpc,
+    this.rest = const {},
+    this.bridgeHost,
+    this.baseUrl = 'https://vps.example',
+  });
 
   final Map<String, Object? Function(Map<String, Object?>)> rpc;
   final Map<String, Future<http.Response> Function(http.Request)> rest;
+
+  /// The desktop subscription-bridge host; null like on the web.
+  final BridgeHost? bridgeHost;
+
+  /// Where the instance's Hermes listens.
+  final String baseUrl;
 
   late final db = openMemoryDatabase();
   late final fake = FakeHermesTransport();
@@ -412,7 +644,7 @@ final class _Harness {
     id: 'vps',
     label: 'VPS',
     kind: InstanceKind.remote,
-    baseUrl: Uri.parse('https://vps.example'),
+    baseUrl: Uri.parse(baseUrl),
     auth: AuthMethod.password,
   );
 
@@ -443,9 +675,20 @@ final class _Harness {
           baseUrl: Uri.parse('https://vps.example'),
         ),
       ),
+      bridgeHostProvider.overrideWithValue(bridgeHost),
     ],
     child: child,
   );
+}
+
+/// A desktop bridge host whose sidecar is down: the bridge cards still
+/// list, signed out.
+final class _StoppedBridgeHost implements BridgeHost {
+  const _StoppedBridgeHost();
+
+  @override
+  Future<BridgeConnection> ensureStarted() =>
+      Future.error(StateError('test: sidecar down'));
 }
 
 Future<void> _pumpOnboarding(
@@ -476,7 +719,11 @@ Future<void> _pumpOnboarding(
   await tester.pumpAndSettle();
 }
 
-Future<void> _pumpConnections(WidgetTester tester, _Harness harness) async {
+Future<void> _pumpConnections(
+  WidgetTester tester,
+  _Harness harness, {
+  VoidCallback? onServerSetup,
+}) async {
   await tester.pumpWidget(
     harness._scope(
       child: MediaQuery(
@@ -489,6 +736,7 @@ Future<void> _pumpConnections(WidgetTester tester, _Harness harness) async {
               child: ConnectionsScreen(
                 instance: harness.instance,
                 onBack: () {},
+                onServerSetup: onServerSetup,
               ),
             ),
           ),

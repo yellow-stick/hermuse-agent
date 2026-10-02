@@ -17,7 +17,7 @@ import 'route.dart';
 ///
 /// Missing plugin: the local (Hermuse-supervised) instance offers a one-tap
 /// install of the bundled plugin; any other instance installs it through its
-/// dashboard, with the commands to run on its host as a fallback. When
+/// dashboard, and the server guide covers installing it by hand. When
 /// the local install could not set up the agent's computer for lack of
 /// Docker, a notice stays under [child] while the route is open; on Linux
 /// it opens the setup assistant, which installs or starts Docker.
@@ -179,8 +179,9 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
   String? _error;
   List<PluginScanFinding> _findings = const [];
 
-  /// The dashboard installed the plugin but must restart to serve it.
-  var _needsRestart = false;
+  /// How to restart the dashboard, which installed the plugin but must
+  /// restart to serve it: the way that works on that server.
+  ServerStep? _restart;
 
   /// Hermes' scan report while the install waits for the user's consent.
   String? _consent;
@@ -236,7 +237,7 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
       _busy = true;
       _error = null;
       _findings = const [];
-      _needsRestart = false;
+      _restart = null;
     });
     try {
       final rest = await ref.read(
@@ -251,7 +252,8 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
         case PluginNeedsConsent(:final detail):
           setState(() => _consent = detail);
         case PluginNeedsDashboardRestart():
-          setState(() => _needsRestart = true);
+          final restart = (await readDashboardHost(rest)).restartDashboard;
+          if (mounted) setState(() => _restart = restart);
         case PluginInstallFailed(:final message, :final findings):
           setState(() {
             _error = message;
@@ -319,27 +321,28 @@ final class _PluginMissingState extends ConsumerState<_PluginMissing> {
                   : () => unawaited(local ? _install(host) : _installRemote()),
             ),
           ),
-        if (_needsRestart) ...[
-          const HermuseRouteSub(
+        if (_restart case final restart?) ...[
+          HermuseRouteSub(
             'Restart the Hermes dashboard to finish installing Hermuse. '
-            'Under systemd run the command below; otherwise stop '
-            '`hermes dashboard` and start it again. Then check again.',
+            '${restart.note}',
           ),
-          const HermuseCodeBlock('systemctl --user restart hermes-dashboard'),
+          if (restart.command case final command?) HermuseCodeBlock(command),
         ],
         if (_error case final error?) HermuseRouteError(error),
         if (_findings.isNotEmpty)
           HermuseCodeBlock([for (final f in _findings) '$f'].join('\n')),
         if (!local) ...[
           HermuseRouteSub(
-            'Or run these commands where ${widget.instance.label} runs, '
-            'then restart its gateway:',
+            'To install it by hand on ${widget.instance.label} instead, '
+            'follow the server guide.',
           ),
-          const HermuseCodeBlock(
-            'cp -r hermes-plugin/hermuse ~/.hermes/plugins/hermuse\n'
-            'hermes plugins enable hermuse\n'
-            'hermes hermuse enable\n'
-            'hermes hermuse doctor',
+          Align(
+            alignment: Alignment.centerLeft,
+            child: YsButton.neutral(
+              label: 'Open the server guide',
+              onPressed: () =>
+                  unawaited(openExternalUrl(hermusePluginByHandGuide)),
+            ),
           ),
         ],
         Align(

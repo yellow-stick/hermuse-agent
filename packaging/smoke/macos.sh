@@ -44,7 +44,7 @@ LOCAL_SECRETS=hermes/hermuse-local/
 # UI copy the automation reads and clicks (OCR). It MUST equal the app's
 # English labels: a missing core label fails the flow, a missing secondary one
 # turns that GUI proof into a manual gate.
-UI_CONNECT_TITLE='Connect to a Hermes'
+UI_CONNECT_TITLE='Connect to a machine'
 UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_KEYSTORE_ERROR='Secure storage unavailable'
 UI_RETRY_STAGE='Retry this stage'
@@ -55,9 +55,10 @@ UI_STAGE_PROGRESS='step [0-9]+ of [0-9]+'
 UI_ENABLE_PLUGIN='Enable the Hermuse plugin'
 UI_INSTALL_PLUGIN='Install the plugin'
 UI_BACK_TO_CHAT='Back to chat'
-UI_CONNECTIONS='Connections'
+# The instance row's button that opens its Connections.
+UI_CONNECTIONS='Model accounts'
 UI_SEARCH_CONNECTIONS='Search connections'
-UI_BRIDGE_CARD='Meta (bridge)'
+UI_BRIDGE_CARD='Sign in with Muse Code'
 UI_CONNECT='Connect'
 UI_CANCEL='Cancel'
 UI_FEED='Feed'

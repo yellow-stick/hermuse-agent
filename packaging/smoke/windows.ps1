@@ -66,7 +66,7 @@ $UserPath = @(
 # UI copy the automation reads and clicks (OCR). It MUST equal the app's
 # English labels: a missing core label fails the flow, a missing secondary one
 # turns that GUI proof into a manual gate.
-$UiConnectTitle = 'Connect to a Hermes'
+$UiConnectTitle = 'Connect to a machine'
 $UiLocalChoice = 'Install Hermes on this computer'
 $UiKeystoreError = 'Secure storage unavailable'
 $UiRetryStage = 'Retry this stage'
@@ -77,9 +77,10 @@ $UiStageProgress = 'step [0-9]+ of [0-9]+'
 $UiEnablePlugin = 'Enable the Hermuse plugin'
 $UiInstallPlugin = 'Install the plugin'
 $UiBackToChat = 'Back to chat'
-$UiConnections = 'Connections'
+# The instance row's button that opens its Connections.
+$UiConnections = 'Model accounts'
 $UiSearchConnections = 'Search connections'
-$UiBridgeCard = 'Meta (bridge)'
+$UiBridgeCard = 'Sign in with Muse Code'
 $UiConnect = 'Connect'
 $UiCancel = 'Cancel'
 $UiFeed = 'Feed'
