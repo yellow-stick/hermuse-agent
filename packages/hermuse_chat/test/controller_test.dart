@@ -52,6 +52,11 @@ final class _Observer implements ChatObserver {
 
   @override
   void sessionDeleted(ThreadRef ref) => events.add('delete ${ref.sessionId}');
+
+  final activity = <ActivityItem>[];
+
+  @override
+  void toolCompleted(ThreadRef ref, ActivityItem item) => activity.add(item);
 }
 
 void main() {
@@ -198,7 +203,9 @@ void main() {
     blocks = chat.state.activeThread.messages.last.blocks;
     expect(blocks.whereType<TextBlock>().single.text, 'Booked: PNR X1');
     expect(chat.state.busy, isFalse);
-    expect(chat.state.activity.single.title, 'book');
+    expect(observer.activity.map((a) => (a.tool, a.summary, a.kind)), [
+      ('book', 'PNR X1', ActivityKind.completed),
+    ]);
     expect(observer.settled, isNotEmpty);
   });
 
@@ -263,7 +270,7 @@ void main() {
       expect((turn.blocks.last as TextBlock).text, 'Nantes');
       expect(turn.blocks.whereType<ToolCallBlock>(), isEmpty);
       expect(turn.plainText, 'Nantes');
-      expect(chat.state.activity.single.title, 'browser_navigate');
+      expect(observer.activity.single.tool, 'browser_navigate');
     },
   );
 
@@ -801,10 +808,14 @@ void main() {
       final choice = card.blocks.single as ChoiceBlock;
       expect(choice.options, ['Allow once', 'Allow for this session', 'Deny']);
       expect(choice.prompt, contains('rm -rf dist'));
+      expect(chat.state.approvals.map((a) => (a.messageId, a.command)), [
+        (card.id, 'rm -rf dist'),
+      ]);
 
       chat.choose(card.id, 'Always allow'); // not offered: ignored
       await pumpEventQueue();
       expect(fake.replies, isNot(contains('srq-9')));
+      expect(chat.state.approvals, hasLength(1));
 
       chat.choose(card.id, 'Allow once');
       await pumpEventQueue();
@@ -814,8 +825,37 @@ void main() {
             .selected,
         'Allow once',
       );
+      expect(chat.state.approvals, isEmpty);
     },
   );
+
+  test('an approval Hermes cancels leaves the pending list', () async {
+    final chat = await open();
+    fake.emitRequest('srq-7', 'approval', {
+      'session_id': 'live-1',
+      'request_id': 'r7',
+      'command': 'rm -rf /tmp/test',
+    });
+    await pumpEventQueue();
+    expect(chat.state.approvals, hasLength(1));
+    fake.emitEvent(
+      'request.cancel',
+      sessionId: 'live-1',
+      payload: {'id': 'srq-7', 'method': 'approval', 'reason': 'timeout'},
+    );
+    await pumpEventQueue();
+    expect(chat.state.approvals, isEmpty);
+  });
+
+  test('clarify questions are not approvals', () async {
+    final chat = await open();
+    fake.emitRequest('srq-q', 'clarify', {
+      'session_id': 'live-1',
+      'question': 'Which city?',
+    });
+    await pumpEventQueue();
+    expect(chat.state.approvals, isEmpty);
+  });
 
   test('batch clarify answers once every question is answered', () async {
     final chat = await open();
@@ -1112,6 +1152,32 @@ void main() {
   test('prices format with the currency symbol', () {
     expect(const Money(456.06, 'EUR').toString(), '€456.06');
     expect(const Money(519.5, 'USD').toString(), r'$519.50');
+  });
+
+  test('only web tools read as web activity; names read as words', () {
+    ActivityItem item(String tool) =>
+        ActivityItem(tool: tool, summary: '', at: DateTime(2026, 10, 2));
+    expect(
+      [
+        for (final tool in [
+          'web_search',
+          'web_extract',
+          'tool_search',
+          'session_search',
+          'terminal',
+        ])
+          item(tool).kind,
+      ],
+      [
+        ActivityKind.webSearch,
+        ActivityKind.webSearch,
+        ActivityKind.completed,
+        ActivityKind.completed,
+        ActivityKind.completed,
+      ],
+    );
+    expect(item('browser_navigate').title, 'Browser navigate');
+    expect(item('').title, 'Tool');
   });
 
   test('time-ago buckets', () {

@@ -17,14 +17,14 @@ import '../shell/screens.dart' show YsDialogError, YsDialogHead;
 /// `HermuseConnections` parity).
 ///
 /// Subscription sign-ins come first ([_featuredSignIns]), then the
-/// connected providers; "Show other providers" unfolds the available ones
-/// and the custom endpoint form. A connected provider never folds away and
-/// a search shows every match.
+/// connected providers and "Your own endpoint" (the custom endpoint form);
+/// "Show other providers" unfolds the available ones. A connected provider
+/// never folds away and a search shows every match.
 ///
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
-/// a masked field with server validate errors; custom endpoints get an
-/// add/delete form; external cards explain the terminal step. Bridge cards
+/// a masked field with server validate errors; custom endpoints get a
+/// two-step check/add form; external cards explain the terminal step. Bridge cards
 /// only appear where [bridgeHostProvider] is overridden (desktop).
 final class ConnectionsScreen extends ConsumerStatefulWidget {
   const ConnectionsScreen({
@@ -53,8 +53,7 @@ final class ConnectionsScreen extends ConsumerStatefulWidget {
 final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
   final _query = TextEditingController();
 
-  /// "Show other providers" unfolded the available providers and the custom
-  /// endpoint form.
+  /// "Show other providers" unfolded the available providers.
   var _others = false;
 
   @override
@@ -204,6 +203,16 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                   ]),
                 if (connected.isNotEmpty)
                   group('Connected', [for (final c in connected) row(c)]),
+                const SizedBox(height: 8),
+                Text('Your own endpoint', style: groupStyle),
+                Text(
+                  'OpenAI-compatible or Anthropic-compatible API',
+                  style: YsType.caption.flutter.copyWith(
+                    color: palette.contentSubtleColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _CustomEndpointCard(instanceId: instance.id),
                 if (foldable) ...[
                   const SizedBox(height: YsSpace.lg),
                   Align(
@@ -227,10 +236,6 @@ final class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
                     const SizedBox(height: 12),
                     Text('No connection matches.', style: muted),
                   ],
-                  const SizedBox(height: 8),
-                  Text('Custom endpoint', style: groupStyle),
-                  const SizedBox(height: 8),
-                  _CustomEndpointCard(instanceId: instance.id),
                 ],
               ],
             ],
@@ -418,6 +423,7 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         ),
       if (card.flow == ConnectionFlow.bridge)
         _bridgeBody(card, bridgePending ? widget.pendingBridgeLogin : null),
+      if (card.flow == ConnectionFlow.customEndpoint) _endpointBody(card),
       if (card.poolEntries.isNotEmpty)
         Text(
           card.poolEntries
@@ -543,6 +549,38 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
               ],
             ),
           ),
+      ],
+    );
+  }
+
+  /// A custom endpoint's API type, base URL and the models it lists; the
+  /// slots below pick which ≤2 the chat offers.
+  Widget _endpointBody(ConnectionCard card) {
+    final palette = YsTheme.of(context);
+    final caption = YsType.caption.flutter.copyWith(
+      color: palette.contentSubtleColor,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          customEndpointApiLabel(card.apiMode),
+          style: YsType.small.flutter.copyWith(
+            color: palette.contentMutedColor,
+          ),
+        ),
+        if (card.baseUrl.isNotEmpty)
+          SelectableText(card.baseUrl, style: caption),
+        if (card.models.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${card.models.length} '
+            '${card.models.length == 1 ? 'model' : 'models'}: '
+            '${card.models.join(' · ')}',
+            style: caption,
+          ),
+        ],
       ],
     );
   }
@@ -909,6 +947,11 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
   var _busy = false;
   String? _error;
 
+  /// Hermes' warning while it waits for the user to confirm a guarded
+  /// (expensive or data-training) default model.
+  String? _confirm;
+  final _dialog = OverlayPortalController();
+
   Future<void> _select(ModelTier tier, String? modelId) async {
     setState(() => _error = null);
     try {
@@ -922,7 +965,7 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
     }
   }
 
-  Future<void> _makeDefault() async {
+  Future<void> _makeDefault({bool confirmed = false}) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -932,11 +975,21 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
           .read(
             modelSelectionProvider(widget.instanceId, widget.card.id).notifier,
           )
-          .makeDefault();
+          .makeDefault(confirmExpensiveModel: confirmed);
+    } on ExpensiveModelConfirmation catch (e) {
+      if (mounted) {
+        setState(() => _confirm = e.message);
+        _dialog.show();
+      }
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
     if (mounted) setState(() => _busy = false);
+  }
+
+  void _closeConfirm() {
+    _dialog.hide();
+    setState(() => _confirm = null);
   }
 
   @override
@@ -963,49 +1016,72 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
       );
     }
     final options = [for (final id in current.allModels) (id, id)];
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _Slot(
-          label: 'Large',
-          value: current.large ?? '',
-          options: options,
-          semanticLabel: '${widget.card.name} large model',
-          onChanged: (v) =>
-              unawaited(_select(ModelTier.large, v.isEmpty ? null : v)),
-        ),
-        const SizedBox(height: 8),
-        _Slot(
-          label: 'Small',
-          value: current.small ?? '',
-          options: options,
-          semanticLabel: '${widget.card.name} small model',
-          onChanged: (v) =>
-              unawaited(_select(ModelTier.small, v.isEmpty ? null : v)),
-        ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerRight,
-          child: YsButton.neutral(
-            label: _busy ? 'Working…' : 'Use as default',
-            onPressed: _busy || current.large == null
-                ? null
-                : () => unawaited(_makeDefault()),
-          ),
-        ),
-        if (_error != null) ...[
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              _error!,
-              style: YsType.label.flutter.copyWith(
-                color: palette.primary2Color,
-              ),
-            ),
+    return OverlayPortal(
+      controller: _dialog,
+      overlayChildBuilder: (context) => YsDialog(
+        title: 'Use this model?',
+        onClose: _closeConfirm,
+        actions: [
+          YsButton.neutral(label: 'Cancel', onPressed: _closeConfirm),
+          YsButton.primary(
+            label: 'Use it anyway',
+            onPressed: () {
+              _closeConfirm();
+              unawaited(_makeDefault(confirmed: true));
+            },
           ),
         ],
-      ],
+        child: Text(
+          _confirm ?? '',
+          style: YsType.body.flutter.copyWith(
+            color: YsTheme.of(context).contentMutedColor,
+          ),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _Slot(
+            label: 'Large',
+            value: current.large ?? '',
+            options: options,
+            semanticLabel: '${widget.card.name} large model',
+            onChanged: (v) =>
+                unawaited(_select(ModelTier.large, v.isEmpty ? null : v)),
+          ),
+          const SizedBox(height: 8),
+          _Slot(
+            label: 'Small',
+            value: current.small ?? '',
+            options: options,
+            semanticLabel: '${widget.card.name} small model',
+            onChanged: (v) =>
+                unawaited(_select(ModelTier.small, v.isEmpty ? null : v)),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: YsButton.neutral(
+              label: _busy ? 'Working…' : 'Use as default',
+              onPressed: _busy || current.large == null
+                  ? null
+                  : () => unawaited(_makeDefault()),
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _error!,
+                style: YsType.label.flutter.copyWith(
+                  color: palette.primary2Color,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1053,6 +1129,10 @@ final class _Slot extends StatelessWidget {
   }
 }
 
+/// "Your own endpoint": adds an OpenAI- or Anthropic-compatible API in two
+/// steps (web `_CustomEndpointCard` parity). Check probes it with the chosen
+/// API type and lists its models; Add saves it with the default model picked
+/// from that list (typed when the endpoint lists none).
 final class _CustomEndpointCard extends ConsumerStatefulWidget {
   const _CustomEndpointCard({required this.instanceId});
 
@@ -1066,13 +1146,21 @@ final class _CustomEndpointCard extends ConsumerStatefulWidget {
 final class _CustomEndpointCardState
     extends ConsumerState<_CustomEndpointCard> {
   var _open = false;
-  // Add is enabled by the name and URL fields: rebuild on their edits.
+  var _apiMode = customEndpointApiModes.first.$1;
+  // Check and Add are enabled by the fields: rebuild on their edits.
   late final TextEditingController _name = TextEditingController()
     ..addListener(() => setState(() {}));
   late final TextEditingController _baseUrl = TextEditingController()
     ..addListener(() => setState(() {}));
   late final TextEditingController _apiKey = TextEditingController();
-  late final TextEditingController _model = TextEditingController();
+  late final TextEditingController _model = TextEditingController()
+    ..addListener(() => setState(() {}));
+
+  /// What Check found; null while on the first step.
+  CustomEndpointProbe? _probe;
+
+  /// The default model picked from [_probe]'s list.
+  var _picked = '';
   var _busy = false;
   String? _error;
 
@@ -1085,6 +1173,69 @@ final class _CustomEndpointCardState
     super.dispose();
   }
 
+  ConnectionCards _cards() =>
+      ref.read(connectionCardsProvider(widget.instanceId).notifier);
+
+  Future<void> _check() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final probe = await _cards().checkCustomEndpoint(
+        name: _name.text.trim(),
+        baseUrl: _baseUrl.text.trim(),
+        apiKey: _apiKey.text,
+        apiMode: _apiMode,
+      );
+      if (mounted) {
+        setState(() {
+          _probe = probe;
+          _picked = probe.models.isEmpty
+              ? ''
+              : pickLargeAndSmall(probe.models).large ?? probe.models.first;
+          _model.clear();
+        });
+      }
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _add(CustomEndpointProbe probe, String model) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _cards().addCustomEndpoint(
+        name: _name.text.trim(),
+        baseUrl: probe.resolvedBaseUrl,
+        apiKey: _apiKey.text,
+        apiMode: _apiMode,
+        model: model,
+        models: probe.models,
+      );
+      if (mounted) _close();
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _close() => setState(() {
+    _open = false;
+    _apiMode = customEndpointApiModes.first.$1;
+    _probe = null;
+    _picked = '';
+    _error = null;
+    _name.clear();
+    _baseUrl.clear();
+    _apiKey.clear();
+    _model.clear();
+  });
+
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
@@ -1092,11 +1243,99 @@ final class _CustomEndpointCardState
       return Align(
         alignment: Alignment.centerRight,
         child: YsButton.neutral(
-          label: 'Add custom endpoint',
+          label: 'Add a connection',
           onPressed: () => setState(() => _open = true),
         ),
       );
     }
+    final probe = _probe;
+    final muted = YsType.small.flutter.copyWith(
+      color: palette.contentMutedColor,
+    );
+    final model = probe == null
+        ? ''
+        : probe.models.isEmpty
+        ? _model.text.trim()
+        : _picked;
+    final fields = probe == null
+        ? <Widget>[
+            YsField(
+              label: 'API type',
+              child: YsSelect(
+                value: _apiMode,
+                options: customEndpointApiModes,
+                onChanged: (v) => setState(() => _apiMode = v),
+                semanticLabel: 'Endpoint API type',
+              ),
+            ),
+            YsField(
+              label: 'Name',
+              child: YsInputBox(
+                controller: _name,
+                placeholder: 'My models',
+                semanticLabel: 'Endpoint name',
+              ),
+            ),
+            YsField(
+              label: 'Base URL',
+              child: YsInputBox(
+                controller: _baseUrl,
+                placeholder: 'https://api.example.com/v1',
+                semanticLabel: 'Endpoint base URL',
+              ),
+            ),
+            YsField(
+              label: 'API key (optional)',
+              child: YsInputBox(
+                controller: _apiKey,
+                placeholder: 'sk-…',
+                semanticLabel: 'Endpoint API key',
+                obscure: true,
+                onSubmitted: (_) {
+                  if (!_busy &&
+                      _name.text.trim().isNotEmpty &&
+                      _baseUrl.text.trim().isNotEmpty) {
+                    unawaited(_check());
+                  }
+                },
+              ),
+            ),
+          ]
+        : <Widget>[
+            Text(
+              '${customEndpointApiLabel(_apiMode)} · '
+              '${probe.resolvedBaseUrl}',
+              style: muted,
+            ),
+            Text(
+              probe.models.isEmpty
+                  ? 'The endpoint lists no models: type the id of the one to '
+                        'use.'
+                  : 'Found ${probe.models.length} '
+                        '${probe.models.length == 1 ? 'model' : 'models'}. '
+                        'Pick the default one.',
+              style: muted,
+            ),
+            if (probe.models.isEmpty)
+              YsField(
+                label: 'Model',
+                child: YsInputBox(
+                  controller: _model,
+                  placeholder: 'model id',
+                  semanticLabel: 'Endpoint model',
+                ),
+              )
+            else
+              YsField(
+                label: 'Default model',
+                child: YsSelect(
+                  value: _picked,
+                  options: [for (final id in probe.models) (id, id)],
+                  onChanged: (v) => setState(() => _picked = v),
+                  semanticLabel: 'Endpoint default model',
+                ),
+              ),
+          ];
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.neutralAmbientColor,
@@ -1109,7 +1348,7 @@ final class _CustomEndpointCardState
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Custom endpoint',
+              'Add a connection',
               style: const YsTextStyle(
                 15,
                 20,
@@ -1117,48 +1356,12 @@ final class _CustomEndpointCardState
               ).flutter.copyWith(color: palette.contentColor),
             ),
             Text(
-              'Any OpenAI-compatible API.',
-              style: YsType.small.flutter.copyWith(
-                color: palette.contentMutedColor,
-              ),
+              probe == null
+                  ? 'Step 1 of 2 · Check the endpoint'
+                  : 'Step 2 of 2 · Choose the default model',
+              style: muted,
             ),
-            const SizedBox(height: 12),
-            YsField(
-              label: 'Name',
-              child: YsInputBox(
-                controller: _name,
-                placeholder: 'Local model',
-                semanticLabel: 'Endpoint name',
-              ),
-            ),
-            const SizedBox(height: 12),
-            YsField(
-              label: 'Base URL',
-              child: YsInputBox(
-                controller: _baseUrl,
-                placeholder: 'http://localhost:1234/v1',
-                semanticLabel: 'Endpoint base URL',
-              ),
-            ),
-            const SizedBox(height: 12),
-            YsField(
-              label: 'API key (optional)',
-              child: YsInputBox(
-                controller: _apiKey,
-                placeholder: 'sk-…',
-                semanticLabel: 'Endpoint API key',
-                obscure: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            YsField(
-              label: 'Model (optional)',
-              child: YsInputBox(
-                controller: _model,
-                placeholder: 'model id',
-                semanticLabel: 'Endpoint model',
-              ),
-            ),
+            for (final field in fields) ...[const SizedBox(height: 12), field],
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -1172,50 +1375,39 @@ final class _CustomEndpointCardState
             Row(
               children: [
                 const Spacer(),
-                YsButton.neutral(
-                  label: 'Cancel',
-                  onPressed: _busy ? null : () => setState(() => _open = false),
-                ),
-                const SizedBox(width: 12),
-                YsButton.primary(
-                  label: _busy ? 'Adding…' : 'Add',
-                  onPressed:
-                      _busy ||
-                          _name.text.trim().isEmpty ||
-                          _baseUrl.text.trim().isEmpty
-                      ? null
-                      : () async {
-                          setState(() {
-                            _busy = true;
+                if (probe == null)
+                  YsButton.neutral(
+                    label: 'Cancel',
+                    onPressed: _busy ? null : _close,
+                  )
+                else
+                  YsButton.neutral(
+                    label: 'Back',
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                            _probe = null;
                             _error = null;
-                          });
-                          try {
-                            await ref
-                                .read(
-                                  connectionCardsProvider(widget.instanceId)
-                                      .notifier,
-                                )
-                                .addCustomEndpoint(
-                                  name: _name.text.trim(),
-                                  baseUrl: _baseUrl.text.trim(),
-                                  apiKey: _apiKey.text,
-                                  model: _model.text.trim(),
-                                );
-                            if (mounted) {
-                              setState(() {
-                                _open = false;
-                                _name.clear();
-                                _baseUrl.clear();
-                                _apiKey.clear();
-                                _model.clear();
-                              });
-                            }
-                          } on Object catch (e) {
-                            if (mounted) setState(() => _error = '$e');
-                          }
-                          if (mounted) setState(() => _busy = false);
-                        },
-                ),
+                          }),
+                  ),
+                const SizedBox(width: 12),
+                if (probe == null)
+                  YsButton.primary(
+                    label: _busy ? 'Checking…' : 'Check',
+                    onPressed:
+                        _busy ||
+                            _name.text.trim().isEmpty ||
+                            _baseUrl.text.trim().isEmpty
+                        ? null
+                        : () => unawaited(_check()),
+                  )
+                else
+                  YsButton.primary(
+                    label: _busy ? 'Adding…' : 'Add',
+                    onPressed: _busy || model.isEmpty
+                        ? null
+                        : () => unawaited(_add(probe, model)),
+                  ),
               ],
             ),
           ],

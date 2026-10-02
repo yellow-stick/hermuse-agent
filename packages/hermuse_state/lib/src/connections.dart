@@ -30,7 +30,8 @@ enum ConnectionFlow {
   /// API-key entry (`POST /api/providers/validate`, then `model.save_key`).
   apiKey,
 
-  /// OpenAI-compatible endpoint (`POST /api/providers/custom-endpoints`).
+  /// OpenAI- or Anthropic-compatible endpoint
+  /// (`POST /api/providers/custom-endpoints`).
   customEndpoint,
 
   /// Delegated to a terminal/CLI (`cli_command`); Hermes `/start` refuses it.
@@ -76,6 +77,10 @@ final class ConnectionCard {
     this.bridgeSpec,
     this.onServer = false,
     this.needsPlugin = false,
+    this.baseUrl = '',
+    this.apiMode = '',
+    this.defaultModel = '',
+    this.models = const [],
   });
 
   /// Provider id (`nous`, `openai-codex`, `openai-api`, `custom:<id>`, …).
@@ -134,6 +139,24 @@ final class ConnectionCard {
   /// server's setup checklist does.
   final bool needsPlugin;
 
+  /// Base URL of a [ConnectionFlow.customEndpoint] card, '' otherwise.
+  final String baseUrl;
+
+  /// Wire protocol of a custom endpoint (Hermes `api_mode`):
+  /// `chat_completions`, `anthropic_messages`, `codex_responses`, or '' when
+  /// Hermes auto-detects it. Shown with [customEndpointApiLabel].
+  final String apiMode;
+
+  /// The model a custom endpoint was saved with (Hermes `model`): the
+  /// large slot of its default selection.
+  final String defaultModel;
+
+  /// Model ids a custom endpoint lists (Hermes `models`).
+  final List<String> models;
+
+  /// The provider id Hermes resolves for this card ([hermesProviderId]).
+  String get hermesProvider => hermesProviderId(id);
+
   ConnectionCard copyWith({
     String? name,
     String? logoKey,
@@ -152,6 +175,10 @@ final class ConnectionCard {
     BridgeCardSpec? Function()? bridgeSpec,
     bool? onServer,
     bool? needsPlugin,
+    String? baseUrl,
+    String? apiMode,
+    String? defaultModel,
+    List<String>? models,
   }) => ConnectionCard(
     id: id,
     name: name ?? this.name,
@@ -173,7 +200,56 @@ final class ConnectionCard {
     bridgeSpec: bridgeSpec == null ? this.bridgeSpec : bridgeSpec(),
     onServer: onServer ?? this.onServer,
     needsPlugin: needsPlugin ?? this.needsPlugin,
+    baseUrl: baseUrl ?? this.baseUrl,
+    apiMode: apiMode ?? this.apiMode,
+    defaultModel: defaultModel ?? this.defaultModel,
+    models: models ?? this.models,
   );
+}
+
+/// Card-id prefix of a saved custom endpoint (`custom:<slug>`).
+const customEndpointCardPrefix = 'custom:';
+
+/// The provider id Hermes resolves for card [cardId] (`POST /api/model/set`,
+/// `/model … --provider`): a custom endpoint lives under
+/// `config.yaml providers.<slug>` and Hermes resolves that key first
+/// (`hermes_cli/providers.py resolve_provider_full`), so `custom:<slug>`
+/// becomes `<slug>`; every other card id is already the Hermes slug.
+String hermesProviderId(String cardId) =>
+    cardId.startsWith(customEndpointCardPrefix)
+    ? cardId.substring(customEndpointCardPrefix.length)
+    : cardId;
+
+/// The API types a custom endpoint can speak, as Hermes `api_mode` values
+/// with their labels, in the order the add form offers them.
+const customEndpointApiModes = <(String, String)>[
+  ('chat_completions', 'OpenAI-compatible'),
+  ('anthropic_messages', 'Anthropic-compatible'),
+  ('', 'Auto-detect'),
+];
+
+/// Label of a custom endpoint's `api_mode` on its card.
+String customEndpointApiLabel(String apiMode) => switch (apiMode) {
+  'chat_completions' => 'OpenAI-compatible',
+  'anthropic_messages' => 'Anthropic-compatible',
+  'codex_responses' => 'OpenAI Responses',
+  _ => 'Auto',
+};
+
+/// What `POST /api/providers/custom-endpoints/validate` found: the base that
+/// served `/models` and the model ids it lists (possibly none).
+final class CustomEndpointProbe {
+  const CustomEndpointProbe({
+    required this.resolvedBaseUrl,
+    required this.models,
+    this.message = '',
+  });
+
+  final String resolvedBaseUrl;
+  final List<String> models;
+
+  /// The server's sentence about the probe ('' when it said nothing).
+  final String message;
 }
 
 /// One redacted credential-pool entry (index is 1-based, as listed).
@@ -460,20 +536,41 @@ List<ConnectionCard> buildConnectionCards({
     known.add(provider);
   }
 
-  // Saved custom endpoints render as custom-endpoint cards.
+  // Saved custom endpoints render as custom-endpoint cards. Where bridge
+  // cards render, the endpoints they registered (named after their spec)
+  // stay theirs instead of showing twice.
+  final bridgeLabels = serverBridge != null || bridgeFiles != null
+      ? {for (final spec in bridgeCardSpecs) spec.label}
+      : const <String>{};
   for (final entry in (endpoints['endpoints'] as List?) ?? const []) {
     final row = entry as Map<String, Object?>;
     final id = row['id'] as String? ?? '';
-    final cardId = 'custom:$id';
+    final name = row['name'] as String? ?? id;
+    if (bridgeLabels.contains(name)) continue;
+    final cardId = '$customEndpointCardPrefix$id';
+    final apiMode = row['api_mode'] as String? ?? '';
+    final model = row['model'] as String? ?? '';
+    final models = [
+      for (final m in (row['models'] as List?) ?? const [])
+        if (m is String && m.isNotEmpty) m,
+    ];
     cards.add(
       ConnectionCard(
         id: cardId,
-        name: row['name'] as String? ?? id,
+        name: name,
         logoKey: 'custom-endpoint',
         flow: ConnectionFlow.customEndpoint,
         state: ConnectionCardState.connected,
-        detail: row['base_url'] as String? ?? '',
+        detail: [
+          customEndpointApiLabel(apiMode),
+          if (model.isNotEmpty) model,
+          '${models.length} ${models.length == 1 ? 'model' : 'models'}',
+        ].join(' · '),
         poolEntries: poolByProvider[cardId] ?? const [],
+        baseUrl: row['base_url'] as String? ?? '',
+        apiMode: apiMode,
+        defaultModel: model,
+        models: models,
       ),
     );
   }
@@ -812,16 +909,15 @@ class ConnectionCards extends _$ConnectionCards {
     return saved.provider;
   }
 
-  /// Validates then saves an OpenAI-compatible custom endpoint.
-  ///
-  /// Persists `resolved_base_url` (the base that actually served `/models`),
-  /// never the URL as typed — the runtime appends `/chat/completions` to the
-  /// saved URL verbatim.
-  Future<String> addCustomEndpoint({
+  /// Step 1 of adding a custom endpoint: probes it
+  /// (`POST /api/providers/custom-endpoints/validate`, over the transport of
+  /// [apiMode]; '' lets Hermes detect it) and returns the models it lists.
+  /// A refusal throws [ConnectionRejected] with the server's sentence.
+  Future<CustomEndpointProbe> checkCustomEndpoint({
     required String name,
     required String baseUrl,
     String apiKey = '',
-    String model = '',
+    String apiMode = '',
   }) async {
     final rest = await ref.read(restClientProvider(instanceId).future);
     final probe = await rest.postJson(
@@ -829,26 +925,51 @@ class ConnectionCards extends _$ConnectionCards {
       {
         'name': name,
         'base_url': baseUrl,
-        'model': model,
+        'model': '',
+        'api_mode': apiMode,
         if (apiKey.isNotEmpty) 'api_key': apiKey,
       },
     );
+    final message = probe['message'] as String? ?? '';
     if (probe['ok'] != true) {
       throw ConnectionRejected(
-        probe['message'] as String? ?? 'The endpoint rejected this setup.',
+        message.isEmpty ? 'The endpoint rejected this setup.' : message,
       );
     }
-    final resolved = probe['resolved_base_url'] as String? ?? baseUrl;
-    final models = [
-      if (model.isNotEmpty) model,
-      ...((probe['models'] as List?)?.cast<String>() ?? const []),
-    ];
+    final resolved = probe['resolved_base_url'] as String? ?? '';
+    return CustomEndpointProbe(
+      resolvedBaseUrl: resolved.isEmpty ? baseUrl : resolved,
+      models: {
+        for (final id in (probe['models'] as List?) ?? const [])
+          if (id is String && id.isNotEmpty) id,
+      }.toList(),
+      message: message,
+    );
+  }
+
+  /// Step 2 of adding a custom endpoint: saves it with [model] as its
+  /// default and [models] (the ids [checkCustomEndpoint] found) as its list.
+  ///
+  /// [baseUrl] should be [CustomEndpointProbe.resolvedBaseUrl] (the base
+  /// that actually served `/models`), never the URL as typed — the runtime
+  /// appends its route to the saved URL verbatim. Returns the endpoint slug.
+  Future<String> addCustomEndpoint({
+    required String name,
+    required String baseUrl,
+    required String model,
+    String apiKey = '',
+    String apiMode = '',
+    List<String> models = const [],
+  }) async {
+    if (model.trim().isEmpty) throw ArgumentError('model must not be empty');
+    final rest = await ref.read(restClientProvider(instanceId).future);
     final saved = await rest.postJson('/api/providers/custom-endpoints', {
       'name': name,
-      'base_url': resolved,
-      'model': models.isEmpty ? '' : models.first,
+      'base_url': baseUrl,
+      'model': model.trim(),
+      'api_mode': apiMode,
       if (apiKey.isNotEmpty) 'api_key': apiKey,
-      if (models.isNotEmpty) 'models': models.toSet().toList(),
+      'models': {model.trim(), ...models}.toList(),
     });
     await refresh();
     return saved['id'] as String? ?? '';
@@ -870,8 +991,8 @@ class ConnectionCards extends _$ConnectionCards {
   /// `DELETE /api/providers/oauth/{id}`, and API-key cards clear their env var
   /// (`DELETE /api/env`, preserving OAuth/device-code pool entries).
   Future<void> disconnect(String providerId) async {
-    if (providerId.startsWith('custom:')) {
-      await deleteCustomEndpoint(providerId.substring('custom:'.length));
+    if (providerId.startsWith(customEndpointCardPrefix)) {
+      await deleteCustomEndpoint(hermesProviderId(providerId));
       return;
     }
     if (providerId.startsWith('bridge:')) {

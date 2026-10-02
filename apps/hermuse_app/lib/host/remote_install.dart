@@ -47,6 +47,10 @@ enum _Phase {
   failed,
   removalReview,
   removalFinished,
+
+  /// Hermes answers on the server: its dashboard account is shown once
+  /// before the regular sign-in flow saves it.
+  installed,
 }
 
 final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
@@ -77,6 +81,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   String? _error;
   var _attempt = 0;
   var _completed = false;
+
+  /// The verified dashboard, shown on [_Phase.installed] until Continue.
+  RemoteInstallOutcome? _outcome;
   var _retrying = false;
   var _checkingExisting = false;
 
@@ -108,6 +115,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   void dispose() {
     _stop();
     _password.clear();
+    _outcome = null;
     _password.dispose();
     _host.dispose();
     _port.dispose();
@@ -282,7 +290,10 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       case RemoteInstallCompleted(:final outcome):
         _completed = true;
         _password.clear();
-        widget.onDone(outcome);
+        setState(() {
+          _outcome = outcome;
+          _phase = _Phase.installed;
+        });
     }
   }
 
@@ -416,6 +427,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
           _Phase.hostKey => _fingerprint(_hostKey!),
           _Phase.removalReview => _removalReview(),
           _Phase.removalFinished => _removalResult(),
+          _Phase.installed => _installed(_outcome!),
           _Phase.loading ||
           _Phase.installing ||
           _Phase.failed => _removing ? _removalProgressCard() : _progressCard(),
@@ -801,6 +813,33 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
       ],
     );
   }
+
+  /// The generated dashboard account, shown once the server is verified:
+  /// the user keeps it for other computers and the web app.
+  Widget _installed(RemoteInstallOutcome outcome) => YsDialogCard(
+    narrow: true,
+    children: [
+      const YsDialogTitle('Your Hermes is ready'),
+      YsDialogBody(
+        'Its dashboard is at ${outcome.baseUrl}, protected by this account:',
+      ),
+      SignInBox(
+        username: outcome.username,
+        password: outcome.password,
+        onPaper: true,
+      ),
+      const YsDialogBody(
+        'Hermuse saves it securely on this computer when you continue, and '
+        'you can find it again later in Hermes instances. You will need it '
+        'to connect to this Hermes from another computer or from the web '
+        'app.',
+      ),
+      YsButton.primary(
+        label: 'Continue',
+        onPressed: () => widget.onDone(outcome),
+      ),
+    ],
+  );
 
   Widget _progressCard() => SetupCard(
     title: 'Setting up your server',

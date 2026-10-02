@@ -137,7 +137,7 @@ void main() {
     expect(await ids(), ['old', 'new', 'mid'], reason: 'restored unpinned');
   });
 
-  test('a version 1 database gains the archive and pin columns', () async {
+  test('a version 1 database migrates to pins, archive and activity', () async {
     final legacy = HermuseDatabase(
       NativeDatabase.memory(
         setup: (raw) {
@@ -165,5 +165,44 @@ void main() {
     expect(rows.single.title, 'Kept');
     expect(rows.single.archived, isFalse);
     expect(rows.single.pinnedAt, isNull);
+
+    // Version 3: the activity table.
+    await legacy.addActivity(
+      instanceId: 'a',
+      sessionId: 'side',
+      tool: 'web_search',
+      summary: '',
+      at: DateTime.utc(2026, 10, 2),
+    );
+    expect((await legacy.watchActivity('a').first).single.tool, 'web_search');
+  });
+
+  test('activity: newest first, capped per instance, gone with it', () async {
+    await db.saveInstances([instance('a', 'A'), instance('b', 'B')]);
+    final start = DateTime.utc(2026, 10, 1);
+    for (var i = 0; i < HermuseDatabase.activityKept + 2; i++) {
+      await db.addActivity(
+        instanceId: 'a',
+        sessionId: 's',
+        tool: 'tool$i',
+        summary: '',
+        at: start.add(Duration(minutes: i)),
+      );
+    }
+    await db.addActivity(
+      instanceId: 'b',
+      sessionId: 's',
+      tool: 'other',
+      summary: 'kept',
+      at: start,
+    );
+    final rows = await db.watchActivity('a', limit: 1000).first;
+    expect(rows, hasLength(HermuseDatabase.activityKept));
+    expect(rows.first.tool, 'tool${HermuseDatabase.activityKept + 1}');
+    expect(rows.last.tool, 'tool2');
+    expect((await db.watchActivity('b').first).single.summary, 'kept');
+
+    await db.saveInstances([instance('b', 'B')]);
+    expect(await db.watchActivity('a').first, isEmpty);
   });
 }

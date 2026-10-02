@@ -524,6 +524,138 @@ void main() {
         ],
       );
     });
+
+    group('custom endpoint', () {
+      const card = 'custom:spideros-llm';
+      setUp(() {
+        routes['GET /api/providers/custom-endpoints'] = (_) => json({
+          'endpoints': [
+            {
+              'id': 'spideros-llm',
+              'name': 'SpiderOS LLM',
+              'base_url': 'https://llm.example/v1',
+              'model': 'muse-spark-1.3-contributor',
+              'api_mode': 'chat_completions',
+              'models': [
+                'claude-opus-5',
+                'claude-haiku-4-5-20251001',
+                'glm-5.3',
+                'muse-spark-1.3-contributor',
+              ],
+            },
+          ],
+        });
+        // Hermes lists the endpoint as a user-defined row under its slug.
+        fake.on('model.options', (_) {
+          final options = realOptionsFixture();
+          return {
+            ...options,
+            'providers': [
+              ...options['providers']! as List<Object?>,
+              {
+                'slug': 'spideros-llm',
+                'name': 'SpiderOS LLM',
+                'is_current': false,
+                'is_user_defined': true,
+                'models': [
+                  'claude-opus-5',
+                  'claude-haiku-4-5-20251001',
+                  'glm-5.3',
+                  'muse-spark-1.3-contributor',
+                ],
+                'total_models': 4,
+                'source': 'user-config',
+                'authenticated': true,
+                'capabilities': <String, Object?>{},
+                'featured_models': <Object?>[],
+              },
+            ],
+          };
+        });
+      });
+
+      test('defaults large to the configured model', () async {
+        final selection = await container.read(
+          modelSelectionProvider('vps', card).future,
+        );
+        expect(selection.allModels, contains('glm-5.3'));
+        expect(selection.large, 'muse-spark-1.3-contributor');
+        expect(selection.small, isNot('muse-spark-1.3-contributor'));
+      });
+
+      test('reaches the chat picker under its Hermes slug', () async {
+        final models = await container.read(
+          availableModelsProvider('vps').future,
+        );
+        final custom = [
+          for (final m in models)
+            if (m.providerName == 'SpiderOS LLM') (m.providerId, m.modelId),
+        ];
+        expect(custom.first, ('spideros-llm', 'muse-spark-1.3-contributor'));
+        expect(custom.map((m) => m.$1).toSet(), {'spideros-llm'});
+      });
+
+      test('makeDefault sends the slug and confirms on request', () async {
+        routes['POST /api/model/set'] = (request) {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          if (body['confirm_expensive_model'] != true) {
+            return json({
+              'ok': false,
+              'confirm_required': true,
+              'confirm_message': 'CONTRIBUTOR TIER — TRAINS ON YOUR DATA',
+              'scope': body['scope'],
+              'provider': body['provider'],
+              'model': body['model'],
+            });
+          }
+          return json({'ok': true});
+        };
+        final selection = await container.read(
+          modelSelectionProvider('vps', card).future,
+        );
+        final notifier = container.read(
+          modelSelectionProvider('vps', card).notifier,
+        );
+        await expectLater(
+          notifier.makeDefault(),
+          throwsA(
+            isA<ExpensiveModelConfirmation>().having(
+              (e) => e.message,
+              'message',
+              'CONTRIBUTOR TIER — TRAINS ON YOUR DATA',
+            ),
+          ),
+        );
+        List<Object?> sets() => [
+          for (final c in calls)
+            if (c.method == 'POST' && c.path == '/api/model/set') c.body,
+        ];
+        // Refused main slot: nothing else is assigned.
+        expect(sets(), [
+          {
+            'scope': 'main',
+            'provider': 'spideros-llm',
+            'model': 'muse-spark-1.3-contributor',
+          },
+        ]);
+        calls.clear();
+        await notifier.makeDefault(confirmExpensiveModel: true);
+        expect(sets(), [
+          {
+            'scope': 'main',
+            'provider': 'spideros-llm',
+            'model': 'muse-spark-1.3-contributor',
+            'confirm_expensive_model': true,
+          },
+          {
+            'scope': 'auxiliary',
+            'provider': 'spideros-llm',
+            'model': selection.small,
+            'confirm_expensive_model': true,
+          },
+        ]);
+      });
+    });
   });
 }
 

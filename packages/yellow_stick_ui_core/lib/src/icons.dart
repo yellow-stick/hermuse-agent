@@ -27,6 +27,26 @@ enum YsIcon {
     '<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
     '<path d="m7 10 5 5 5-5"/>',
   ),
+
+  /// Pause an automation.
+  pause(
+    '<rect x="14" y="4" width="4" height="16" rx="1"/>'
+    '<rect x="6" y="4" width="4" height="16" rx="1"/>',
+  ),
+
+  /// Resume an automation.
+  play(
+    '<path d="M6 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L7.5 '
+    '3.64A1 1 0 0 0 6 4.5z"/>',
+  ),
+
+  /// Run an automation now.
+  zap(
+    '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 '
+    '1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02'
+    'A1 1 0 0 0 11 14z"/>',
+  ),
+
   menu('<path d="M4 9h16"/><path d="M4 15h16"/>'),
   more(
     '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/>'

@@ -27,6 +27,10 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
     knee-aware week, tracked in Goals.
   - Otto's main chat: customer-interview synthesis → one-pager in the
     Library, plus which AI subscription the chat runs on.
+- The profile panel's Automations tab lists fictional Hermes cron jobs: the
+  four Hermuse schedules (feed, ideas, goals check-in, reflection) on both
+  instances, plus Ava's own "Evening recap". Pause, run now and delete are
+  refused with the read-only message.
 - Its own computer. And you own it. The electricity and Annecy answers
   carry a Browser card: `browser_*` transcript rows render the card, and
   the demo serves it fictional stills. Open preview / Open computer shows
@@ -49,7 +53,8 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
   transcripts of `lib/src/content.dart` (browser steps ride as `browser_*`
   tool rows with their page URLs), every other call is refused.
 - `demoPluginClient` answers the Hermuse plugin routes: feed/ideas/goals/
-  library/reflections/system files as before, plus the fake computer —
+  library/reflections/system files as before, Hermes' cron job list
+  (`GET /api/cron/jobs`), plus the fake computer —
   `GET computer/status` (running), `GET computer/thumbnail` and
   `GET computer/snapshots/<toolId>` from the embedded frames of
   `lib/src/computer_frames.dart`, and the `POST computer/ticket` that opens

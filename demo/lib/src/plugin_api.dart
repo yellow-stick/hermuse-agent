@@ -30,8 +30,9 @@ final class DemoComputer {
 
 /// An HTTP client answering the Hermuse plugin routes of [instance] from the
 /// demo content: GETs return its feed, ideas, goals, library, reflections
-/// and system files; every write is refused with 405 [demoReadOnlyMessage]
-/// (not 401/403, which the app reads as a sign-in problem).
+/// and system files, and Hermes' cron jobs (`GET /api/cron/jobs`); every
+/// write is refused with 405 [demoReadOnlyMessage] (not 401/403, which the
+/// app reads as a sign-in problem).
 http.Client demoPluginClient(
   DemoInstance instance, {
   DateTime? now,
@@ -40,8 +41,12 @@ http.Client demoPluginClient(
   final loaded = now ?? DateTime.now();
   return MockClient((request) async {
     final path = request.url.path;
-    if (!path.startsWith(hermusePluginRoute)) return _json(404, _notFound);
-    final route = path.substring(hermusePluginRoute.length);
+    final cron =
+        path == hermesCronRoute || path.startsWith('$hermesCronRoute/');
+    if (!cron && !path.startsWith(hermusePluginRoute)) {
+      return _json(404, _notFound);
+    }
+    final route = cron ? '' : path.substring(hermusePluginRoute.length);
     // The fake computer: status + stills read like the plugin; the ticket
     // opens the replayed stream (see `demoComputerConnector`). Everything
     // else still refuses writes with 405.
@@ -67,9 +72,53 @@ http.Client demoPluginClient(
     if (request.method != 'GET') {
       return _json(405, {'detail': demoReadOnlyMessage});
     }
+    if (cron) {
+      return path == hermesCronRoute
+          ? _json(200, {'data': _jobs(instance, loaded)})
+          : _json(404, _notFound);
+    }
     final body = _get(instance, route, loaded);
     return body == null ? _json(404, _notFound) : _json(200, body);
   });
+}
+
+/// Hermes' cron rows of [instance]: the plugin's jobs and the user's, last
+/// run at their previous slot before [now] and next at the following one.
+List<Map<String, Object?>> _jobs(DemoInstance instance, DateTime now) => [
+  for (final job in [...demoHermuseJobs, ...?demoUserJobs[instance.id]])
+    {
+      'id': job.id,
+      'name': job.name,
+      'prompt': job.name,
+      'schedule': {'kind': 'cron', 'expr': job.cron, 'display': job.cron},
+      'schedule_display': job.cron,
+      'enabled': true,
+      'state': 'scheduled',
+      'next_run_at': _next(job, now).toIso8601String(),
+      'last_run_at': _next(
+        job,
+        now.subtract(Duration(days: job.weekday == null ? 1 : 7)),
+      ).toIso8601String(),
+      'last_status': 'ok',
+      'last_error': null,
+      'origin': job.hermuseKey == null
+          ? null
+          : {'source': 'hermuse', 'key': job.hermuseKey},
+      'deliver': 'local',
+      'profile': 'default',
+      'scheduler_heartbeat_age_s': 5,
+    },
+];
+
+/// The first slot of [job] after [after] (local time).
+DateTime _next(DemoJob job, DateTime after) {
+  final local = after.toLocal();
+  var at = DateTime(local.year, local.month, local.day, job.hour);
+  while (!at.isAfter(local) ||
+      (job.weekday != null && at.weekday != job.weekday)) {
+    at = DateTime(at.year, at.month, at.day + 1, job.hour);
+  }
+  return at;
 }
 
 const _notFound = {'detail': 'Not Found'};

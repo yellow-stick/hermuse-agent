@@ -567,3 +567,64 @@ const _otto = DemoInstance(
     'PREFERENCES.md': '# Preferences\n\n- Work hours only (09:00–18:00)',
   },
 );
+
+/// One demo Hermes cron job: runs every day (`weekday` null) or once a
+/// week (`weekday` 1 = Monday … 7 = Sunday) at `hour`:00, server time.
+final class DemoJob {
+  const DemoJob({
+    required this.id,
+    required this.name,
+    required this.hour,
+    this.weekday,
+    this.hermuseKey,
+  });
+
+  final String id;
+  final String name;
+  final int hour;
+  final int? weekday;
+
+  /// The Hermuse plugin schedule it belongs to (`feed`, `ideas`, …); null
+  /// for the user's own jobs.
+  final String? hermuseKey;
+
+  /// The cron expression (`0 8 * * *`, `0 9 * * 1`).
+  String get cron => '0 $hour * * ${weekday == null ? '*' : weekday! % 7}';
+}
+
+/// The Hermuse plugin's jobs, on every demo instance.
+const demoHermuseJobs = [
+  DemoJob(
+    id: 'hermuse-feed',
+    name: 'Hermuse feed (daily)',
+    hour: 8,
+    hermuseKey: 'feed',
+  ),
+  DemoJob(
+    id: 'hermuse-ideas',
+    name: 'Hermuse ideas (weekly)',
+    hour: 9,
+    weekday: 1,
+    hermuseKey: 'ideas',
+  ),
+  DemoJob(
+    id: 'hermuse-goals',
+    name: 'Hermuse goals check-in (weekly)',
+    hour: 9,
+    weekday: 7,
+    hermuseKey: 'goals',
+  ),
+  DemoJob(
+    id: 'hermuse-reflection',
+    name: 'Hermuse reflection (nightly)',
+    hour: 2,
+    hermuseKey: 'reflection',
+  ),
+];
+
+/// The user's own jobs, by instance id.
+const demoUserJobs = {
+  '6f1c2a4e-8d3b-4c7a-9e21-5b0d7f3a1c01': [
+    DemoJob(id: 'ava-evening-recap', name: 'Evening recap', hour: 18),
+  ],
+};

@@ -319,27 +319,70 @@ enum ChatConnection {
 /// Icon shown beside an activity entry.
 enum ActivityKind { webSearch, completed }
 
-/// One entry of the profile panel's "Today" list.
+/// A tool the agent finished in a chat: one row of the profile panel's
+/// Activity tab, kept on the device (`ChatObserver.toolCompleted`).
 final class ActivityItem {
   const ActivityItem({
-    required this.kind,
-    required this.title,
-    required this.description,
-    required this.time,
+    required this.tool,
+    required this.summary,
+    required this.at,
+    this.sessionId = '',
   });
 
-  final ActivityKind kind;
-  final String title;
-  final String description;
-  final String time;
+  /// Hermes' tool name (`web_search`, `browser_navigate`, …).
+  final String tool;
+
+  /// Hermes' one-line result, '' when it sent none.
+  final String summary;
+
+  /// When the tool finished.
+  final DateTime at;
+
+  /// Session of the chat it ran in ('' for a chat not created yet).
+  final String sessionId;
+
+  /// Web tools (`web_search`, `web_extract`) get the web search icon; a
+  /// `tool_search` or `session_search` is not the web.
+  ActivityKind get kind =>
+      tool.startsWith('web_') ? ActivityKind.webSearch : ActivityKind.completed;
+
+  /// The tool name in words: `browser_navigate` → "Browser navigate".
+  String get title {
+    final words = tool.replaceAll(RegExp(r'[_\-.]+'), ' ').trim();
+    if (words.isEmpty) return 'Tool';
+    return '${words[0].toUpperCase()}${words.substring(1)}';
+  }
+}
+
+/// An approval request of the agent nobody answered yet.
+final class ApprovalRequest {
+  const ApprovalRequest({
+    required this.threadId,
+    required this.threadTitle,
+    required this.messageId,
+    required this.prompt,
+  });
+
+  final String threadId;
+  final String threadTitle;
+  final String messageId;
+
+  /// "Approve this command?" then the command and Hermes' reason.
+  final String prompt;
+
+  /// The command line(s) asked about: [prompt] without its question.
+  String get command {
+    final lines = prompt.split('\n');
+    return lines.length > 1 ? lines.skip(1).join('\n') : prompt;
+  }
 }
 
 /// Tabs of the profile panel.
 enum PanelTab {
-  activity('Activity', 'Nothing yet today'),
-  approvals('Approvals', 'No approvals yet'),
-  upcoming('Upcoming', 'Nothing scheduled'),
-  identity('Identity', 'No identities connected');
+  activity('Activity', 'Nothing yet'),
+  approvals('Approvals', 'No approvals waiting'),
+  automations('Automations', 'Nothing scheduled'),
+  connectors('Connectors', 'Coming soon');
 
   const PanelTab(this.label, this.emptyText);
   final String label;

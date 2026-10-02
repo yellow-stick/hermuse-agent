@@ -308,15 +308,84 @@ Future<void> main() async {
       final harness = await _Harness.open();
       addTearDown(harness.dispose);
       await _pumpApp(tester, const Size(1938, 1062), harness);
-      expect(find.text('Nothing yet today'), findsOneWidget);
+      expect(find.text('Nothing yet'), findsOneWidget);
 
       await tester.tap(find.bySemanticsLabel('Approvals'));
       await tester.pumpAndSettle();
-      expect(find.text('No approvals yet'), findsOneWidget);
-      expect(find.text('Nothing yet today'), findsNothing);
+      expect(find.text('No approvals waiting'), findsOneWidget);
+      expect(find.text('Nothing yet'), findsNothing);
+
+      // Connectors: an explicit "Coming soon", nothing to press.
+      await tester.tap(find.bySemanticsLabel('Connectors'));
+      await tester.pumpAndSettle();
+      expect(find.text('Coming soon'), findsOneWidget);
+      await _capture(tester, 'proof-panel-connectors.png');
     });
 
-    testWidgets('pending approval appears in the Approvals tab', (
+    testWidgets('Activity groups by day and opens rows of this chat', (
+      tester,
+    ) async {
+      final harness = await _Harness.open(sideChats: true);
+      addTearDown(harness.dispose);
+      final now = DateTime.now();
+      final yesterday = now.subtract(const Duration(days: 1));
+      Future<void> add(
+        String sessionId,
+        String tool,
+        String summary,
+        DateTime at,
+      ) => harness.db.addActivity(
+        instanceId: _Harness.instanceId,
+        sessionId: sessionId,
+        tool: tool,
+        summary: summary,
+        at: at,
+      );
+      await add(
+        'side-fjord',
+        'web_search',
+        'Norway in a Nutshell: 3 day-trip options from Bergen',
+        yesterday,
+      );
+      await add(
+        'side-fjord',
+        'browser_navigate',
+        'Opened fjordtours.com — Flåm railway timetable',
+        yesterday.add(const Duration(minutes: 4)),
+      );
+      await add(
+        'other-surface',
+        'browser_navigate',
+        'Opened norwegian.com — Lisbon to Oslo fares',
+        now.subtract(const Duration(minutes: 2)),
+      );
+      await add(
+        'side-fjord',
+        'web_search',
+        'Direct flights Lisbon → Oslo: 2 daily, from €89',
+        now,
+      );
+      await _pumpApp(tester, const Size(1938, 1062), harness);
+      final controller = await harness.controller(tester);
+
+      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Yesterday'), findsOneWidget);
+      expect(find.text('Web search'), findsNWidgets(2));
+      expect(find.text('Browser navigate'), findsNWidgets(2));
+      await _capture(tester, 'proof-panel-activity.png');
+
+      // Ran elsewhere (CLI, Telegram, …): shown, nothing to open. Rows are
+      // newest first.
+      await tester.tap(find.text('Browser navigate').first);
+      await tester.pumpAndSettle();
+      expect(controller.state.activeThreadId, 'stored-1');
+
+      await tester.tap(find.text('Web search').first);
+      await tester.pumpAndSettle();
+      expect(controller.state.activeThreadId, 'side-fjord');
+    });
+
+    testWidgets('pending approval lists in Approvals until answered', (
       tester,
     ) async {
       final harness = await _Harness.open();
@@ -326,31 +395,187 @@ Future<void> main() async {
       harness.fake.emitRequest('srq-9', 'approval', {
         'session_id': 'live-1',
         'request_id': 'r1',
-        'command': 'rm -rf dist',
+        'command': 'mkdir -p /tmp/test && rm -rf /tmp/test',
         'allow_permanent': false,
       });
       await tester.pumpAndSettle();
       await tester.tap(find.bySemanticsLabel('Approvals'));
       await tester.pumpAndSettle();
       expect(find.text('Pending'), findsOneWidget);
-      expect(find.textContaining('Approve this command'), findsWidgets);
+      // The row names the command, not the question.
+      final command = find.text('mkdir -p /tmp/test && rm -rf /tmp/test');
+      expect(command, findsOneWidget);
+      await _capture(tester, 'proof-panel-approvals.png');
+
+      await tester.tap(find.text('Allow once'));
+      await tester.pumpAndSettle();
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(command, findsNothing);
+      expect(find.text('No approvals waiting'), findsOneWidget);
+    });
+
+    testWidgets('Automations tab lists Hermes jobs and their actions', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final now = DateTime.now();
+      final deleted = <String>[];
+      // Next run of a job at [hour] (local), on [days] (Dart weekdays).
+      DateTime nextAt(int hour, [Set<int>? days]) {
+        var t = DateTime(now.year, now.month, now.day, hour);
+        while (!t.isAfter(now) || (days != null && !days.contains(t.weekday))) {
+          t = DateTime(t.year, t.month, t.day + 1, hour);
+        }
+        return t;
+      }
+
+      DateTime daysBefore(DateTime t, int days) =>
+          DateTime(t.year, t.month, t.day - days, t.hour);
+      // Hermes 0.21.5 rows; no scheduler heartbeat: the gateway is not up.
+      Map<String, Object?> job(
+        String id,
+        String name,
+        String expr, {
+        DateTime? next,
+        DateTime? last,
+        String? lastStatus,
+        String? origin,
+        bool paused = false,
+      }) => {
+        'id': id,
+        'name': name,
+        'schedule': {'kind': 'cron', 'expr': expr, 'display': expr},
+        'enabled': !paused,
+        'state': paused ? 'paused' : 'scheduled',
+        'next_run_at': paused ? null : next?.toIso8601String(),
+        'last_run_at': last?.toIso8601String(),
+        'last_status': lastStatus,
+        'last_error': lastStatus == 'error'
+            ? 'Provider returned 429: rate limit reached'
+            : null,
+        'origin': origin == null ? null : {'source': origin, 'key': id},
+        'scheduler_heartbeat_age_s': null,
+      };
+      await _pumpApp(
+        tester,
+        const Size(1938, 1062),
+        harness,
+        plugin: {
+          'GET /api/cron/jobs': (_) => {
+            'data': [
+              job(
+                'feed',
+                'Hermuse feed (daily)',
+                '0 8 * * *',
+                next: nextAt(8),
+                last: daysBefore(nextAt(8), 1),
+                lastStatus: 'ok',
+                origin: 'hermuse',
+              ),
+              job(
+                'ideas',
+                'Hermuse ideas (weekly)',
+                '0 9 * * 1',
+                next: nextAt(9, {DateTime.monday}),
+                origin: 'hermuse',
+              ),
+              job(
+                'goals',
+                'Hermuse goals check-in (weekly)',
+                '0 9 * * 0',
+                next: nextAt(9, {DateTime.sunday}),
+                last: daysBefore(nextAt(9, {DateTime.sunday}), 7),
+                lastStatus: 'error',
+                origin: 'hermuse',
+              ),
+              job(
+                'reflection',
+                'Hermuse reflection (nightly)',
+                '0 2 * * *',
+                last: daysBefore(nextAt(2), 1),
+                lastStatus: 'ok',
+                origin: 'hermuse',
+                paused: true,
+              ),
+              job(
+                'digest',
+                'News digest',
+                '0 7 * * 1-5',
+                next: nextAt(7, {1, 2, 3, 4, 5}),
+              ),
+            ],
+          },
+          'DELETE /api/cron/jobs/digest': (_) {
+            deleted.add('digest');
+            return {'ok': true};
+          },
+        },
+      );
+
+      await tester.tap(find.bySemanticsLabel('Automations'));
+      await tester.pumpAndSettle();
+      expect(find.text('Every day at 8:00 AM'), findsOneWidget);
+      expect(
+        find.text('Next: ${formatAutomationTime(nextAt(8))}'),
+        findsOneWidget,
+      );
+      expect(find.text('Hermuse'), findsNWidgets(4));
+      expect(find.text('Paused'), findsOneWidget);
+      expect(
+        find.text('Provider returned 429: rate limit reached'),
+        findsOneWidget,
+      );
+      expect(find.textContaining("scheduler isn't running"), findsOneWidget);
+      // Only the user's own job can be deleted; the plugin's comes back.
+      expect(
+        find.bySemanticsLabel('Delete Hermuse feed (daily)'),
+        findsNothing,
+      );
+      expect(
+        find.bySemanticsLabel('Pause Hermuse feed (daily)'),
+        findsOneWidget,
+      );
+      await _capture(tester, 'proof-panel-automations.png');
+
+      await tester.ensureVisible(find.bySemanticsLabel('Delete News digest'));
+      await tester.pumpAndSettle();
+
+      // Delete asks first; Cancel keeps the job.
+      await tester.tap(find.bySemanticsLabel('Delete News digest'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete automation?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(YsButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(deleted, isEmpty);
+      expect(find.text('News digest'), findsOneWidget);
+
+      await tester.tap(find.bySemanticsLabel('Delete News digest'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(YsButton, 'Delete'));
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(deleted, ['digest']);
+      expect(find.text('News digest'), findsNothing);
+      expect(find.text('Hermuse feed (daily)'), findsOneWidget);
     });
 
     testWidgets('close panel then avatar button reopens it', (tester) async {
       final harness = await _Harness.open();
       addTearDown(harness.dispose);
       await _pumpApp(tester, const Size(1938, 1062), harness);
-      expect(find.text('Nothing yet today'), findsOneWidget);
+      expect(find.text('Nothing yet'), findsOneWidget);
       expect(find.bySemanticsLabel('Open panel'), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Close panel'));
       await tester.pumpAndSettle();
-      expect(find.text('Nothing yet today'), findsNothing);
+      expect(find.text('Nothing yet'), findsNothing);
       expect(find.bySemanticsLabel('Open panel'), findsOneWidget);
 
       await tester.tap(find.bySemanticsLabel('Open panel'));
       await tester.pumpAndSettle();
-      expect(find.text('Nothing yet today'), findsOneWidget);
+      expect(find.text('Nothing yet'), findsOneWidget);
 
       await _capture(tester, 'proof-panel-reopened.png');
     });

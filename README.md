@@ -33,13 +33,15 @@ web, and checks with you before anything that matters.
 
 - **Main chat and side chats.** One conversation that knows you, plus side
   chats to keep a trip, a move or a project apart.
-- **Activity and Approvals.** A plain record of what it did and when, and
-  nothing goes out without you.
+- **Activity, Approvals and Automations.** A plain record of what it did and
+  when, nothing goes out without you, and every task it runs on a schedule in
+  one list you can pause, run or delete.
 - **Feed, Ideas, Goals, Library.** A daily feed written for you, ideas it can
   run, goals it keeps an eye on, and everything it made for you in one place.
 - **Your models.** Connect the AI accounts and subscriptions you already have:
   the ones Hermes supports natively, plus Claude Pro/Max, ChatGPT, Meta, Kimi and
-  more through a local bridge.
+  more through a local bridge, or your own OpenAI- or Anthropic-compatible
+  endpoint.
 - **Its own computer, in plain sight.** The agent browses on its own Linux
   desktop, next to your Hermes. Watch it live, take the mouse and keyboard
   when it needs you, then hand them back.
@@ -103,6 +105,8 @@ Details: [Run Hermes on your computer with the desktop app](docs/guides/desktop.
   in the browser, nothing to install.
 - [The agent's computer](docs/guides/agent-computer.md): the Browser card,
   the live viewer, Take control and the desktop.
+- [Activity, Approvals and Automations](docs/guides/profile-panel.md): the
+  profile panel next to the chat.
 
 ## Inspired by Muse, built our own way
 

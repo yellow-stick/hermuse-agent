@@ -48,6 +48,9 @@ abstract interface class ChatObserver {
 
   /// A side chat was deleted on the server.
   void sessionDeleted(ThreadRef ref);
+
+  /// The agent finished a tool in [ref] (the profile panel's Activity).
+  void toolCompleted(ThreadRef ref, ActivityItem item);
 }
 
 /// Immutable snapshot of the chat.
@@ -56,7 +59,7 @@ final class ChatState {
     required this.agentName,
     required this.threads,
     required this.activeThreadId,
-    required this.activity,
+    this.pendingApprovalIds = const {},
     this.selectedOffers = const {},
     this.replyToId,
     this.connection = ChatConnection.connecting,
@@ -72,7 +75,9 @@ final class ChatState {
   /// The main thread first, then side chats in creation order.
   final List<Thread> threads;
   final String activeThreadId;
-  final List<ActivityItem> activity;
+
+  /// Approval requests (their message ids) Hermes still waits on.
+  final Set<String> pendingApprovalIds;
 
   /// Picked flight offer per flight-results message id.
   final Map<String, String> selectedOffers;
@@ -113,11 +118,27 @@ final class ChatState {
       ? null
       : activeThread.messages.where((m) => m.id == replyToId).firstOrNull;
 
+  /// Unanswered approval requests, main chat first.
+  List<ApprovalRequest> get approvals => [
+    if (pendingApprovalIds.isNotEmpty)
+      for (final thread in threads)
+        for (final message in thread.messages)
+          if (pendingApprovalIds.contains(message.id))
+            for (final block in message.blocks.whereType<ChoiceBlock>())
+              if (block.selected == null)
+                ApprovalRequest(
+                  threadId: thread.id,
+                  threadTitle: thread.title,
+                  messageId: message.id,
+                  prompt: block.prompt,
+                ),
+  ];
+
   ChatState copyWith({
     String? agentName,
     List<Thread>? threads,
     String? activeThreadId,
-    List<ActivityItem>? activity,
+    Set<String>? pendingApprovalIds,
     Map<String, String>? selectedOffers,
     String? Function()? replyToId,
     ChatConnection? connection,
@@ -130,7 +151,7 @@ final class ChatState {
     agentName: agentName ?? this.agentName,
     threads: threads ?? this.threads,
     activeThreadId: activeThreadId ?? this.activeThreadId,
-    activity: activity ?? this.activity,
+    pendingApprovalIds: pendingApprovalIds ?? this.pendingApprovalIds,
     selectedOffers: selectedOffers ?? this.selectedOffers,
     replyToId: replyToId != null ? replyToId() : this.replyToId,
     connection: connection ?? this.connection,
@@ -172,8 +193,10 @@ final class ChatController {
     List<Thread> sideThreads = const [],
     String? initialThreadId,
     String Function()? clock,
+    DateTime Function()? now,
   }) : _instanceId = ref.instanceId,
-       _clock = clock ?? _wallClock {
+       _clock = clock ?? _wallClock,
+       _now = now ?? DateTime.now {
     final mainId = ref.isNew ? _draftId() : ref.sessionId;
     _state = ChatState(
       agentName: agentName,
@@ -184,7 +207,6 @@ final class ChatController {
       activeThreadId: sideThreads.any((t) => t.id == initialThreadId)
           ? initialThreadId!
           : mainId,
-      activity: const [],
     );
     for (final t in sideThreads) {
       _parents[t.id] = mainId;
@@ -203,6 +225,7 @@ final class ChatController {
   final String _instanceId;
   final ChatObserver? _observer;
   final String Function() _clock;
+  final DateTime Function() _now;
   late ChatState _state;
   final _listeners = <void Function()>[];
   var _seq = 0;
@@ -580,19 +603,13 @@ final class ChatController {
                 b,
           ],
         );
-        _emit(
-          _state.copyWith(
-            activity: [
-              ..._state.activity,
-              ActivityItem(
-                kind: payload.name.contains('search')
-                    ? ActivityKind.webSearch
-                    : ActivityKind.completed,
-                title: payload.name,
-                description: summary,
-                time: _clock(),
-              ),
-            ],
+        _observer?.toolCompleted(
+          _refOf(threadId),
+          ActivityItem(
+            tool: payload.name,
+            summary: summary,
+            at: _now(),
+            sessionId: _isDraft(threadId) ? '' : threadId,
           ),
         );
       case MessageCompleteEvent(:final payload):
@@ -924,14 +941,19 @@ final class ChatController {
     }
     final messageId = 'request-${request.id}';
     _pending[messageId] = pending;
+    final next = _updateThread(
+      threadId,
+      (m) => [
+        ...m,
+        Message(id: messageId, author: Author.agent, blocks: blocks),
+      ],
+    );
     _emit(
-      _updateThread(
-        threadId,
-        (m) => [
-          ...m,
-          Message(id: messageId, author: Author.agent, blocks: blocks),
-        ],
-      ),
+      pending.approval
+          ? next.copyWith(
+              pendingApprovalIds: {...next.pendingApprovalIds, messageId},
+            )
+          : next,
     );
     return pending.completer.future;
   }
@@ -990,12 +1012,24 @@ final class ChatController {
     if (pending != null && !pending.completer.isCompleted) {
       pending.completer.complete(result);
     }
+    _settleApproval(messageId);
+  }
+
+  /// [messageId] no longer waits on an answer.
+  void _settleApproval(String messageId) {
+    if (!_state.pendingApprovalIds.contains(messageId)) return;
+    _emit(
+      _state.copyWith(
+        pendingApprovalIds: {..._state.pendingApprovalIds}..remove(messageId),
+      ),
+    );
   }
 
   void _cancelRequest(String requestId, String reason) {
     final messageId = 'request-$requestId';
     final pending = _pending.remove(messageId);
     if (pending == null) return;
+    _settleApproval(messageId);
     if (!pending.completer.isCompleted) {
       pending.completer.completeError(StateError('cancelled: $reason'));
     }
