@@ -2,10 +2,13 @@
 
 A Hermes on a server cannot use the CLIProxyAPI sidecar of the Hermuse desktop
 app: a custom endpoint pointing there would call the server's own loopback.
-So the desktop signs the subscription in with its sidecar (the OAuth browser
-callback must reach the user's machine), uploads the account file it got
-here, and registers this CLIProxyAPI (``http://127.0.0.1:<port>/v1``, same
-host as Hermes) as the Hermes custom endpoint.
+So subscriptions sign in here, on this CLIProxyAPI, and Hermes points at it
+(``http://127.0.0.1:<port>/v1``, same host as Hermes) as a custom endpoint.
+The browser of a sign-in runs on the user's machine and its OAuth redirect
+(``http://localhost:<port>/…``) cannot reach this server: the user pastes
+the address the browser landed on and :func:`submit_callback` hands it to
+CLIProxyAPI, which reads the code from it. No callback port is ever opened
+here. Device-code sign-ins need nothing pasted.
 
 Everything lives under ``HERMES_HOME/hermuse/bridge/`` (0700); no root needed:
 
@@ -104,9 +107,14 @@ LOCK_FILE = "bridge.lock"
 # Account files as CLIProxyAPI names them (``claude-<email>.json``,
 # ``codex-<hash>-<email>-<plan>.json``, …): one path segment, never hidden.
 ACCOUNT_NAME_RE = re.compile(r"[A-Za-z0-9@_+=-][A-Za-z0-9@._+=-]{0,194}\.json")
-MAX_ACCOUNT_BYTES = 128 * 1024
 MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 MAX_BINARY_BYTES = 256 * 1024 * 1024
+MAX_REDIRECT_URL_CHARS = 8192
+
+# ``GET /v0/management/<provider>-auth-url`` routes of CLIProxyAPI v7.3.18 for
+# the subscriptions Hermuse offers (``CliproxyProvider`` in Dart).
+LOGIN_PROVIDERS = ("anthropic", "codex", "meta", "antigravity", "xai", "kimi", "kimi-ai",
+                   "devin")
 
 UNSUPPORTED_DETAIL = "The subscription bridge runs on Linux servers (x86-64 or ARM64)."
 NOT_SET_UP_DETAIL = "The subscription bridge is not set up on this server yet."
@@ -654,17 +662,18 @@ def _disk_accounts(home: os.PathLike[str] | str) -> list[dict[str, Any]]:
 
 
 def status(home: os.PathLike[str] | str) -> dict[str, Any]:
-    """``{supported, platform, version, installed, running, base_url, accounts, detail}``.
+    """``{supported, platform, version, installed, running, base_url, accounts, detail, sign_in}``.
 
     Never raises. ``accounts`` are ``{name, provider, email, usable, status,
-    status_message}``; ``base_url`` is null until the bridge was set up. A
+    status_message}``; ``base_url`` is null until the bridge was set up;
+    ``sign_in`` says subscriptions sign in here (:func:`start_login`). A
     bridge that was set up but does not run is started in the background.
     """
     key = platform_key()
     result: dict[str, Any] = {
         "supported": key in ASSETS, "platform": key or f"{sys.platform}-{platform.machine().lower()}",
         "version": VERSION, "installed": False, "running": False, "base_url": None,
-        "accounts": [], "detail": "",
+        "accounts": [], "detail": "", "sign_in": True,
     }
     if key not in ASSETS:
         result["detail"] = UNSUPPORTED_DETAIL
@@ -697,37 +706,86 @@ def check_account_name(name: Any) -> str:
     return name
 
 
-def _account_bytes(content: Any) -> bytes:
-    if not isinstance(content, str):
-        raise ValueError("account file must be JSON text")
-    data = content.encode("utf-8")
-    if len(data) > MAX_ACCOUNT_BYTES:
-        raise ValueError("account file is too large")
-    try:
-        parsed = json.loads(data)
-    except ValueError:
-        raise ValueError("account file is not JSON") from None
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("type"), str) or not parsed["type"]:
-        raise ValueError("account file names no provider type")
+def _json_object(body: bytes) -> Optional[dict[str, Any]]:
+    with contextlib.suppress(ValueError):
+        data = json.loads(body)
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _management_json(home: os.PathLike[str] | str, method: str, path: str, what: str, *,
+                     query: Optional[dict[str, str]] = None,
+                     payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """A management call of the running bridge: its JSON object on 200.
+
+    A 4xx answer (unknown or expired sign-in, bad address) is a ``ValueError``
+    with CLIProxyAPI's message; anything else a :class:`BridgeError`.
+    """
+    port, keys = _running(home)
+    body = None if payload is None else json.dumps(payload).encode()
+    status_code, raw = _call(port, method, path, key=keys["management_key"], query=query,
+                             body=body)
+    if 400 <= status_code < 500:
+        raise ValueError(_error_of(raw))
+    data = _json_object(raw)
+    if status_code != 200 or data is None:
+        raise BridgeError(f"CLIProxyAPI could not {what}: {_error_of(raw)}")
     return data
 
 
-def upload_account(home: os.PathLike[str] | str, name: str, content: str) -> dict[str, Any]:
-    """Add (or replace) account file *name* through the management API (applied at once).
+def _check_state(state: Any) -> str:
+    if not isinstance(state, str) or not state.strip() or len(state) > 200:
+        raise ValueError("invalid sign-in state")
+    return state.strip()
 
-    ``ValueError`` for an invalid name or content, which CLIProxyAPI may
-    refuse too.
+
+def start_login(home: os.PathLike[str] | str, provider: str) -> dict[str, Any]:
+    """Start a subscription sign-in on this bridge.
+
+    → CLIProxyAPI's ``{status, url, state}``, plus ``flow: "device"``,
+    ``user_code`` and ``expires_in`` for device-code sign-ins. A browser
+    sign-in ends with :func:`submit_callback`; poll :func:`login_status`.
     """
-    check_account_name(name)
-    data = _account_bytes(content)
-    port, keys = _running(home)
-    status_code, body = _call(port, "POST", "/v0/management/auth-files",
-                              key=keys["management_key"], query={"name": name}, body=data)
-    if 400 <= status_code < 500:
-        raise ValueError(f"CLIProxyAPI refused the account: {_error_of(body)}")
-    if status_code != 200:
-        raise BridgeError(f"CLIProxyAPI could not save the account: {_error_of(body)}")
-    return {"ok": True, "name": name}
+    if provider not in LOGIN_PROVIDERS:
+        raise ValueError("unknown subscription")
+    data = _management_json(home, "GET", f"/v0/management/{provider}-auth-url",
+                            "start the sign-in")
+    if not isinstance(data.get("url"), str) or not isinstance(data.get("state"), str):
+        raise BridgeError("CLIProxyAPI started a sign-in without a link")
+    return data
+
+
+def login_status(home: os.PathLike[str] | str, state: str) -> dict[str, Any]:
+    """``{status: "wait" | "ok" | "error", error?}`` of sign-in *state*."""
+    data = _management_json(home, "GET", "/v0/management/get-auth-status",
+                            "read the sign-in", query={"state": _check_state(state)})
+    result = {"status": str(data.get("status") or "")}
+    if isinstance(data.get("error"), str):
+        result["error"] = data["error"]
+    return result
+
+
+def submit_callback(home: os.PathLike[str] | str, redirect_url: str) -> dict[str, Any]:
+    """Hand CLIProxyAPI the address the browser was sent to after the sign-in.
+
+    CLIProxyAPI reads ``state`` and ``code`` (or ``error``) from it and
+    finishes the pending sign-in of that state; ``ValueError`` when no sign-in
+    waits for it.
+    """
+    if not isinstance(redirect_url, str) or not redirect_url.strip() \
+            or len(redirect_url) > MAX_REDIRECT_URL_CHARS:
+        raise ValueError("paste the address the browser showed after the sign-in")
+    _management_json(home, "POST", "/v0/management/oauth-callback", "take the address",
+                     payload={"redirect_url": redirect_url.strip()})
+    return {"ok": True}
+
+
+def cancel_login(home: os.PathLike[str] | str, state: str) -> dict[str, Any]:
+    """Cancel sign-in *state* → ``{cancelled}``."""
+    data = _management_json(home, "DELETE", "/v0/management/oauth-session",
+                            "cancel the sign-in", query={"state": _check_state(state)})
+    return {"cancelled": bool(data.get("cancelled", True))}
 
 
 def delete_account(home: os.PathLike[str] | str, name: str) -> bool:

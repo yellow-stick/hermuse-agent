@@ -436,8 +436,9 @@ void main() {
       addTearDown(harness.dispose);
       await _pumpConnections(tester, harness);
 
-      // No bridge host (like the web): Codex signs in through Hermes, and
-      // Claude, which needs a terminal there, waits with the others.
+      // An instance on this machine without a bridge host: Codex signs in
+      // through Hermes, and Claude, which needs a terminal there, waits with
+      // the others.
       expect(find.text('Use your subscription'), findsOneWidget);
       expect(find.text('Sign in with ChatGPT / Codex'), findsOneWidget);
       expect(
@@ -473,8 +474,6 @@ void main() {
     testWidgets('desktop features every subscription bridge', (tester) async {
       final harness = _Harness(
         bridgeHost: const _StoppedBridgeHost(),
-        // On this machine: the bridge stays on the desktop sidecar.
-        baseUrl: 'http://127.0.0.1:9119',
         rpc: {
           'model.options': (_) => {'providers': []},
         },
@@ -536,6 +535,7 @@ void main() {
     ) async {
       final harness = _Harness(
         bridgeHost: const _StoppedBridgeHost(),
+        baseUrl: 'https://vps.example',
         rpc: {
           'model.options': (_) => {'providers': []},
         },
@@ -565,6 +565,100 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Update the plugin'));
       expect(opened, 1);
+    });
+
+    testWidgets('a server sign-in finishes with the pasted address, '
+        'with no sidecar on this device', (tester) async {
+      var signedIn = false;
+      String? pasted;
+      final registered = <Map<String, Object?>>[];
+      final harness = _Harness(
+        baseUrl: 'https://vps.example',
+        rpc: {
+          'model.options': (_) => {'providers': []},
+        },
+        rest: {
+          'GET /api/providers/oauth': (_) async => _json({'providers': []}),
+          'GET /api/credentials/pool': (_) async => _json({'providers': []}),
+          'GET /api/providers/custom-endpoints': (_) async => _json({
+            'endpoints': [
+              for (final body in registered)
+                {
+                  'id': 'claude',
+                  'name': body['name'],
+                  'base_url': body['base_url'],
+                },
+            ],
+          }),
+          'POST /api/providers/custom-endpoints': (request) async {
+            registered.add(jsonDecode(request.body) as Map<String, Object?>);
+            return _json({'ok': true, 'id': 'claude'});
+          },
+          'GET /api/env': (_) async => _json({}),
+          'GET $hermuseBridgeRoute/status': (_) async => _json({
+            'supported': true,
+            'running': true,
+            'base_url': 'http://127.0.0.1:41000',
+            'sign_in': true,
+            'accounts': [
+              if (signedIn)
+                {
+                  'name': 'claude-dev@shop.com.json',
+                  'provider': 'claude',
+                  'email': 'dev@shop.com',
+                  'usable': true,
+                },
+            ],
+          }),
+          'POST $hermuseBridgeRoute/ensure': (_) async => _json({
+            'base_url': 'http://127.0.0.1:41000',
+            'api_key': 'server-key',
+          }),
+          'POST $hermuseBridgeRoute/login': (_) async => _json({
+            'status': 'ok',
+            'url': 'https://claude.ai/oauth/authorize?state=s-1',
+            'state': 's-1',
+          }),
+          'GET $hermuseBridgeRoute/login/status': (_) async =>
+              _json({'status': signedIn ? 'ok' : 'wait'}),
+          'POST $hermuseBridgeRoute/login/callback': (request) async {
+            pasted =
+                (jsonDecode(request.body) as Map)['redirect_url'] as String;
+            signedIn = true;
+            return _json({'ok': true});
+          },
+          'GET $hermuseBridgeRoute/models': (_) async => _json({
+            'data': [
+              if (signedIn) {'id': 'claude-opus-4-6', 'owned_by': 'anthropic'},
+            ],
+          }),
+        },
+      );
+      await harness.open();
+      addTearDown(harness.dispose);
+      await _pumpConnections(tester, harness);
+
+      await tester.tap(find.text('Sign in with Claude Code'));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(YsButton, 'Connect'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        find.text('https://claude.ai/oauth/authorize?state=s-1'),
+        findsOneWidget,
+      );
+      // The search field leads the page; the address field is the last.
+      await tester.enterText(
+        find.byType(EditableText).last,
+        'http://localhost:54545/callback?code=c-1&state=s-1',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Finish'));
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+
+      expect(pasted, 'http://localhost:54545/callback?code=c-1&state=s-1');
+      expect(registered.single['base_url'], 'http://127.0.0.1:41000/v1');
+      expect(find.text('Finish'), findsNothing);
     });
 
     testWidgets('custom endpoint checks, then adds the picked model', (
@@ -720,7 +814,7 @@ final class _Harness {
     required this.rpc,
     this.rest = const {},
     this.bridgeHost,
-    this.baseUrl = 'https://vps.example',
+    this.baseUrl = 'http://127.0.0.1:9119',
   });
 
   final Map<String, Object? Function(Map<String, Object?>)> rpc;

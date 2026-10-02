@@ -24,8 +24,10 @@ import '../shell/screens.dart' show YsDialogError, YsDialogHead;
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
 /// a masked field with server validate errors; custom endpoints get a
-/// two-step check/add form; external cards explain the terminal step. Bridge cards
-/// only appear where [bridgeHostProvider] is overridden (desktop).
+/// two-step check/add form; external cards explain the terminal step. Bridge
+/// cards appear for an instance on a server (signed in on its own bridge) and,
+/// for one on this machine, where [bridgeHostProvider] is overridden
+/// (desktop).
 final class ConnectionsScreen extends ConsumerStatefulWidget {
   const ConnectionsScreen({
     required this.instance,
@@ -335,12 +337,17 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
   // Save is enabled by the field's content: rebuild on every edit.
   late final TextEditingController _key = TextEditingController()
     ..addListener(() => setState(() {}));
+  // Finish is enabled by the pasted address: rebuild on every edit.
+  late final TextEditingController _redirect = TextEditingController()
+    ..addListener(() => setState(() {}));
   var _busy = false;
+  var _finishing = false;
   String? _error;
 
   @override
   void dispose() {
     _key.dispose();
+    _redirect.dispose();
     super.dispose();
   }
 
@@ -755,6 +762,8 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
                   ? 'Starting…'
                   : connected
                   ? 'Reconnect'
+                  : card.state == ConnectionCardState.error
+                  ? 'Retry'
                   : 'Connect',
               onPressed: _busy
                   ? null
@@ -765,7 +774,7 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
                       });
                       try {
                         final result = await _cards().startBridgeLogin(card.id);
-                        if (mounted && result.outcome != BridgePollOutcome.ok) {
+                        if (mounted) {
                           setState(() => _error = _bridgeVerdict(result));
                         }
                       } on Object catch (e) {
@@ -806,12 +815,37 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
             Text(
               login.deviceFlow
                   ? 'Enter the code at the link, then wait for approval.'
-                  : 'Complete the login in the browser, then wait here.',
+                  : 'Open the link and approve. Your browser then lands on '
+                        'a page that does not load: paste its address here.',
               style: const YsTextStyle(
                 14,
                 20,
               ).flutter.copyWith(color: palette.contentMutedColor),
             ),
+            if (!login.deviceFlow) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: YsInputBox(
+                      controller: _redirect,
+                      placeholder: 'http://localhost:…/callback?code=…',
+                      semanticLabel:
+                          'Address the browser showed after the '
+                          'sign-in',
+                      onSubmitted: (_) => unawaited(_finishBridgeLogin()),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  YsButton.primary(
+                    label: _finishing ? 'Finishing…' : 'Finish',
+                    onPressed: _finishing || _redirect.text.trim().isEmpty
+                        ? null
+                        : () => unawaited(_finishBridgeLogin()),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [
@@ -832,6 +866,23 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
     );
   }
 
+  /// Hands the pasted address to the sign-in; the running poll then settles
+  /// the card. A refused address shows why and keeps the sign-in open.
+  Future<void> _finishBridgeLogin() async {
+    if (_finishing || _redirect.text.trim().isEmpty) return;
+    setState(() {
+      _finishing = true;
+      _error = null;
+    });
+    try {
+      await _cards().submitBridgeCallback(_redirect.text);
+      _redirect.clear();
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _finishing = false);
+  }
+
   static String _deviceVerdict(DevicePollResult result) =>
       switch (result.outcome) {
         DevicePollOutcome.denied => 'The login was denied in the browser.',
@@ -843,13 +894,15 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
         DevicePollOutcome.approved => '',
       };
 
-  static String _bridgeVerdict(BridgePollResult result) =>
+  /// What a finished sign-in leaves under the row: a failure already reads
+  /// on the row's line, a cancel was the user's doing; only the app's own
+  /// timeout needs saying.
+  static String? _bridgeVerdict(BridgePollResult result) =>
       switch (result.outcome) {
-        BridgePollOutcome.cancelled => 'The login was cancelled.',
-        BridgePollOutcome.timeout => 'Timed out waiting for approval.',
-        BridgePollOutcome.error =>
-          result.message.isEmpty ? 'The login failed.' : result.message,
-        BridgePollOutcome.ok => '',
+        BridgePollOutcome.timeout => 'The sign-in timed out. Start it again.',
+        BridgePollOutcome.ok ||
+        BridgePollOutcome.cancelled ||
+        BridgePollOutcome.error => null,
       };
 }
 

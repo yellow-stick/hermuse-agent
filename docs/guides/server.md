@@ -458,23 +458,31 @@ when Docker is installed but not running. The full reference is in the
 
 ## Use your subscriptions
 
-In the desktop app, the **Model accounts** page of a server instance opens on
-every sign-in the subscription bridge (CLIProxyAPI) offers: **Claude Code**
-(Claude Pro/Max), **Codex** (ChatGPT), **Muse Code** (Meta), **Antigravity**,
-**Kimi**, **Kimi.ai**, **Devin** and **Grok**. The sign-in opens your browser
-on this computer; Hermuse then hands the account to the bridge, which the
-Hermuse plugin
-runs next to Hermes on the server, and points Hermes at it. The bridge needs
+The **Model accounts** page of a server instance (desktop, web and mobile
+apps) opens on every sign-in the subscription bridge (CLIProxyAPI) offers:
+**Claude Code** (Claude Pro/Max), **Codex** (ChatGPT), **Muse Code** (Meta),
+**Antigravity**, **Kimi**, **Kimi.ai**, **Devin** and **Grok**. The bridge is
+run by the Hermuse plugin next to Hermes on the server, and the sign-in
+happens there: nothing is installed or kept on your computer. The bridge needs
 no root and listens on the server's `127.0.0.1` only; it is downloaded from
 GitHub on first use (a pinned, checksum-verified release, Linux x86-64 or
-ARM64). The account lives on the server: your computer keeps no copy of that
-sign-in, and **Disconnect** removes it from the server.
+ARM64). Hermes is then pointed at it, and **Disconnect** removes the account
+from the server.
 
-This needs the Hermuse plugin 0.3.0 or later: with an older one these rows
+To sign in, open the link the row shows and approve in your browser:
+
+- **Muse Code**, **Grok** and **Kimi** show a code to enter on that page;
+  the row turns connected once you approve.
+- The others end on a `http://localhost:…` page that does not load: your
+  browser tries to return to your own computer, not to the server. Copy the
+  address of that page, paste it in the row and choose **Finish**. A sign-in
+  waits for its address about five minutes; after that, start it again.
+
+This needs the Hermuse plugin 0.4.0 or later: with an older one these rows
 offer **Update plugin**, which opens the instance's **What's installed** where
-the update runs. The web app cannot offer these sign-ins (its browser cannot
-receive the sign-in callback). Using a consumer subscription outside its
-official clients may breach the vendor's terms: personal use only.
+the update runs (accounts signed in with plugin 0.3.0 keep working). Using a
+consumer subscription outside its official clients may breach the vendor's
+terms: personal use only.
 
 ## Use your own endpoint
 

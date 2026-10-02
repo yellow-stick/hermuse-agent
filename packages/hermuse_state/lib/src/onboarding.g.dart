@@ -239,21 +239,24 @@ final class RestClientFamily extends $Family
 }
 
 /// The desktop CLIProxyAPI sidecar, or null where there is none (web/mobile:
-/// bridge cards stay hidden). The desktop app overrides this with a
+/// bridge cards of an instance on this machine stay hidden; an instance on a
+/// server signs in on its own bridge). The desktop app overrides this with a
 /// [SupervisorBridgeHost] from `package:hermuse_host`.
 
 @ProviderFor(bridgeHost)
 final bridgeHostProvider = BridgeHostProvider._();
 
 /// The desktop CLIProxyAPI sidecar, or null where there is none (web/mobile:
-/// bridge cards stay hidden). The desktop app overrides this with a
+/// bridge cards of an instance on this machine stay hidden; an instance on a
+/// server signs in on its own bridge). The desktop app overrides this with a
 /// [SupervisorBridgeHost] from `package:hermuse_host`.
 
 final class BridgeHostProvider
     extends $FunctionalProvider<BridgeHost?, BridgeHost?, BridgeHost?>
     with $Provider<BridgeHost?> {
   /// The desktop CLIProxyAPI sidecar, or null where there is none (web/mobile:
-  /// bridge cards stay hidden). The desktop app overrides this with a
+  /// bridge cards of an instance on this machine stay hidden; an instance on a
+  /// server signs in on its own bridge). The desktop app overrides this with a
   /// [SupervisorBridgeHost] from `package:hermuse_host`.
   BridgeHostProvider._()
     : super(

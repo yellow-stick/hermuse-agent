@@ -182,57 +182,42 @@ void main() {
       expect(await client.cancelLogin('s'), isTrue);
     });
 
-    test('auth files round-trip verbatim by name', () async {
-      final dir = <String, String>{};
-      final seen = <String>[];
+    test('submitCallback hands over the pasted address; an expired one is a '
+        '404', () async {
+      final pending = {'s-1'};
       final client = CliproxyManagement(
         MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/v0/management/oauth-callback');
           expect(request.headers['Authorization'], 'Bearer secret');
-          final name = request.url.queryParameters['name']!;
-          seen.add('${request.method} ${request.url.path}');
-          final missing = http.Response(
-            jsonEncode({'error': 'file not found'}),
-            404,
+          final url = Uri.parse(
+            (jsonDecode(request.body) as Map)['redirect_url'] as String,
           );
-          switch ((request.method, request.url.path)) {
-            case ('POST', '/v0/management/auth-files'):
-              expect(
-                request.headers['content-type'],
-                startsWith('application/json'),
-              );
-              dir[name] = request.body;
-            case ('GET', '/v0/management/auth-files/download'):
-              final content = dir[name];
-              return content == null ? missing : http.Response(content, 200);
-            case ('DELETE', '/v0/management/auth-files'):
-              if (dir.remove(name) == null) return missing;
+          if (!pending.remove(url.queryParameters['state'])) {
+            return http.Response(
+              jsonEncode({
+                'status': 'error',
+                'error': 'unknown or expired state',
+              }),
+              404,
+            );
           }
           return http.Response(jsonEncode({'status': 'ok'}), 200);
         }),
         baseUrl: Uri.parse('http://127.0.0.1:8317'),
         managementKey: 'secret',
       );
-      // Exact bytes matter: the file moves to another CLIProxyAPI as is.
-      const content = '{"type":"claude","email":"dev@shop.com",\n "x": 1}';
+      const pasted = 'http://localhost:54545/callback?code=c&state=s-1';
 
-      await client.uploadAuthFile('claude-dev@shop.com.json', content);
-      expect(
-        await client.downloadAuthFile('claude-dev@shop.com.json'),
-        content,
-      );
-      await client.deleteAuthFile('claude-dev@shop.com.json');
-
+      await client.submitCallback(pasted);
       await expectLater(
-        client.downloadAuthFile('claude-dev@shop.com.json'),
+        client.submitCallback(pasted),
         throwsA(
-          isA<CliproxyHttpError>().having((e) => e.statusCode, 'status', 404),
+          isA<CliproxyHttpError>()
+              .having((e) => e.statusCode, 'status', 404)
+              .having((e) => e.message, 'message', 'unknown or expired state'),
         ),
       );
-      await expectLater(
-        client.deleteAuthFile('claude-dev@shop.com.json'),
-        throwsA(isA<CliproxyHttpError>()),
-      );
-      expect(seen.first, 'POST /v0/management/auth-files');
     });
   });
 }

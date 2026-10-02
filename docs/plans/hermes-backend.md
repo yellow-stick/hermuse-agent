@@ -213,13 +213,13 @@ expiré / erreur), bouton Connecter / Déconnecter, modèles disponibles.
   côté serveur). Les cartes « pont » exigent CLIProxyAPI sur la même machine que Hermes :
   le plugin Hermuse l'installe et le fait tourner à côté de lui
   (`hermes-plugin/hermuse/subscription_bridge.py`, même version épinglée et mêmes sommes
-  que `cliproxy.lock`, Linux x86-64/ARM64, sans root). La connexion OAuth reste sur le
-  CLIProxyAPI du bureau (le rappel du navigateur doit arriver sur cette machine), puis
-  l'app envoie le fichier de compte au serveur (`POST /api/plugins/hermuse/bridge/accounts`),
-  remet les comptes du sidecar comme avant la connexion (un seul CLIProxyAPI rafraîchit
-  chaque jeton) et enregistre l'endpoint Hermes sur `http://127.0.0.1:<port>/v1` du
-  serveur. Sur le web, pas de sidecar pour le rappel OAuth : les cartes pont restent
-  masquées.
+  que `cliproxy.lock`, Linux x86-64/ARM64, sans root). La connexion se fait sur ce
+  CLIProxyAPI du serveur (`POST /api/plugins/hermuse/bridge/login`), rien ne tourne sur
+  l'appareil de l'utilisateur. Le navigateur finit une connexion OAuth sur une adresse
+  `http://localhost:<port>/…` qui n'atteint pas le serveur : l'utilisateur la colle dans
+  l'app, qui l'envoie à `POST …/bridge/login/callback` ; CLIProxyAPI en lit `state` et
+  `code`. L'app enregistre ensuite l'endpoint Hermes sur `http://127.0.0.1:<port>/v1` du
+  serveur. Le web et le mobile ont donc les mêmes cartes pont que le bureau.
 - Les cartes sont décrites par des données (id, nom, logo, chemin, flux), pas codées écran
   par écran : ajouter un fournisseur = une entrée.
 

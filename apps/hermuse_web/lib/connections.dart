@@ -24,8 +24,9 @@ import 'screens.dart';
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
 /// a masked field with server validate errors; custom endpoints get a
-/// two-step check/add form; external cards explain the terminal step. Bridge cards
-/// never appear on web ([bridgeHostProvider] is null, no sidecar).
+/// two-step check/add form; external cards explain the terminal step. Bridge
+/// cards appear for an instance on a server: the sign-in runs on the bridge
+/// there, and a browser sign-in ends with the address the browser landed on.
 class HermuseConnections extends StatefulComponent {
   const HermuseConnections({
     required this.instance,
@@ -286,11 +287,9 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
         matches(card.name) ||
         matches('Sign in with ${signIn.product}') ||
         matches(signIn.plan);
-    // Bridge cards sign in through the desktop sidecar only.
-    final (signIns, rest) = _featuredSignIns([
-      for (final card in state?.cards ?? const <ConnectionCard>[])
-        if (card.flow != ConnectionFlow.bridge) card,
-    ]);
+    final (signIns, rest) = _featuredSignIns(
+      state?.cards ?? const <ConnectionCard>[],
+    );
     final featured = [
       for (final (card, signIn) in signIns)
         if (featuredMatches(card, signIn)) (card, signIn),
@@ -317,6 +316,7 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
       card: card,
       signIn: signIn,
       pendingLogin: state?.pendingLogin,
+      pendingBridgeLogin: state?.pendingBridgeLogin,
     );
     Component list(List<Component> rows) =>
         div(classes: 'hermuse-conn-list', rows);
@@ -421,10 +421,10 @@ const _bridgeSignIns = <String, _SignIn>{
 /// other card (desktop `_featuredSignIns` parity: same rules).
 ///
 /// Every subscription-bridge card is featured: each OAuth sign-in the
-/// CLIProxyAPI bridge offers. Without bridge cards (the web: no sidecar)
-/// the Hermes `openai-codex` device-code card stands in for Codex; the
-/// other subscriptions need the bridge. The Hermes cards a featured bridge
-/// replaces are other providers.
+/// CLIProxyAPI bridge offers. Without bridge cards (an instance on this
+/// machine: no sidecar here) the Hermes `openai-codex` device-code card
+/// stands in for Codex; the other subscriptions need the bridge. The Hermes
+/// cards a featured bridge replaces are other providers.
 (List<(ConnectionCard, _SignIn)>, List<ConnectionCard>) _featuredSignIns(
   List<ConnectionCard> cards,
 ) {
@@ -459,6 +459,7 @@ class _ConnectionCard extends StatefulComponent {
     required this.instanceId,
     required this.card,
     required this.pendingLogin,
+    required this.pendingBridgeLogin,
     this.signIn,
     super.key,
   });
@@ -466,6 +467,7 @@ class _ConnectionCard extends StatefulComponent {
   final String instanceId;
   final ConnectionCard card;
   final DeviceCodeLogin? pendingLogin;
+  final BridgeLogin? pendingBridgeLogin;
 
   /// Set on a featured subscription sign-in: a taller row naming its
   /// product and plan (desktop `_ConnectionCard` parity).
@@ -478,7 +480,9 @@ class _ConnectionCard extends StatefulComponent {
 class _ConnectionCardState extends State<_ConnectionCard> {
   var _open = false;
   var _key = '';
+  var _redirect = '';
   var _busy = false;
+  var _finishing = false;
   String? _error;
 
   ConnectionCards _cards(BuildContext context) => context.container.read(
@@ -490,8 +494,10 @@ class _ConnectionCardState extends State<_ConnectionCard> {
     final card = component.card;
     final pending = component.pendingLogin;
     final isPending = pending != null && pending.providerId == card.id;
+    final bridgeLogin = component.pendingBridgeLogin;
+    final bridgePending = bridgeLogin != null && bridgeLogin.cardId == card.id;
     // An in-flight login keeps its row open.
-    final open = _open || isPending || _error != null;
+    final open = _open || isPending || bridgePending || _error != null;
     final connected = card.state == ConnectionCardState.connected;
     // A featured sign-in is a taller row that names its product once signed
     // in and invites to sign in until then; progress and errors replace its
@@ -563,6 +569,8 @@ class _ConnectionCardState extends State<_ConnectionCard> {
           if (card.flow == ConnectionFlow.apiKey && !connected)
             _keyBody(context, card),
           if (card.flow == ConnectionFlow.external) _externalBody(card),
+          if (card.flow == ConnectionFlow.bridge)
+            _bridgeBody(context, card, bridgePending ? bridgeLogin : null),
           if (card.flow == ConnectionFlow.customEndpoint) _endpointBody(card),
           if (card.poolEntries.isNotEmpty)
             p(classes: 'hermuse-conn-pool', [
@@ -732,6 +740,138 @@ class _ConnectionCardState extends State<_ConnectionCard> {
         ),
       ]);
 
+  /// A subscription sign-in on the server's bridge (desktop `_bridgeBody`
+  /// parity): the link, the code of a device-code sign-in, and for a
+  /// browser sign-in the field taking the address the browser landed on.
+  Component _bridgeBody(
+    BuildContext context,
+    ConnectionCard card,
+    BridgeLogin? login,
+  ) {
+    if (card.needsPlugin) {
+      final install = card.detail == serverBridgeInstallPlugin;
+      return p(classes: 'hermuse-conn-sub', [
+        .text(
+          'The sign-in keeps your subscription on the server, which needs '
+          'the Hermuse plugin $hermusePluginVersion or later. '
+          '${install ? 'Install' : 'Update'} it on the server, then come '
+          'back here: ',
+        ),
+        a(
+          classes: 'hermuse-conn-link',
+          href: hermusePluginByHandGuide,
+          target: .blank,
+          [.text('how to')],
+        ),
+      ]);
+    }
+    if (login == null) {
+      final connected = card.state == ConnectionCardState.connected;
+      return div(classes: 'hermuse-conn-device', [
+        p(classes: 'hermuse-conn-note', [
+          .text(
+            'Personal use only: using a consumer subscription outside its '
+            'official clients may breach the vendor ToS and can stop working '
+            'without notice.',
+          ),
+        ]),
+        div(classes: 'hermuse-conn-row', [
+          div(classes: 'hermuse-conn-grow', []),
+          YsButton.primary(
+            label: _busy
+                ? 'Starting…'
+                : connected
+                ? 'Reconnect'
+                : card.state == ConnectionCardState.error
+                ? 'Retry'
+                : 'Connect',
+            onPressed: _busy
+                ? null
+                : () async {
+                    setState(() {
+                      _busy = true;
+                      _error = null;
+                    });
+                    try {
+                      final result = await _cards(context)
+                          .startBridgeLogin(card.id);
+                      if (mounted) {
+                        setState(() => _error = _bridgeVerdict(result));
+                      }
+                    } on Object catch (e) {
+                      if (mounted) setState(() => _error = '$e');
+                    }
+                    if (mounted) setState(() => _busy = false);
+                  },
+          ),
+        ]),
+      ]);
+    }
+    return div(classes: 'hermuse-conn-device', [
+      if (login.userCode case final code? when code.isNotEmpty)
+        p(classes: 'hermuse-conn-code', [.text(code)]),
+      a(classes: 'hermuse-conn-link', href: login.url, target: .blank, [
+        .text(login.url),
+      ]),
+      p(classes: 'hermuse-conn-sub', [
+        .text(
+          login.deviceFlow
+              ? 'Enter the code at the link, then wait for approval.'
+              : 'Open the link and approve. Your browser then lands on a '
+                    'page that does not load: paste its address here.',
+        ),
+      ]),
+      if (!login.deviceFlow)
+        div(classes: 'hermuse-conn-row', [
+          div(classes: 'hermuse-conn-grow', [
+            YsInputBox(
+              value: _redirect,
+              onChanged: (v) => setState(() => _redirect = v),
+              onSubmitted: () => unawaited(_finishBridgeLogin(context)),
+              placeholder: 'http://localhost:…/callback?code=…',
+              name: 'redirect-${card.id}',
+              label: 'Address the browser showed after the sign-in',
+              autocomplete: 'off',
+            ),
+          ]),
+          YsButton.primary(
+            label: _finishing ? 'Finishing…' : 'Finish',
+            onPressed: _finishing || _redirect.trim().isEmpty
+                ? null
+                : () => unawaited(_finishBridgeLogin(context)),
+          ),
+        ]),
+      div(classes: 'hermuse-conn-row', [
+        YsButton.neutral(
+          label: 'Open link',
+          onPressed: kIsWeb ? () => web.window.open(login.url, '_blank') : null,
+        ),
+        div(classes: 'hermuse-conn-grow', []),
+        YsButton.neutral(
+          label: 'Cancel',
+          onPressed: () => unawaited(_cards(context).cancelBridgeLogin()),
+        ),
+      ]),
+    ]);
+  }
+
+  /// Hands the pasted address to the sign-in; the running poll then settles
+  /// the card. A refused address shows why and keeps the sign-in open.
+  Future<void> _finishBridgeLogin(BuildContext context) async {
+    if (_finishing || _redirect.trim().isEmpty) return;
+    setState(() {
+      _finishing = true;
+      _error = null;
+    });
+    try {
+      await _cards(context).submitBridgeCallback(_redirect);
+      if (mounted) setState(() => _redirect = '');
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _finishing = false);
+  }
+
   static String _deviceVerdict(DevicePollResult result) =>
       switch (result.outcome) {
         DevicePollOutcome.denied => 'The login was denied in the browser.',
@@ -741,6 +881,17 @@ class _ConnectionCardState extends State<_ConnectionCard> {
         DevicePollOutcome.error =>
           result.message.isEmpty ? 'The login failed.' : result.message,
         DevicePollOutcome.approved => '',
+      };
+
+  /// What a finished sign-in leaves under the row: a failure already reads
+  /// on the row's line, a cancel was the user's doing; only the app's own
+  /// timeout needs saying (desktop parity).
+  static String? _bridgeVerdict(BridgePollResult result) =>
+      switch (result.outcome) {
+        BridgePollOutcome.timeout => 'The sign-in timed out. Start it again.',
+        BridgePollOutcome.ok ||
+        BridgePollOutcome.cancelled ||
+        BridgePollOutcome.error => null,
       };
 
   static String _letter(String name) {

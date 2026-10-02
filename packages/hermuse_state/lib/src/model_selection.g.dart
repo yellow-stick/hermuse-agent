@@ -93,7 +93,7 @@ final class ModelSelectionStateProvider
 }
 
 String _$modelSelectionStateHash() =>
-    r'99318af71963140a1c167156a3b494ccf0797a63';
+    r'8b501975543188e0060bdadde641b4ead5f796ce';
 
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
@@ -261,7 +261,7 @@ final class AvailableModelsProvider
   }
 }
 
-String _$availableModelsHash() => r'83e697a95c54449fd36ebed1334de72f127561c1';
+String _$availableModelsHash() => r'30510f1d23a19e097172339cc1c21df9f0229be1';
 
 /// Flat chat-picker list: union of the ≤2 selected models of every connected
 /// provider on [instanceId] (native + bridge). Providers whose selection

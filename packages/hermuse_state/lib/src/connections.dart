@@ -418,8 +418,8 @@ const devicePollInterval = Duration(seconds: 5);
 /// `GET /api/providers/custom-endpoints`, [env] is `GET /api/env`.
 /// [bridgeFiles] is the sidecar `listAuthFiles()` snapshot; [serverBridge]
 /// replaces it for an instance on a server ([bridgeOnServer]). Both null
-/// hides the bridge cards (web/mobile: no sidecar, no [BridgeHost]
-/// override).
+/// hides the bridge cards (an instance on this machine without a sidecar:
+/// web/mobile, no [BridgeHost] override).
 List<ConnectionCard> buildConnectionCards({
   required Map<String, Object?> oauth,
   required Map<String, Object?> pool,
@@ -639,9 +639,10 @@ List<ConnectionCard> buildConnectionCards({
 /// the server holds a usable account of [spec] AND Hermes has the card's
 /// endpoint pointing at that bridge. An entry still pointing elsewhere (a
 /// desktop sidecar) reads as not registered, so a tap re-registers it. A
-/// server whose plugin lacks the bridge waits on its install or update
-/// ([ConnectionCard.needsPlugin]); one that cannot run it (other host) puts
-/// the card in error with why.
+/// server whose plugin lacks the bridge, or predates signing in on it
+/// ([ServerBridgeStatus.signIn]) with no account to keep using, waits on its
+/// install or update ([ConnectionCard.needsPlugin]); one that cannot run it
+/// (other host) puts the card in error with why.
 ConnectionCard _serverBridgeCard(
   BridgeCardSpec spec,
   ServerBridgeStatus server,
@@ -664,10 +665,12 @@ ConnectionCard _serverBridgeCard(
       endpoint != null &&
       named.any((row) => _sameUrl(row['base_url'], endpoint));
   final connected = server.supported && usable.isNotEmpty && registered;
+  final outdated = server.supported && !server.signIn && usable.isEmpty;
   final needsPlugin =
+      outdated ||
       !server.supported &&
-      (server.detail == serverBridgeUpdatePlugin ||
-          server.detail == serverBridgeInstallPlugin);
+          (server.detail == serverBridgeUpdatePlugin ||
+              server.detail == serverBridgeInstallPlugin);
   final email = usable.isEmpty ? '' : usable.first.email;
   final removable = accounts.isNotEmpty || named.isNotEmpty;
   return ConnectionCard(
@@ -682,7 +685,9 @@ ConnectionCard _serverBridgeCard(
         : connected
         ? ConnectionCardState.connected
         : ConnectionCardState.disconnected,
-    detail: !server.supported
+    detail: outdated
+        ? serverBridgeUpdatePlugin
+        : !server.supported
         ? server.detail
         : connected
         ? (email.isEmpty ? 'on the server' : 'on the server · $email')
@@ -1158,10 +1163,13 @@ class ConnectionCards extends _$ConnectionCards {
   /// is skipped and the card re-registers directly (idempotent: Hermes merges
   /// onto the existing entry by name).
   ///
-  /// An instance on a server ([bridgeOnServer]) signs in on this desktop's
-  /// sidecar too — the OAuth callback must reach this machine — but the
-  /// account then lives in the bridge of the Hermuse plugin on the server,
-  /// which Hermes points at (see [_serverBridgeLogin]).
+  /// An instance on a server ([bridgeOnServer]) signs in on the bridge of
+  /// the Hermuse plugin there, which Hermes points at (see
+  /// [_serverBridgeLogin]); nothing runs on this device.
+  ///
+  /// A browser sign-in redirects to `localhost`, which reaches CLIProxyAPI
+  /// only on its own machine: elsewhere the user pastes the address the
+  /// browser landed on ([submitBridgeCallback]).
   Future<BridgePollResult> startBridgeLogin(
     String cardId, {
     Duration timeout = const Duration(minutes: 15),
@@ -1185,17 +1193,17 @@ class ConnectionCards extends _$ConnectionCards {
     if (state.value == null) {
       throw StateError('connections are still loading');
     }
-    final host = ref.read(bridgeHostProvider);
-    if (host == null) {
-      throw UnsupportedError('no subscription-bridge host on this platform');
-    }
     final registry = await ref.read(registryProvider.future);
     if (bridgeOnServer(registry.byId(instanceId))) {
       try {
-        return await _serverBridgeLogin(spec, host, timeout, pollInterval);
+        return await _serverBridgeLogin(spec, timeout, pollInterval);
       } on ServerBridgeException catch (e) {
         return await _failBridge(cardId, e.message);
       }
+    }
+    final host = ref.read(bridgeHostProvider);
+    if (host == null) {
+      throw UnsupportedError('no subscription-bridge host on this platform');
     }
     final sidecar = await host.ensureStarted();
     final management = CliproxyManagement(
@@ -1214,8 +1222,8 @@ class ConnectionCards extends _$ConnectionCards {
       usable ? 'registering in Hermes…' : 'waiting for subscription approval…',
     );
     if (!usable) {
-      final outcome = await _signInOnSidecar(
-        management,
+      final outcome = await _signIn(
+        _SidecarSignIn(management),
         spec,
         timeout,
         pollInterval,
@@ -1234,20 +1242,16 @@ class ConnectionCards extends _$ConnectionCards {
     );
   }
 
-  /// Sign-in for an instance on a server ([bridgeOnServer]).
+  /// Sign-in for an instance on a server ([bridgeOnServer]), all on the
+  /// bridge of the Hermuse plugin there.
   ///
-  /// The plugin's bridge is set up first, so an old plugin fails before any
-  /// browser opens. Without a usable account on the server, the login runs
-  /// on this desktop's sidecar (the OAuth callback must reach this machine)
-  /// and the account file it saved moves to the server; the sidecar's own
-  /// accounts of that provider are then put back as they were, so the
-  /// sign-in lives in one CLIProxyAPI only — two refreshing one grant would
-  /// rotate each other's refresh token out. Models come from the server
-  /// bridge, and the Hermes endpoint points at its loopback address with its
-  /// key.
+  /// The bridge is set up first, so an old plugin fails before any browser
+  /// opens. Without a usable account on the server, the sign-in runs on the
+  /// server's CLIProxyAPI: the account never exists anywhere else. Models
+  /// come from the server bridge, and the Hermes endpoint points at its
+  /// loopback address with its key.
   Future<BridgePollResult> _serverBridgeLogin(
     BridgeCardSpec spec,
-    BridgeHost host,
     Duration timeout,
     Duration pollInterval,
   ) async {
@@ -1257,44 +1261,22 @@ class ConnectionCards extends _$ConnectionCards {
     if (!found.supported) throw ServerBridgeFailed(found.detail);
     _showBridgeProgress(spec.cardId, 'preparing the bridge on the server…');
     final bridge = await server.ensure();
-    final signedIn = (await server.status()).accounts.any(
+    final now = await server.status();
+    final signedIn = now.accounts.any(
       (a) => a.usable && spec.authFileProviders.contains(a.provider),
     );
     if (!signedIn) {
+      if (!now.signIn) {
+        throw const ServerBridgeUnavailable(serverBridgeUpdatePlugin);
+      }
       _showBridgeProgress(spec.cardId, 'waiting for subscription approval…');
-      final sidecar = await host.ensureStarted();
-      final local = CliproxyManagement(
-        ref.read(httpClientProvider),
-        baseUrl: sidecar.baseUrl,
-        managementKey: sidecar.managementKey,
-      );
-      final kept = await _sidecarAccounts(local, spec);
-      final outcome = await _signInOnSidecar(
-        local,
+      final outcome = await _signIn(
+        _ServerSignIn(server),
         spec,
         timeout,
         pollInterval,
       );
       if (outcome.outcome != BridgePollOutcome.ok) return outcome;
-      try {
-        final saved = await _sidecarAccounts(local, spec);
-        final fresh = {
-          for (final MapEntry(:key, :value) in saved.entries)
-            if (kept[key] != value) key: value,
-        };
-        if (fresh.isEmpty) {
-          return await _failBridge(
-            spec.cardId,
-            'Signed in, but the sidecar saved no ${spec.label} account.',
-          );
-        }
-        _showBridgeProgress(spec.cardId, 'moving the account to the server…');
-        for (final MapEntry(:key, :value) in fresh.entries) {
-          await server.uploadAccount(key, value);
-        }
-      } finally {
-        await _restoreSidecarAccounts(local, spec, kept);
-      }
     }
     _showBridgeProgress(spec.cardId, 'registering in Hermes…');
     final discovered = await _serverBridgeModels(
@@ -1331,24 +1313,30 @@ class ConnectionCards extends _$ConnectionCards {
     );
   }
 
-  /// Starts [spec]'s login on this desktop's sidecar and polls it to its
-  /// end. A login that does not end ok settles the cards (a failure shows on
-  /// the card) and clears the pending login.
-  Future<BridgePollResult> _signInOnSidecar(
-    CliproxyManagement management,
+  /// Starts [spec]'s login on [target] and polls it to its end. A login that
+  /// does not end ok settles the cards (a failure shows on the card) and
+  /// clears the pending login.
+  Future<BridgePollResult> _signIn(
+    _SignInTarget target,
     BridgeCardSpec spec,
     Duration timeout,
     Duration pollInterval,
   ) async {
-    final start = await management.startLogin(spec.provider);
+    final start = await target.start(spec.provider);
     final login = BridgeLogin.fromStart(spec.cardId, spec.provider, start);
+    _signInTarget = target;
     state = AsyncData(state.value!.copyWith(pendingBridgeLogin: () => login));
-    final outcome = await _pollBridgeUntilSettled(
-      management,
-      login,
-      timeout,
-      pollInterval,
-    );
+    final BridgePollResult outcome;
+    try {
+      outcome = await _pollBridgeUntilSettled(
+        target,
+        login,
+        timeout,
+        pollInterval,
+      );
+    } finally {
+      if (identical(_signInTarget, target)) _signInTarget = null;
+    }
     _pollTimer?.cancel();
     _pollTimer = null;
     if (outcome.outcome != BridgePollOutcome.ok && ref.mounted) {
@@ -1463,10 +1451,11 @@ class ConnectionCards extends _$ConnectionCards {
     );
   }
 
-  /// Cancels the in-flight bridge login (sidecar `DELETE /oauth-session`
-  /// plus the local poll loop).
+  /// Cancels the in-flight bridge login (CLIProxyAPI `oauth-session` where
+  /// it runs, plus the local poll loop).
   Future<void> cancelBridgeLogin() async {
     final login = state.value?.pendingBridgeLogin;
+    final target = _signInTarget;
     _bridgeCancelled = true;
     _pollTimer?.cancel();
     _pollTimer = null;
@@ -1476,16 +1465,9 @@ class ConnectionCards extends _$ConnectionCards {
       );
     }
     _bridgeCompleter = null;
-    if (login != null) {
+    if (login != null && target != null) {
       try {
-        final host = ref.read(bridgeHostProvider);
-        if (host == null) return;
-        final sidecar = await host.ensureStarted();
-        await CliproxyManagement(
-          ref.read(httpClientProvider),
-          baseUrl: sidecar.baseUrl,
-          managementKey: sidecar.managementKey,
-        ).cancelLogin(login.state);
+        await target.cancel(login.state);
       } on Object {
         // Best-effort: the local loop is already stopped.
       }
@@ -1496,6 +1478,25 @@ class ConnectionCards extends _$ConnectionCards {
         ConnectionsState(cards: await _loadCards(), pendingBridgeLogin: null),
       );
     }
+  }
+
+  /// Finishes the in-flight browser sign-in with [redirectUrl], the address
+  /// the browser landed on after approval (its `localhost` redirect reaches
+  /// CLIProxyAPI only on its own machine). CLIProxyAPI reads the code from it
+  /// and the running poll sees the sign-in settle. A [BridgeCallbackRejected]
+  /// says why an address fits no waiting sign-in.
+  Future<void> submitBridgeCallback(String redirectUrl) async {
+    final target = _signInTarget;
+    if (target == null || state.value?.pendingBridgeLogin == null) {
+      throw const BridgeCallbackRejected('No sign-in is waiting.');
+    }
+    final address = redirectUrl.trim();
+    if (address.isEmpty) {
+      throw const BridgeCallbackRejected(
+        'Paste the address the browser showed after you approved.',
+      );
+    }
+    await target.submitCallback(address);
   }
 
   /// Deletes the Hermes custom-endpoint registration of a bridge card. The
@@ -1556,8 +1557,11 @@ class ConnectionCards extends _$ConnectionCards {
   var _bridgeCancelled = false;
   Completer<BridgePollResult>? _bridgeCompleter;
 
+  /// Where the in-flight bridge sign-in runs; null when none does.
+  _SignInTarget? _signInTarget;
+
   Future<BridgePollResult> _pollBridgeUntilSettled(
-    CliproxyManagement management,
+    _SignInTarget target,
     BridgeLogin login,
     Duration timeout,
     Duration pollInterval,
@@ -1589,7 +1593,7 @@ class ConnectionCards extends _$ConnectionCards {
         return;
       }
       try {
-        final status = await management.pollLogin(login.state);
+        final status = await target.poll(login.state);
         if (status.isOk) {
           if (!completer.isCompleted) {
             completer.complete(const BridgePollResult(BridgePollOutcome.ok));
@@ -1601,7 +1605,7 @@ class ConnectionCards extends _$ConnectionCards {
             completer.complete(
               BridgePollResult(
                 BridgePollOutcome.error,
-                message: status.error ?? 'The login failed.',
+                message: _bridgeFailure(status.error),
               ),
             );
           }
@@ -1611,7 +1615,10 @@ class ConnectionCards extends _$ConnectionCards {
         // Unknown/expired state: the session vanished sidecar-side — stop.
         if (!completer.isCompleted) {
           completer.complete(
-            BridgePollResult(BridgePollOutcome.error, message: error.message),
+            BridgePollResult(
+              BridgePollOutcome.error,
+              message: _bridgeFailure(error.message),
+            ),
           );
         }
         return;
@@ -1658,12 +1665,10 @@ class ConnectionCards extends _$ConnectionCards {
     );
   }
 
-  /// The server's bridge for an instance on a server, or null where this
-  /// device has no sidecar for the sign-in's OAuth callback (web/mobile:
-  /// bridge cards stay hidden). A plugin without the bridge yields what to
-  /// do; an unreachable one renders the cards without connected state.
-  Future<ServerBridgeStatus?> _serverBridge(HermesRestClient rest) async {
-    if (ref.read(bridgeHostProvider) == null) return null;
+  /// The server's bridge for an instance on a server. A plugin without the
+  /// bridge yields what to do; an unreachable one renders the cards without
+  /// connected state.
+  Future<ServerBridgeStatus> _serverBridge(HermesRestClient rest) async {
     try {
       return await ServerBridgeClient(rest).status();
     } on ServerBridgeException catch (e) {
@@ -1702,9 +1707,9 @@ class ConnectionCards extends _$ConnectionCards {
   ) => rest.deleteWithBody(path, body);
 }
 
-/// Reads of the server catalogue after an account upload, [_serverModelDelay]
-/// apart: CLIProxyAPI lists an uploaded account's models once its auth
-/// watcher registered them, within about a second.
+/// Reads of the server catalogue after a sign-in, [_serverModelDelay] apart:
+/// CLIProxyAPI lists a new account's models once its auth watcher registered
+/// them, within about a second.
 const _serverModelRetries = 10;
 const _serverModelDelay = Duration(seconds: 1);
 
@@ -1739,46 +1744,128 @@ Future<List<String>> _serverBridgeModels(
   return models;
 }
 
-/// Account files of [spec]'s providers on this desktop's sidecar: name →
-/// JSON text, as CLIProxyAPI stored them.
-Future<Map<String, String>> _sidecarAccounts(
-  CliproxyManagement sidecar,
-  BridgeCardSpec spec,
-) async {
-  final accounts = <String, String>{};
-  for (final file in await sidecar.listAuthFiles()) {
-    if (!file.name.endsWith('.json') ||
-        !spec.authFileProviders.contains(file.provider)) {
-      continue;
-    }
-    try {
-      accounts[file.name] = await sidecar.downloadAuthFile(file.name);
-    } on CliproxyHttpError catch (e) {
-      // An account without a file (runtime-only) has nothing to move.
-      if (e.statusCode != 404) rethrow;
-    }
-  }
-  return accounts;
+/// The address pasted to finish a browser sign-in fits no waiting sign-in;
+/// [message] says why in a sentence for the user.
+final class BridgeCallbackRejected implements Exception {
+  const BridgeCallbackRejected(this.message);
+
+  /// From CLIProxyAPI's [reason] for refusing the address.
+  factory BridgeCallbackRejected.because(String reason) =>
+      BridgeCallbackRejected(switch (reason) {
+        _ when _expiredState(reason) =>
+          'This address is not from the sign-in in progress. Copy the '
+              'address the browser shows after this sign-in.',
+        _ => reason,
+      });
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
-/// Puts [kept] back as the sidecar's [spec] accounts after a sign-in for a
-/// server: a file the login added goes, one it replaced gets its previous
-/// content again. Best effort: the server account is what the sign-in was
-/// for.
-Future<void> _restoreSidecarAccounts(
-  CliproxyManagement sidecar,
-  BridgeCardSpec spec,
-  Map<String, String> kept,
-) async {
-  try {
-    final now = await _sidecarAccounts(sidecar, spec);
-    for (final name in now.keys) {
-      if (!kept.containsKey(name)) await sidecar.deleteAuthFile(name);
+/// Where a bridge sign-in runs: this desktop's sidecar ([_SidecarSignIn]) or
+/// the bridge of the Hermuse plugin on the instance's server
+/// ([_ServerSignIn]). [poll] throws a [CliproxyProtocolError] once the
+/// sign-in cannot settle any more, another [CliproxyException] while it
+/// might (the poll retries).
+sealed class _SignInTarget {
+  const _SignInTarget();
+
+  Future<AuthStart> start(CliproxyProvider provider);
+  Future<AuthStatus> poll(String state);
+
+  /// Throws [BridgeCallbackRejected] when no sign-in waits for the address.
+  Future<void> submitCallback(String redirectUrl);
+  Future<void> cancel(String state);
+}
+
+final class _SidecarSignIn extends _SignInTarget {
+  const _SidecarSignIn(this._management);
+
+  final CliproxyManagement _management;
+
+  @override
+  Future<AuthStart> start(CliproxyProvider provider) =>
+      _management.startLogin(provider);
+
+  @override
+  Future<AuthStatus> poll(String state) => _management.pollLogin(state);
+
+  @override
+  Future<void> submitCallback(String redirectUrl) async {
+    try {
+      await _management.submitCallback(redirectUrl);
+    } on CliproxyHttpError catch (e) {
+      if (e.statusCode >= 500) rethrow;
+      throw BridgeCallbackRejected.because(e.message);
+    } on CliproxyProtocolError catch (e) {
+      throw BridgeCallbackRejected.because(e.message);
     }
-    for (final MapEntry(:key, :value) in kept.entries) {
-      if (now[key] != value) await sidecar.uploadAuthFile(key, value);
-    }
-  } on Object {
-    // The sidecar keeps a copy; the next refresh of either side may fail.
   }
+
+  @override
+  Future<void> cancel(String state) => _management.cancelLogin(state);
+}
+
+final class _ServerSignIn extends _SignInTarget {
+  const _ServerSignIn(this._server);
+
+  final ServerBridgeClient _server;
+
+  @override
+  Future<AuthStart> start(CliproxyProvider provider) =>
+      _server.startLogin(provider);
+
+  /// A refused state (400) or a plugin without sign-in ends the poll; a
+  /// bridge or dashboard hiccup is retried.
+  @override
+  Future<AuthStatus> poll(String state) async {
+    try {
+      return await _server.pollLogin(state);
+    } on ServerBridgeUnavailable catch (e) {
+      throw CliproxyProtocolError(e.message);
+    } on ServerBridgeFailed catch (e) {
+      if (e.statusCode == 400) throw CliproxyProtocolError(e.message);
+      throw CliproxyUnreachable(e.message);
+    } on HermesException catch (e) {
+      throw CliproxyUnreachable(e.message);
+    }
+  }
+
+  @override
+  Future<void> submitCallback(String redirectUrl) async {
+    try {
+      await _server.submitCallback(redirectUrl);
+    } on ServerBridgeFailed catch (e) {
+      if (e.statusCode != 400) rethrow;
+      throw BridgeCallbackRejected.because(e.message);
+    }
+  }
+
+  @override
+  Future<void> cancel(String state) => _server.cancelLogin(state);
+}
+
+/// CLIProxyAPI knows no pending sign-in of that state (expired, cancelled,
+/// finished, or from another attempt).
+bool _expiredState(String reason) =>
+    reason.contains('unknown or expired state') ||
+    reason.contains('State code error') ||
+    reason == 'invalid state';
+
+/// A sentence for the user from CLIProxyAPI's [reason] a sign-in failed
+/// (`get-auth-status` `error`, `SetOAuthSessionError` messages).
+String _bridgeFailure(String? reason) {
+  final text = reason?.trim() ?? '';
+  if (text.isEmpty) return 'The sign-in failed. Start it again.';
+  if (text.contains('Timeout waiting for OAuth callback') ||
+      _expiredState(text)) {
+    return 'The sign-in expired before it finished (it waits 5 minutes). '
+        'Start it again.';
+  }
+  if (text.startsWith('Failed to exchange authorization code')) {
+    return 'The provider refused this sign-in. Start it again.';
+  }
+  return text;
 }

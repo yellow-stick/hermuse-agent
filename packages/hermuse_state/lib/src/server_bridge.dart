@@ -88,6 +88,7 @@ final class ServerBridgeStatus {
     this.baseUrl,
     this.accounts = const [],
     this.detail = '',
+    this.signIn = true,
   });
 
   /// The server cannot sign subscriptions in; [detail] says what to do.
@@ -95,7 +96,8 @@ final class ServerBridgeStatus {
     : supported = false,
       running = false,
       baseUrl = null,
-      accounts = const [];
+      accounts = const [],
+      signIn = false;
 
   factory ServerBridgeStatus.fromJson(Map<String, Object?> json) =>
       ServerBridgeStatus(
@@ -111,6 +113,7 @@ final class ServerBridgeStatus {
               ServerBridgeAccount.fromJson(entry),
         ],
         detail: json['detail'] as String? ?? '',
+        signIn: json['sign_in'] as bool? ?? false,
       );
 
   /// The host can run the bridge and the plugin has it.
@@ -126,6 +129,10 @@ final class ServerBridgeStatus {
 
   /// Why the bridge cannot serve, when it cannot.
   final String detail;
+
+  /// Subscriptions sign in on this bridge (`POST /bridge/login`); false for
+  /// a plugin that predates it ([serverBridgeUpdatePlugin]).
+  final bool signIn;
 
   /// `<baseUrl>/v1`: the Hermes custom endpoint pointing at this bridge.
   String? get endpoint => baseUrl?.replace(path: '/v1').toString();
@@ -171,12 +178,35 @@ final class ServerBridgeClient {
     return ServerBridgeConnection(baseUrl: baseUrl, apiKey: apiKey);
   }
 
-  /// Hands the bridge the account file [name] with its JSON [content].
-  Future<void> uploadAccount(String name, String content) => _guard(
-    () => _rest.postJson('$hermuseBridgeRoute/accounts', {
-      'name': name,
-      'content': content,
+  /// Starts a sign-in of [provider] on the bridge: the link to open, plus the
+  /// code to enter on device-code sign-ins.
+  Future<AuthStart> startLogin(CliproxyProvider provider) async {
+    final json = await _guard(
+      () => _rest.postJson('$hermuseBridgeRoute/login', {
+        'provider': provider.route.replaceFirst('-auth-url', ''),
+      }),
+    );
+    return AuthStart.fromJson(json);
+  }
+
+  /// Where sign-in [state] stands.
+  Future<AuthStatus> pollLogin(String state) async => AuthStatus.fromJson(
+    await _guard(
+      () => _rest.getJson('$hermuseBridgeRoute/login/status', {'state': state}),
+    ),
+  );
+
+  /// Finishes a browser sign-in with the address the browser was sent to; a
+  /// [ServerBridgeFailed] 400 when no sign-in waits for it.
+  Future<void> submitCallback(String redirectUrl) => _guard(
+    () => _rest.postJson('$hermuseBridgeRoute/login/callback', {
+      'redirect_url': redirectUrl,
     }),
+  );
+
+  /// Cancels sign-in [state].
+  Future<void> cancelLogin(String state) => _guard(
+    () => _rest.postJson('$hermuseBridgeRoute/login/cancel', {'state': state}),
   );
 
   /// Removes account [name]; false when the bridge has none by that name.
