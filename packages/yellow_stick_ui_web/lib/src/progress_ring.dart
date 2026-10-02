@@ -71,7 +71,7 @@ class YsProgressRing extends StatefulComponent {
         ),
         css('.ys-ring-value').styles(
           raw: {
-            'stroke': 'var(--primary)',
+            'stroke': 'var(--primary-ink)',
             'stroke-width': ysNum(_stroke),
             'rotate': '-90deg',
             'transform-origin': origin,

@@ -102,7 +102,7 @@ final class _SegmentButton extends StatelessWidget {
               color: selected
                   ? palette.neutralFilmColor
                   : state.hovered
-                  ? palette.neutralFilmColor.withValues(alpha: 0.4)
+                  ? palette.neutralWashColor
                   : const Color(0x00000000),
               borderRadius: BorderRadius.circular(YsRadius.segment),
             ),

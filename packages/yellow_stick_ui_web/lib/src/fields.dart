@@ -142,7 +142,7 @@ class YsInputBox extends StatelessComponent {
         css('&:focus').styles(
           border: .all(
             style: .solid,
-            color: .variable('--primary'),
+            color: .variable('--primary-ink'),
             width: 1.2.px,
           ),
           raw: {
@@ -176,7 +176,7 @@ class YsInputBox extends StatelessComponent {
           raw: {'transition': 'color $ease'},
         ),
         css('&:focus-within .ys-inputbox-icon')
-            .styles(color: .variable('--primary')),
+            .styles(color: .variable('--primary-ink')),
       ]),
       css.media(MediaQuery.raw(ysReducedMotionQuery), [
         css('.ys-inputbox, .ys-inputbox-icon')
@@ -244,7 +244,7 @@ class YsTextBox extends StatelessComponent {
       css('&:focus').styles(
         border: .all(
           style: .solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: 1.2.px,
         ),
       ),

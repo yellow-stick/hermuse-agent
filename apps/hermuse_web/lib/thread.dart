@@ -315,7 +315,12 @@ class HermuseThread extends StatelessComponent {
         backgroundColor: .variable('--paper-clear'),
         fontSize: 13.px,
         lineHeight: 18.px,
-        raw: {'z-index': '5', 'margin-left': '16px', 'margin-right': '16px'},
+        raw: {
+          'z-index': '5',
+          'margin-left': '16px',
+          'margin-right': '16px',
+          'box-shadow': 'var(--raised)',
+        },
       ),
       css('.hermuse-conn-text').styles(
         flex: .grow(1),
@@ -363,7 +368,7 @@ class HermuseThread extends StatelessComponent {
         backgroundColor: .variable('--paper-clear'),
         fontSize: 13.px,
         lineHeight: 18.px,
-        raw: {'box-sizing': 'border-box'},
+        raw: {'box-sizing': 'border-box', 'box-shadow': 'var(--raised)'},
       ),
       // A tab resting on the composer's top edge, so the quote reads as
       // part of the message box.
@@ -401,7 +406,7 @@ class HermuseThread extends StatelessComponent {
           color: .variable('--line'),
           width: ysHairline.px,
         ),
-        raw: {'backdrop-filter': 'blur(12px)'},
+        raw: {'backdrop-filter': 'blur(12px)', 'box-shadow': 'var(--raised)'},
       ),
       css('.hermuse-composer-attach').styles(
         padding: .only(left: 8.px),
@@ -438,7 +443,7 @@ class HermuseThread extends StatelessComponent {
       css('.hermuse-send:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -461,7 +466,7 @@ class HermuseThread extends StatelessComponent {
       css('.hermuse-stop:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -642,14 +647,18 @@ class HermuseThreadHeader extends StatelessComponent {
         backgroundColor: .variable('--paper-clear'),
         cursor: .pointer,
         border: .none,
-        raw: {'backdrop-filter': 'blur(12px)', 'flex-shrink': '0'},
+        raw: {
+          'backdrop-filter': 'blur(12px)',
+          'flex-shrink': '0',
+          'box-shadow': 'var(--raised)',
+        },
       ),
       css('.hermuse-thread-back:hover')
           .styles(backgroundColor: .variable('--neutral-film')),
       css('.hermuse-thread-back:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),

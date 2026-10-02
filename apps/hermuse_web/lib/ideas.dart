@@ -96,7 +96,7 @@ class HermuseIdeas extends StatelessComponent {
     css('.hermuse-ob-link').styles(
       fontSize: 14.px,
       lineHeight: 20.px,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
       cursor: .pointer,
       border: .none,
       backgroundColor: Colors.transparent,
@@ -113,6 +113,8 @@ class HermuseIdeas extends StatelessComponent {
       cursor: .pointer,
       border: .none,
       textAlign: .left,
+      // Rests raised; `ys-lift` still swaps in its hover shadow.
+      raw: {'--ys-lift-rest': 'var(--raised)'},
     ),
     css('.hermuse-idea-card.ys-lift').styles(
       raw: {
@@ -149,7 +151,7 @@ class HermuseIdeas extends StatelessComponent {
     css(
       '.hermuse-idea-card:hover .hermuse-idea-spark, '
       '.hermuse-idea-spark[data-on]',
-    ).styles(color: .variable('--primary')),
+    ).styles(color: .variable('--primary-ink')),
     css('.hermuse-idea-spark[data-on]').styles(raw: {'scale': '1.25'}),
     css('.hermuse-idea-pitch').styles(
       margin: .zero,

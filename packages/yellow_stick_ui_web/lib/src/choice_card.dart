@@ -79,7 +79,7 @@ class YsChoiceCard extends StatelessComponent {
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),

@@ -343,6 +343,7 @@ final class _ThreadHeader extends StatelessWidget {
           iconSize: 20,
           iconColor: palette.contentColor,
           background: palette.paperClearColor,
+          raised: true,
         ),
         const SizedBox(width: 8),
         Flexible(
@@ -448,97 +449,104 @@ final class _Composer extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final hasText = controller.text.trim().isNotEmpty;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(YsRadius.composer),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: palette.paperClearColor,
-            borderRadius: BorderRadius.circular(YsRadius.composer),
-            border: Border.all(color: palette.lineColor, width: ysHairline),
-          ),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 58),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: YsButton.icon(
-                      icon: YsIcon.plus,
-                      onPressed: () {},
-                      semanticLabel: 'Attach file',
-                      tooltip: 'Attach file',
-                      size: 32,
-                      iconSize: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 9),
-                      child: YsTextArea(
-                        controller: controller,
-                        focusNode: focusNode,
-                        placeholder: 'Message',
-                        semanticLabel: 'Message',
-                        minLines: 1,
-                        maxLines: 8,
-                        onChanged: onChanged,
-                        onSubmitted: (_) => onSend(),
+    // The resting elevation sits outside the blur clip, which would cut it.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(YsRadius.composer),
+        boxShadow: palette.raisedShadows,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(YsRadius.composer),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.paperClearColor,
+              borderRadius: BorderRadius.circular(YsRadius.composer),
+              border: Border.all(color: palette.lineColor, width: ysHairline),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 58),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      child: YsButton.icon(
+                        icon: YsIcon.plus,
+                        onPressed: () {},
+                        semanticLabel: 'Attach file',
+                        tooltip: 'Attach file',
+                        size: 32,
+                        iconSize: 20,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    // The action morphs: the new glyph turns and grows in
-                    // while the old one shrinks away.
-                    child: AnimatedSwitcher(
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: YsMorphMotion.swap),
-                      switchInCurve: YsEase.settle.curve,
-                      switchOutCurve: YsEase.standard.curve,
-                      transitionBuilder: (child, animation) => FadeTransition(
-                        opacity: animation,
-                        // Announced from its first frame, like the button
-                        // it replaces.
-                        alwaysIncludeSemantics: true,
-                        child: RotationTransition(
-                          turns: Tween(
-                            begin: -YsMorphMotion.turn,
-                            end: 0.0,
-                          ).animate(animation),
-                          child: ScaleTransition(
-                            scale: Tween(
-                              begin: YsMorphMotion.from,
-                              end: 1.0,
-                            ).animate(animation),
-                            child: child,
-                          ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        child: YsTextArea(
+                          controller: controller,
+                          focusNode: focusNode,
+                          placeholder: 'Message',
+                          semanticLabel: 'Message',
+                          minLines: 1,
+                          maxLines: 8,
+                          onChanged: onChanged,
+                          onSubmitted: (_) => onSend(),
                         ),
                       ),
-                      child: busy
-                          ? _RoundAction(
-                              key: const ValueKey('stop'),
-                              onPressed: onStop,
-                              semanticLabel: 'Stop',
-                              tooltip: 'Stop',
-                              icon: YsIcon.stop,
-                            )
-                          : _RoundAction(
-                              key: const ValueKey('send'),
-                              onPressed: hasText ? onSend : null,
-                              semanticLabel: 'Send message',
-                              icon: YsIcon.send,
-                            ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      // The action morphs: the new glyph turns and grows in
+                      // while the old one shrinks away.
+                      child: AnimatedSwitcher(
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: YsMorphMotion.swap),
+                        switchInCurve: YsEase.settle.curve,
+                        switchOutCurve: YsEase.standard.curve,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          // Announced from its first frame, like the button
+                          // it replaces.
+                          alwaysIncludeSemantics: true,
+                          child: RotationTransition(
+                            turns: Tween(
+                              begin: -YsMorphMotion.turn,
+                              end: 0.0,
+                            ).animate(animation),
+                            child: ScaleTransition(
+                              scale: Tween(
+                                begin: YsMorphMotion.from,
+                                end: 1.0,
+                              ).animate(animation),
+                              child: child,
+                            ),
+                          ),
+                        ),
+                        child: busy
+                            ? _RoundAction(
+                                key: const ValueKey('stop'),
+                                onPressed: onStop,
+                                semanticLabel: 'Stop',
+                                tooltip: 'Stop',
+                                icon: YsIcon.stop,
+                              )
+                            : _RoundAction(
+                                key: const ValueKey('send'),
+                                onPressed: hasText ? onSend : null,
+                                semanticLabel: 'Send message',
+                                icon: YsIcon.send,
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -638,6 +646,7 @@ final class _ConnectionBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        boxShadow: palette.raisedShadows,
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -742,6 +751,7 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
       decoration: BoxDecoration(
         color: palette.paperColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
+        boxShadow: palette.raisedShadows,
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),

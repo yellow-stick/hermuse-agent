@@ -224,6 +224,7 @@ final class _ArtifactRow extends StatelessWidget {
               decoration: BoxDecoration(
                 color: palette.paperColor,
                 borderRadius: BorderRadius.circular(YsRadius.option),
+                boxShadow: palette.raisedShadows,
               ),
               child: YsIconWidget(
                 _kindIcon(artifact.kind),

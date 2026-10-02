@@ -164,7 +164,10 @@ final class _InstanceItem extends StatelessWidget {
                     : const Color(0x00000000),
                 shape: BoxShape.circle,
                 border: selected
-                    ? Border.all(color: palette.primaryColor, width: ysHairline)
+                    ? Border.all(
+                        color: palette.primaryInkColor,
+                        width: ysHairline,
+                      )
                     : null,
               ),
               child: Center(

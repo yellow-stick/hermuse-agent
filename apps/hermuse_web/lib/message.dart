@@ -255,6 +255,7 @@ class MessageRow extends StatelessComponent {
         backgroundColor: .variable('--paper'),
         fontSize: 15.px,
         lineHeight: 24.px,
+        raw: {'box-shadow': 'var(--raised)'},
       ),
       css('.hermuse-bubble-user').styles(
         color: .variable('--primary-content'),
@@ -350,7 +351,7 @@ class MessageRow extends StatelessComponent {
         raw: {'overflow-wrap': 'break-word', 'white-space': 'pre-wrap'},
       ),
       css('.hermuse-command-note').styles(color: .variable('--content-muted')),
-      css('.hermuse-notice-error').styles(color: .variable('--primary-2')),
+      css('.hermuse-notice-error').styles(color: .variable('--primary-ink')),
       // Reaction chip overlapping the bubble's bottom edge.
       css('.hermuse-bubble-wrap').styles(
         position: .relative(),
@@ -431,7 +432,7 @@ class MessageRow extends StatelessComponent {
       css('.hermuse-action:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -633,7 +634,7 @@ class HermuseChoice extends StatelessComponent {
         backgroundColor: .variable('--primary-muted'),
         border: .all(
           style: .solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: 1.2.px,
         ),
       ),
@@ -738,7 +739,7 @@ class HermuseOfferRow extends StatelessComponent {
         backgroundColor: .variable('--primary-muted'),
         border: .all(
           style: .solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: 1.2.px,
         ),
       ),

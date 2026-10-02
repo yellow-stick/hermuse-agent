@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:test/test.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
@@ -155,12 +157,67 @@ void main() {
         same(YsPalette.dark),
       );
     });
+  });
 
-    test('light canvas renders as the warm paper colour', () {
-      expect(
-        YsPalette.light.byCssName['canvas']!.css,
-        const YsColor(0xFFF7F6F1).css,
+  group('contrast', () {
+    double luminance(double r, double g, double b) {
+      double linear(double c) => c <= 0.03928
+          ? c / 12.92
+          : math.pow((c + 0.055) / 1.055, 2.4) as double;
+      return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    }
+
+    // WCAG 2 contrast of [fg] composited over the opaque [bg].
+    double contrast(YsColor fg, YsColor bg) {
+      final a = fg.alpha / 255;
+      double over(int f, int b) => (f * a + b * (1 - a)) / 255;
+      final top = luminance(
+        over(fg.red, bg.red),
+        over(fg.green, bg.green),
+        over(fg.blue, bg.blue),
       );
-    });
+      final base = luminance(bg.red / 255, bg.green / 255, bg.blue / 255);
+      return (math.max(top, base) + 0.05) / (math.min(top, base) + 0.05);
+    }
+
+    for (final (name, p) in [
+      ('dark', YsPalette.dark),
+      ('light', YsPalette.light),
+    ]) {
+      test('$name: text and ink read on every resting surface', () {
+        for (final surface in [p.canvas, p.paper]) {
+          expect(contrast(p.content, surface), greaterThanOrEqualTo(4.5));
+          expect(contrast(p.contentMuted, surface), greaterThanOrEqualTo(4.5));
+          expect(contrast(p.primaryInk, surface), greaterThanOrEqualTo(4.5));
+          expect(contrast(p.contentSubtle, surface), greaterThanOrEqualTo(3));
+          expect(contrast(p.success, surface), greaterThanOrEqualTo(3));
+          expect(contrast(p.error, surface), greaterThanOrEqualTo(3));
+          expect(contrast(p.line, surface), greaterThanOrEqualTo(1.3));
+        }
+      });
+
+      test('$name: text on the accent fill reads, resting and hovered', () {
+        expect(
+          contrast(p.primaryContent, p.primary),
+          greaterThanOrEqualTo(4.5),
+        );
+        expect(
+          contrast(p.primaryContent, p.primary2),
+          greaterThanOrEqualTo(4.5),
+        );
+      });
+
+      test('$name: raised surfaces and fills stand apart from the canvas', () {
+        expect(contrast(p.paper, p.canvas), greaterThanOrEqualTo(1.05));
+        expect(
+          contrast(p.neutralAmbient, p.canvas),
+          greaterThanOrEqualTo(1.08),
+        );
+        expect(
+          contrast(p.neutralFilm, p.canvas),
+          greaterThan(contrast(p.neutralAmbient, p.canvas)),
+        );
+      });
+    }
   });
 }

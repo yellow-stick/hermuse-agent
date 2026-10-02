@@ -115,7 +115,7 @@ class HermuseMarkdown extends StatelessComponent {
         backgroundColor: .variable('--line'),
       ),
       css('a').styles(
-        color: .variable('--primary-2'),
+        color: .variable('--primary-ink'),
         raw: {'text-decoration': 'underline', 'text-underline-offset': '2px'},
       ),
     ]),

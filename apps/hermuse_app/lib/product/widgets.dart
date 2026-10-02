@@ -34,6 +34,8 @@ final class ProductCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: highlighted ? palette.neutralFilmColor : palette.paperColor,
           borderRadius: BorderRadius.circular(YsRadius.bubble),
+          // At rest only: hovered, the lift's own shadow takes over.
+          boxShadow: lifted || highlighted ? const [] : palette.raisedShadows,
         ),
         padding: const EdgeInsets.all(20),
         child: Column(

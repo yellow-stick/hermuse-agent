@@ -202,12 +202,12 @@ class YsStepper extends StatelessComponent {
         css('.ys-step-glyph').styles(color: .variable('--content-subtle')),
         css('[data-state="current"] .ys-step-ring').styles(
           raw: {
-            'stroke': 'var(--primary)',
+            'stroke': 'var(--primary-ink)',
             'stroke-width': ysNum(YsLayout.stepRingStroke),
           },
         ),
         css('[data-state="current"] .ys-step-glyph')
-            .styles(color: .variable('--primary')),
+            .styles(color: .variable('--primary-ink')),
         css('.ys-step-draw').styles(
           raw: {
             'animation': ysAnimations(

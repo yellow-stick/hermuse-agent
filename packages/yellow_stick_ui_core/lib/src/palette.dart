@@ -22,13 +22,17 @@ final class YsPalette {
     required this.canvas,
     required this.paper,
     required this.paperClear,
+    required this.paperEdge,
+    required this.paperShadow,
     required this.neutralAmbient,
     required this.neutralFilm,
+    required this.neutralWash,
     required this.content,
     required this.contentMuted,
     required this.contentSubtle,
     required this.primary,
     required this.primary2,
+    required this.primaryInk,
     required this.primaryMuted,
     required this.primaryWash,
     required this.primaryContent,
@@ -40,6 +44,7 @@ final class YsPalette {
     required this.infoMuted,
     required this.error,
     required this.errorWash,
+    required this.errorContent,
     required this.logoSurface,
     required this.avatarSurface,
     required this.shadow,
@@ -54,11 +59,23 @@ final class YsPalette {
   /// Translucent chrome: pills, composer, floating buttons.
   final YsColor paperClear;
 
+  /// Hairline ring around raised [paper] and [paperClear] surfaces resting on
+  /// [canvas]. Transparent in dark, where tone alone lifts them.
+  final YsColor paperEdge;
+
+  /// Resting shadow under the same raised surfaces. Transparent in dark.
+  final YsColor paperShadow;
+
   /// Solid neutral fill: tab track, avatar badges, monogram logos.
   final YsColor neutralAmbient;
 
-  /// Selected segment inside a neutral track, hover wash.
+  /// Selected segment inside a neutral track, hover fill.
   final YsColor neutralFilm;
+
+  /// Faint hover wash where a full [neutralFilm] already marks the selected
+  /// item (segmented tabs, panel rows, browser chrome). Translucent, so it
+  /// reads on canvas, paper and a neutral track alike.
+  final YsColor neutralWash;
 
   /// Primary text and icons.
   final YsColor content;
@@ -69,11 +86,17 @@ final class YsPalette {
   /// Tertiary text: totals, placeholders.
   final YsColor contentSubtle;
 
-  /// Brand accent: user bubbles, primary actions, selection.
+  /// Brand accent as a fill: user bubbles, primary actions, selection.
   final YsColor primary;
 
-  /// Pressed/hovered accent.
+  /// Pressed/hovered accent fill.
   final YsColor primary2;
+
+  /// Brand accent drawn as text, icon or stroke on [canvas]/[paper]: links,
+  /// text actions, focus rings, selected outlines, active glyphs. Same as
+  /// [primary] in dark; a deep gold in light, where the yellow fill is too
+  /// pale to read.
+  final YsColor primaryInk;
 
   /// Accent wash behind selected rows.
   final YsColor primaryMuted;
@@ -109,6 +132,9 @@ final class YsPalette {
   /// Faint negative wash behind a failed row.
   final YsColor errorWash;
 
+  /// Text/icons drawn on [error] (destructive buttons).
+  final YsColor errorContent;
+
   /// Light disc behind airline marks.
   final YsColor logoSurface;
 
@@ -124,13 +150,17 @@ final class YsPalette {
     canvas: YsColor(0xFF181819),
     paper: YsColor(0xFF1F1F20),
     paperClear: YsColor(0xCC383838),
+    paperEdge: YsColor(0x00000000),
+    paperShadow: YsColor(0x00000000),
     neutralAmbient: YsColor(0xFF28292B),
     neutralFilm: YsColor(0xFF3A3B3E),
+    neutralWash: YsColor(0x663A3B3E),
     content: YsColor(0xFFFFFFFF),
     contentMuted: YsColor(0x87F2F7FF),
     contentSubtle: YsColor(0x61F1F6FF),
     primary: YsColor(0xFFF5C21B),
     primary2: YsColor(0xFFFFD44D),
+    primaryInk: YsColor(0xFFF5C21B),
     primaryMuted: YsColor(0x29F5C21B),
     primaryWash: YsColor(0x14F5C21B),
     primaryContent: YsColor(0xFF1A1505),
@@ -142,37 +172,45 @@ final class YsPalette {
     infoMuted: YsColor(0x293B82F6),
     error: YsColor(0xFFE5484D),
     errorWash: YsColor(0x14E5484D),
+    errorContent: YsColor(0xFFFFFFFF),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
     shadow: YsColor(0x73000000),
   );
 
-  /// Yellow Stick light theme: warm paper canvas, golden-hour yellow.
+  /// Yellow Stick light theme: soft neutral canvas, white raised surfaces
+  /// lifted by a hairline ring and a resting shadow, yellow fills with gold
+  /// ink. Text and ink stay readable (WCAG AA) on every surface.
   static const light = YsPalette(
-    canvas: YsColor(0xFFF7F6F1),
+    canvas: YsColor(0xFFF5F5F3),
     paper: YsColor(0xFFFFFFFF),
-    paperClear: YsColor(0xCCFFFFFF),
-    neutralAmbient: YsColor(0xFFE9E7E0),
-    neutralFilm: YsColor(0xFFDBD8CE),
-    content: YsColor(0xFF1C1808),
-    contentMuted: YsColor(0x8C1C1808),
-    contentSubtle: YsColor(0x611C1808),
+    paperClear: YsColor(0xF0FFFFFF),
+    paperEdge: YsColor(0x12141412),
+    paperShadow: YsColor(0x0F141412),
+    neutralAmbient: YsColor(0xFFE9E9E6),
+    neutralFilm: YsColor(0xFFDADAD6),
+    neutralWash: YsColor(0x0F141412),
+    content: YsColor(0xFF191917),
+    contentMuted: YsColor(0xA3191917),
+    contentSubtle: YsColor(0x7A191917),
     primary: YsColor(0xFFF5C21B),
-    primary2: YsColor(0xFFD9A90A),
-    primaryMuted: YsColor(0x2BD9A90A),
-    primaryWash: YsColor(0x14D9A90A),
+    primary2: YsColor(0xFFE5B000),
+    primaryInk: YsColor(0xFF8A6100),
+    primaryMuted: YsColor(0x38F5C21B),
+    primaryWash: YsColor(0x1FF5C21B),
     primaryContent: YsColor(0xFF1A1505),
-    line: YsColor(0x1F000000),
-    backdrop: YsColor(0x59000000),
-    success: YsColor(0xFF0B8A1E),
-    successMuted: YsColor(0x290B8A1E),
+    line: YsColor(0x24141412),
+    backdrop: YsColor(0x66141412),
+    success: YsColor(0xFF15803D),
+    successMuted: YsColor(0x2915803D),
     info: YsColor(0xFF2563EB),
     infoMuted: YsColor(0x292563EB),
-    error: YsColor(0xFFD92D20),
-    errorWash: YsColor(0x14D92D20),
+    error: YsColor(0xFFDC2626),
+    errorWash: YsColor(0x14DC2626),
+    errorContent: YsColor(0xFFFFFFFF),
     logoSurface: YsColor(0xFFFFFFFF),
-    avatarSurface: YsColor(0xFFE7DFD2),
-    shadow: YsColor(0x241A1505),
+    avatarSurface: YsColor(0xFFECE9E4),
+    shadow: YsColor(0x2E141412),
   );
 
   /// Every role by its CSS custom-property name (`--paper-clear`, ...).
@@ -180,13 +218,17 @@ final class YsPalette {
     'canvas': canvas,
     'paper': paper,
     'paper-clear': paperClear,
+    'paper-edge': paperEdge,
+    'paper-shadow': paperShadow,
     'neutral-ambient': neutralAmbient,
     'neutral-film': neutralFilm,
+    'neutral-wash': neutralWash,
     'content': content,
     'content-muted': contentMuted,
     'content-subtle': contentSubtle,
     'primary': primary,
     'primary-2': primary2,
+    'primary-ink': primaryInk,
     'primary-muted': primaryMuted,
     'primary-wash': primaryWash,
     'primary-content': primaryContent,
@@ -198,6 +240,7 @@ final class YsPalette {
     'info-muted': infoMuted,
     'error': error,
     'error-wash': errorWash,
+    'error-content': errorContent,
     'logo-surface': logoSurface,
     'avatar-surface': avatarSurface,
     'shadow': shadow,

@@ -248,9 +248,8 @@ final class _PanelRow extends StatelessWidget {
     return YsPressable(
       onPressed: onPressed,
       semanticLabel: semanticLabel,
-      builder: (context, state) => _row(
-        state.hovered ? palette.neutralFilmColor.withValues(alpha: 0.5) : clear,
-      ),
+      builder: (context, state) =>
+          _row(state.hovered ? palette.neutralWashColor : clear),
     );
   }
 }

@@ -21,7 +21,7 @@ final class YsFocusRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) => CustomPaint(
     foregroundPainter: visible
-        ? _RingPainter(YsTheme.of(context).primaryColor, radius)
+        ? _RingPainter(YsTheme.of(context).primaryInkColor, radius)
         : null,
     child: child,
   );

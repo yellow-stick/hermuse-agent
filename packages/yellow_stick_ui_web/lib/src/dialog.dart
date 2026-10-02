@@ -66,7 +66,11 @@ class YsDialog extends StatefulComponent {
         position: .relative(),
         color: .variable('--content'),
         backgroundColor: .variable('--paper'),
-        raw: {'overflow-y': 'auto', 'outline': 'none'},
+        raw: {
+          'overflow-y': 'auto',
+          'outline': 'none',
+          'box-shadow': 'var(--raised)',
+        },
       ),
       css('.ys-dialog-wide').styles(maxWidth: YsLayout.listWidth.px),
       css('.ys-dialog-head').styles(

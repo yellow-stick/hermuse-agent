@@ -69,7 +69,9 @@ final class _YsSelectState extends State<YsSelect> {
               color: palette.canvasColor,
               borderRadius: BorderRadius.circular(YsRadius.row),
               border: Border.all(
-                color: state.focused ? palette.primaryColor : palette.lineColor,
+                color: state.focused
+                    ? palette.primaryInkColor
+                    : palette.lineColor,
                 width: ysHairline,
               ),
             ),
@@ -175,7 +177,7 @@ final class _Menu extends StatelessWidget {
                                   YsIconWidget(
                                     YsIcon.check,
                                     size: 16,
-                                    color: palette.primaryColor,
+                                    color: palette.primaryInkColor,
                                   ),
                               ],
                             ),
@@ -319,7 +321,7 @@ final class _YsInputBoxState extends State<YsInputBox> {
         color: palette.canvasColor,
         borderRadius: BorderRadius.circular(YsRadius.row),
         border: Border.all(
-          color: focused ? palette.primaryColor : palette.lineColor,
+          color: focused ? palette.primaryInkColor : palette.lineColor,
           width: ysHairline,
         ),
         // Behind the opaque fill, so only the ring outside the box shows.
@@ -338,7 +340,7 @@ final class _YsInputBoxState extends State<YsInputBox> {
             TweenAnimationBuilder<Color?>(
               tween: ColorTween(
                 end: focused
-                    ? palette.primaryColor
+                    ? palette.primaryInkColor
                     : palette.contentSubtleColor,
               ),
               duration: ease,
@@ -362,7 +364,7 @@ final class _YsInputBoxState extends State<YsInputBox> {
                     style: widget.textStyle.flutter.copyWith(
                       color: palette.contentColor,
                     ),
-                    cursorColor: palette.primaryColor,
+                    cursorColor: palette.primaryInkColor,
                     backgroundCursorColor: palette.contentMutedColor,
                     selectionColor: palette.primaryMutedColor,
                     keyboardType: widget.obscure
@@ -482,7 +484,9 @@ final class _YsTextBoxState extends State<YsTextBox> {
           color: palette.canvasColor,
           borderRadius: BorderRadius.circular(YsRadius.row),
           border: Border.all(
-            color: _focus.hasFocus ? palette.primaryColor : palette.lineColor,
+            color: _focus.hasFocus
+                ? palette.primaryInkColor
+                : palette.lineColor,
             width: ysHairline,
           ),
         ),
@@ -497,7 +501,7 @@ final class _YsTextBoxState extends State<YsTextBox> {
                 style: YsType.input.flutter.copyWith(
                   color: palette.contentColor,
                 ),
-                cursorColor: palette.primaryColor,
+                cursorColor: palette.primaryInkColor,
                 backgroundCursorColor: palette.contentMutedColor,
                 selectionColor: palette.primaryMutedColor,
                 keyboardType: TextInputType.multiline,
@@ -625,6 +629,7 @@ final class _YsDialogState extends State<YsDialog> {
                       decoration: BoxDecoration(
                         color: palette.paperColor,
                         borderRadius: BorderRadius.circular(YsRadius.bubble),
+                        boxShadow: palette.raisedShadows,
                       ),
                       child: ConstrainedBox(
                         constraints: BoxConstraints(

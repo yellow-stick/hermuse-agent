@@ -204,7 +204,7 @@ final class _RowState extends State<_Row> with SingleTickerProviderStateMixin {
       _ => palette.contentColor,
     };
     final statusColor = switch (item.state) {
-      YsStepState.needsAction => palette.primaryColor,
+      YsStepState.needsAction => palette.primaryInkColor,
       YsStepState.failed => palette.errorColor,
       YsStepState.pending || YsStepState.skipped => palette.contentSubtleColor,
       _ => palette.contentMutedColor,

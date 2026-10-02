@@ -133,14 +133,14 @@ class YsPillButton extends StatelessComponent {
         cursor: .pointer,
         border: .none,
         position: .relative(),
-        raw: {'backdrop-filter': 'blur(12px)'},
+        raw: {'backdrop-filter': 'blur(12px)', 'box-shadow': 'var(--raised)'},
       ),
       css('&:hover').styles(backgroundColor: .variable('--neutral-film')),
       css('&:disabled').styles(cursor: .defaultCursor, opacity: 0.6),
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -210,7 +210,7 @@ class YsIconButton extends StatelessComponent {
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -262,7 +262,7 @@ class YsFilledButton extends StatelessComponent {
       css('&:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
-          color: .variable('--primary'),
+          color: .variable('--primary-ink'),
           width: OutlineWidth(2.px),
         ),
       ),
@@ -281,13 +281,19 @@ class YsFilledButton extends StatelessComponent {
         color: .variable('--content'),
         backgroundColor: .variable('--neutral-ambient'),
       ),
-      // Dark buttons: lighten on hover, darken while pressed.
-      css('&:hover:enabled').styles(raw: {'filter': 'brightness(1.15)'}),
-      css('&:active:enabled').styles(raw: {'filter': 'brightness(0.9)'}),
+      // Hover steps to the film fill (lighter in dark, darker in light);
+      // pressing darkens the resting fill. A brightness boost would clamp a
+      // light fill to white and vanish on paper.
+      css('&:hover:enabled')
+          .styles(backgroundColor: .variable('--neutral-film')),
+      css('&:active:enabled').styles(
+        backgroundColor: .variable('--neutral-ambient'),
+        raw: {'filter': 'brightness(0.9)'},
+      ),
     ]),
     css('.ys-btn-destructive', [
       css('&').styles(
-        color: .variable('--content'),
+        color: .variable('--error-content'),
         backgroundColor: .variable('--error'),
       ),
       css('&:hover:enabled').styles(raw: {'filter': 'brightness(1.1)'}),

@@ -138,12 +138,12 @@ class HermuseConnections extends StatefulComponent {
       fontSize: 14.px,
       lineHeight: 20.px,
       fontWeight: .w500,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
       raw: {'flex-shrink': '0', 'white-space': 'nowrap'},
     ),
     css('.hermuse-conn-action-muted')
         .styles(color: .variable('--content-muted')),
-    css('.hermuse-conn-action-error').styles(color: .variable('--primary-2')),
+    css('.hermuse-conn-action-error').styles(color: .variable('--primary-ink')),
     css('.hermuse-conn-body').styles(
       padding: .only(left: 48.px, right: 14.px, bottom: 12.px),
       display: .flex,
@@ -195,7 +195,7 @@ class HermuseConnections extends StatefulComponent {
     css('.hermuse-conn-link').styles(
       fontSize: 14.px,
       lineHeight: 20.px,
-      color: .variable('--primary-2'),
+      color: .variable('--primary-ink'),
       raw: {'word-break': 'break-all'},
     ),
     css('.hermuse-conn-pool').styles(

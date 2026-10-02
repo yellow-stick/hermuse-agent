@@ -770,7 +770,7 @@ List<StyleRule> get hermuseShellStyles => [
     css('.hermuse-avatar-btn:focus-visible').styles(
       outline: Outline(
         style: OutlineStyle.solid,
-        color: .variable('--primary'),
+        color: .variable('--primary-ink'),
         width: OutlineWidth(2.px),
       ),
     ),

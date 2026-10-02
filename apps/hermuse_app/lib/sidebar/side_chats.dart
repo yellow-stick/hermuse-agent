@@ -819,7 +819,7 @@ final class _RenameRowState extends State<_RenameRow> {
       decoration: BoxDecoration(
         color: palette.paperClearColor,
         borderRadius: BorderRadius.circular(YsRadius.navRow),
-        border: Border.all(color: palette.primaryColor, width: ysHairline),
+        border: Border.all(color: palette.primaryInkColor, width: ysHairline),
       ),
       child: Row(
         children: [
@@ -1123,6 +1123,7 @@ final class _ErrorNotice extends StatelessWidget {
           decoration: BoxDecoration(
             color: palette.paperColor,
             borderRadius: BorderRadius.circular(YsRadius.row),
+            boxShadow: palette.raisedShadows,
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
