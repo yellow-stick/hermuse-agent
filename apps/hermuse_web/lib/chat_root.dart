@@ -76,6 +76,10 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
   var _draft = '';
   var _customAnswer = '';
   var _overlay = _Overlay.none;
+
+  /// Where a cancelled "Add a Hermes" goes back to: the instances it was
+  /// opened from, else the chat.
+  var _addReturn = _Overlay.none;
   String? _onboardingInstanceId;
   String? _copiedId;
   Timer? _copiedTimer;
@@ -176,6 +180,12 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
 
   Future<void> _openSetup(ThreadRef setup) =>
       context.readProvider(activeThreadProvider.notifier).openSetup(setup);
+
+  /// "Add a Hermes"; cancelling it goes back to [from].
+  void _addInstance([_Overlay from = _Overlay.none]) => setState(() {
+    _addReturn = from;
+    _overlay = _Overlay.addInstance;
+  });
 
   /// After adding an instance: its component checklist, what Hermuse needs
   /// on it; Continue then opens its chat, or its onboarding until a model
@@ -282,14 +292,14 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       return _loadingShell(
         child: HermuseAddInstance(
           onDone: (instanceId) => unawaited(_afterAdd(instanceId)),
-          onCancel: () => setState(() => _overlay = _Overlay.none),
+          onCancel: () => setState(() => _overlay = _addReturn),
         ),
       );
     }
     if (_overlay == _Overlay.instances && instances.isNotEmpty) {
       return _loadingShell(
         child: HermuseInstances(
-          onAdd: () => setState(() => _overlay = _Overlay.addInstance),
+          onAdd: () => _addInstance(_Overlay.instances),
           onBack: () => setState(() => _overlay = _Overlay.none),
           onOpen: (id) {
             setState(() => _overlay = _Overlay.none);
@@ -345,8 +355,9 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       return _loadingShell(
         child: HermuseConnections(
           instance: instance,
+          // Opened from its instance row: back to the instances.
           onBack: () => setState(() {
-            _overlay = _Overlay.none;
+            _overlay = _Overlay.instances;
             _onboardingInstanceId = null;
           }),
         ),
@@ -373,11 +384,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       );
     }
     if (instances.isEmpty) {
-      return _loadingShell(
-        child: HermuseWelcome(
-          onAdd: () => setState(() => _overlay = _Overlay.addInstance),
-        ),
-      );
+      return _loadingShell(child: HermuseWelcome(onAdd: _addInstance));
     }
     final active = activeValue.value;
     final thread =
@@ -387,11 +394,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
         .where((candidate) => candidate.id == thread.instanceId)
         .firstOrNull;
     if (instance == null) {
-      return _loadingShell(
-        child: HermuseWelcome(
-          onAdd: () => setState(() => _overlay = _Overlay.addInstance),
-        ),
-      );
+      return _loadingShell(child: HermuseWelcome(onAdd: _addInstance));
     }
     return HermuseWatch(
       provider: chatSessionProvider(thread),
@@ -513,9 +516,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             instances: instances,
             activeInstanceId: instance.id,
             onSelectInstance: (id) => unawaited(_openInstance(id)),
-            onAddInstance: hermuseDemo
-                ? null
-                : () => setState(() => _overlay = _Overlay.addInstance),
+            onAddInstance: hermuseDemo ? null : _addInstance,
             onOpenInstances: hermuseDemo
                 ? null
                 : () => setState(() => _overlay = _Overlay.instances),

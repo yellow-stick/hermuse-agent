@@ -294,7 +294,9 @@ final class _Checklist {
               when setup.parts[part] == SetupPartReadiness.found =>
             item(
               YsStepState.checking,
-              'Found${version == null ? '' : ' $version'} — starting it…',
+              version == null
+                  ? 'Already installed — starting it…'
+                  : 'Already installed · $version — starting it…',
             ),
           SetupActivity.startingHermes => item(
             YsStepState.working,
@@ -363,7 +365,7 @@ final class _Checklist {
         return item(
           YsStepState.needsAction,
           switch (found?.semver) {
-            final semver? => 'Found $semver — not supported',
+            final semver? => 'Already installed · $semver, not supported',
             null => 'Left as it is',
           },
           notes: [
@@ -540,7 +542,7 @@ final class _Checklist {
     }
     if (outcomes.every((o) => o != null)) {
       return outcomes.every((o) => o == LinuxStepOutcome.skipped)
-          ? item(YsStepState.found, 'Found — nothing to change')
+          ? item(YsStepState.found, 'Already installed · nothing to change')
           : item(YsStepState.done, _prepared(part));
     }
     // One step runs at a time: the other rows wait for their next one.
@@ -558,20 +560,22 @@ final class _Checklist {
     );
   }
 
+  /// [part] found in place: "Already installed", as the remote checklist.
   String _found(SetupPart part) => switch (part) {
     SetupPart.hermes => switch (setup.hermesVersion) {
-      final version? => 'Found $version — reused',
-      null => 'Found — reused',
+      final version? => 'Already installed · $version',
+      null => 'Already installed',
     },
-    SetupPart.bridge => 'Bundled — verified',
-    SetupPart.computer => 'Found running — reused',
-    _ => 'Found — reused',
+    SetupPart.bridge => 'Already installed · bundled with the app',
+    SetupPart.computer => 'Already installed · running',
+    _ => 'Already installed',
   };
 
+  /// [part] prepared in this session: "Installed now" when installed.
   String _prepared(SetupPart part) => switch (part) {
     SetupPart.systemPackages || SetupPart.plugin => 'Installed now',
     SetupPart.hermes => switch (setup.hermesVersion) {
-      final version? => 'Installed now — $version',
+      final version? => 'Installed now · $version',
       null => 'Installed now',
     },
     SetupPart.keyring || SetupPart.docker => 'Set up now',

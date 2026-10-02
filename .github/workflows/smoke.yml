@@ -1,0 +1,87 @@
+# Manual smoke test run of a branch: its commit is checked, built and packaged
+# unsigned (build.yml), then its installed packages run the smoke legs
+# (smoke-legs.yml), every leg or those `legs` selects. It never signs nor
+# publishes anything; a release runs every leg from release.yml.
+#
+#   select -> build (build.yml, unsigned) -> smoke (smoke-legs.yml)
+#
+# Trigger: `gh workflow run smoke.yml --ref <branch> [-f legs=<regex>]`, e.g.
+# `-f legs='docker-rootless|adopt'`; the leg names come from
+# packaging/smoke/proof_summary.py. A filter that selects no leg fails before
+# anything is built, and the macOS and Windows packages are only built when a
+# selected leg needs them. A newer run of the same branch cancels the older one.
+#
+# Actions are pinned by commit (tag in the trailing comment).
+name: Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: Regex over leg names (packaging/smoke/proof_summary.py), e.g. docker-rootless|adopt; empty = every leg
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Selected legs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      macos: ${{ steps.select.outputs.macos }}
+      windows: ${{ steps.select.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: packaging/smoke
+
+      - name: The legs `legs` selects, the platforms they need
+        id: select
+        env:
+          FILTER: ${{ inputs.legs }}
+        run: |
+          set -euo pipefail
+          legs() { python3 packaging/smoke/proof_summary.py matrix "$1" --set full --filter "$FILTER"; }
+          guests=$(legs guests)
+          containers=$(legs containers)
+          desktop=$(legs desktop)
+          printf '%s\n' "$guests" "$containers" "$desktop" | jq -r '.include[].name' | tee "$RUNNER_TEMP/selected"
+          if ! [ -s "$RUNNER_TEMP/selected" ]; then
+            echo "::error::'$FILTER' selects no leg (the leg names come from packaging/smoke/proof_summary.py)"
+            exit 1
+          fi
+          {
+            echo "macos=$(jq '[.include[] | select(.os == "macos")] | length > 0' <<<"$desktop")"
+            echo "windows=$(jq '[.include[] | select(.os == "windows")] | length > 0' <<<"$desktop")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: select
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+    with:
+      package_macos: ${{ needs.select.outputs.macos == 'true' }}
+      package_windows: ${{ needs.select.outputs.windows == 'true' }}
+
+  smoke:
+    name: Smoke
+    needs: build
+    uses: ./.github/workflows/smoke-legs.yml
+    permissions:
+      contents: read
+    with:
+      set: full
+      filter: ${{ inputs.legs }}
+      commit: ${{ needs.build.outputs.commit }}
+      run_label: ${{ needs.build.outputs.run_label }}
+      fixture_deb_file: ${{ needs.build.outputs.fixture_deb_file }}

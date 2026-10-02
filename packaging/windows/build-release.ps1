@@ -197,6 +197,7 @@ try {
   Push-Location $app
   try {
     Invoke-Native flutter @('build', 'windows', '--release', '--no-pub',
+      "--dart-define=HERMUSE_APP_VERSION=$($versions.Pubspec)",
       "--dart-define=HERMUSE_CLIPROXY_SHA256=$cliproxySha",
       "--dart-define=HERMUSE_CLIPROXY_PLATFORM=$HermuseCliproxyPlatform")
   } finally {

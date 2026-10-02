@@ -1,7 +1,8 @@
 # Netlify project `hermuse-agent`, served at https://hermuse.app: the static
-# Jaspr build of apps/hermuse_web. GitHub Actions (.github/workflows/web.yml)
-# builds and deploys it with the Netlify CLI; Netlify's own Git builds are
-# stopped, so nothing here runs a build.
+# Jaspr build of apps/hermuse_web. GitHub Actions builds and deploys it with the
+# Netlify CLI (.github/workflows/web-deploy.yml for production, web-pr.yml for
+# pull request previews); Netlify's own Git builds are stopped, so nothing here
+# runs a build.
 #
 # Manual deploy from the repository root (after `netlify link --id <site id>`):
 #   (cd apps/hermuse_web && jaspr build)

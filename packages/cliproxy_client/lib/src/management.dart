@@ -283,6 +283,56 @@ final class CliproxyManagement {
     ];
   }
 
+  /// Raw JSON text of credential file [name]
+  /// (`GET /v0/management/auth-files/download?name=`, read from `auth-dir`).
+  Future<String> downloadAuthFile(String name) async {
+    final http.Response response;
+    try {
+      response = await _client.get(
+        _resolve('/v0/management/auth-files/download', {'name': name}),
+        headers: _headers,
+      );
+    } on http.ClientException catch (e) {
+      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
+    }
+    final status = response.statusCode;
+    // Errors are `{error}` objects: [_decode] throws the mapped exception.
+    if (status < 200 || status >= 300) _decode(response);
+    // JSON is UTF-8 whatever the headers say.
+    return utf8.decode(response.bodyBytes);
+  }
+
+  /// Saves [content] (credential JSON) as file [name] and registers it at once
+  /// (`POST /v0/management/auth-files?name=` with the raw JSON body).
+  Future<void> uploadAuthFile(String name, String content) async {
+    final http.Response response;
+    try {
+      response = await _client.post(
+        _resolve('/v0/management/auth-files', {'name': name}),
+        headers: {..._headers, 'Content-Type': 'application/json'},
+        body: content,
+      );
+    } on http.ClientException catch (e) {
+      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
+    }
+    _decode(response);
+  }
+
+  /// Removes credential file [name] (`DELETE /v0/management/auth-files?name=`);
+  /// a missing file is a [CliproxyHttpError] 404.
+  Future<void> deleteAuthFile(String name) async {
+    final http.Response response;
+    try {
+      response = await _client.delete(
+        _resolve('/v0/management/auth-files', {'name': name}),
+        headers: _headers,
+      );
+    } on http.ClientException catch (e) {
+      throw CliproxyUnreachable('${baseUrl.origin}: ${e.message}');
+    }
+    _decode(response);
+  }
+
   /// Lists models the sidecar can serve right now (`GET /v1/models`, the
   /// OpenAI-compatible catalogue from `unifiedModelsHandler` →
   /// `OpenAIModels`: `{object: "list", data: [{id, object, created?,
