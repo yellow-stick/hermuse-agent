@@ -50,3 +50,30 @@ final class YsIconWidget extends StatelessWidget {
     );
   }
 }
+
+/// Renders a core [YsProviderLogo] at [size]: a monochrome mark in [color]
+/// (default: the content color), a colored one in its brand colors.
+final class YsProviderMark extends StatelessWidget {
+  const YsProviderMark(
+    this.logo, {
+    super.key,
+    this.size = 24,
+    this.color,
+    this.semanticLabel,
+  });
+
+  final YsProviderLogo logo;
+  final double size;
+  final Color? color;
+  final String? semanticLabel;
+
+  @override
+  Widget build(BuildContext context) => SvgPicture.string(
+    logo.svg,
+    width: size,
+    height: size,
+    theme: SvgTheme(currentColor: color ?? YsTheme.of(context).contentColor),
+    excludeFromSemantics: semanticLabel == null,
+    semanticsLabel: semanticLabel,
+  );
+}

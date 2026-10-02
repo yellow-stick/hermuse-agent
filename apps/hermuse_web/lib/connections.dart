@@ -542,7 +542,15 @@ class _ConnectionCardState extends State<_ConnectionCard> {
         label: '$title: $action',
         classes: 'hermuse-conn-head',
         builder: (context, press) => .fragment([
-          span(classes: 'hermuse-conn-logo', [.text(_letter(card.name))]),
+          span(classes: 'hermuse-conn-logo', [
+            if (YsProviderLogo.forKey(card.logoKey) case final logo?)
+              YsProviderMarkView(
+                logo,
+                size: signIn == null ? 16 : YsLayout.activityTileSize * 0.55,
+              )
+            else
+              .text(_letter(card.name)),
+          ]),
           span(classes: 'hermuse-conn-title', [
             span(classes: 'hermuse-conn-name', [.text(title)]),
             if (subtitle.isNotEmpty && subtitle != title)

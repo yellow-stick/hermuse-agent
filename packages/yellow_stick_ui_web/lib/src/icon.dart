@@ -40,3 +40,19 @@ class YsIconView extends StatelessComponent {
     ]),
   ];
 }
+
+/// A [YsProviderLogo] as inline SVG: a monochrome mark inherits the text
+/// colour (`currentColor`), a colored one keeps its brand colors.
+class YsProviderMarkView extends StatelessComponent {
+  const YsProviderMarkView(this.logo, {this.size = 18, super.key});
+
+  final YsProviderLogo logo;
+  final double size;
+
+  @override
+  Component build(BuildContext context) => span(
+    classes: 'ys-icon',
+    styles: Styles(width: size.px, height: size.px),
+    [RawText(logo.svg)],
+  );
+}
