@@ -252,8 +252,9 @@ the thread on screen are remembered per instance (`hermuse_state`).
 `apps/hermuse_web` is an installable Progressive Web App:
 
 - `web/manifest.webmanifest` — "Hermuse Agent", standalone, `#181819` theme,
-  icons in `web/icons/` (192/512, maskable 512, Apple touch 180, SVG) drawn
-  from the Yellow Stick logo with the stick in yellow.
+  icons in `web/icons/` (192/512, maskable 512, Apple touch 180, SVG): the
+  Hermuse mark, a yellow Bricolage Grotesque "h" on an ink `#15130A` tile
+  (source: `docs/assets/hermuse-logo/` in yellow-stick/hermuse-website).
 - `web/sw.js` — network-first service worker: online users always get the
   latest deploy, and everything fetched is cached so the app opens offline after
   one visit (the shell is precached at install). Bump `CACHE` in `sw.js` to drop
