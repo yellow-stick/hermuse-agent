@@ -60,7 +60,10 @@ String _$remoteSetupTimingHash() => r'b6829ad55a8f8aadce2294a51b1e9747684f5278';
 /// network: each part Hermuse needs there, found in place, or installed
 /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
 /// server). What only the user can do (a command on the server, a consent,
-/// a model to connect) says so, with the command to copy.
+/// a model to connect) says so, with the command to copy: the one that works
+/// on that server ([DashboardHost]). A dashboard that must restart to serve
+/// the installed plugin is restarted through the running plugin when it can
+/// be, and followed until it answers again.
 ///
 /// It looks as soon as it is read, after each install and on [checkAgain];
 /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -75,7 +78,10 @@ final remoteSetupProvider = RemoteSetupFamily._();
 /// network: each part Hermuse needs there, found in place, or installed
 /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
 /// server). What only the user can do (a command on the server, a consent,
-/// a model to connect) says so, with the command to copy.
+/// a model to connect) says so, with the command to copy: the one that works
+/// on that server ([DashboardHost]). A dashboard that must restart to serve
+/// the installed plugin is restarted through the running plugin when it can
+/// be, and followed until it answers again.
 ///
 /// It looks as soon as it is read, after each install and on [checkAgain];
 /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -88,7 +94,10 @@ final class RemoteSetupProvider
   /// network: each part Hermuse needs there, found in place, or installed
   /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
   /// server). What only the user can do (a command on the server, a consent,
-  /// a model to connect) says so, with the command to copy.
+  /// a model to connect) says so, with the command to copy: the one that works
+  /// on that server ([DashboardHost]). A dashboard that must restart to serve
+  /// the installed plugin is restarted through the running plugin when it can
+  /// be, and followed until it answers again.
   ///
   /// It looks as soon as it is read, after each install and on [checkAgain];
   /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -139,13 +148,16 @@ final class RemoteSetupProvider
   }
 }
 
-String _$remoteSetupHash() => r'538ec65bdd400b5451a74ae20f9227794b43fcdf';
+String _$remoteSetupHash() => r'8b5fd399940dc948234b051552dde26efddc0249';
 
 /// The component checklist of the Hermes [instanceId] reaches over the
 /// network: each part Hermuse needs there, found in place, or installed
 /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
 /// server). What only the user can do (a command on the server, a consent,
-/// a model to connect) says so, with the command to copy.
+/// a model to connect) says so, with the command to copy: the one that works
+/// on that server ([DashboardHost]). A dashboard that must restart to serve
+/// the installed plugin is restarted through the running plugin when it can
+/// be, and followed until it answers again.
 ///
 /// It looks as soon as it is read, after each install and on [checkAgain];
 /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -175,7 +187,10 @@ final class RemoteSetupFamily extends $Family
   /// network: each part Hermuse needs there, found in place, or installed
   /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
   /// server). What only the user can do (a command on the server, a consent,
-  /// a model to connect) says so, with the command to copy.
+  /// a model to connect) says so, with the command to copy: the one that works
+  /// on that server ([DashboardHost]). A dashboard that must restart to serve
+  /// the installed plugin is restarted through the running plugin when it can
+  /// be, and followed until it answers again.
   ///
   /// It looks as soon as it is read, after each install and on [checkAgain];
   /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
@@ -194,7 +209,10 @@ final class RemoteSetupFamily extends $Family
 /// network: each part Hermuse needs there, found in place, or installed
 /// through the Hermes dashboard and the Hermuse plugin (never a shell on the
 /// server). What only the user can do (a command on the server, a consent,
-/// a model to connect) says so, with the command to copy.
+/// a model to connect) says so, with the command to copy: the one that works
+/// on that server ([DashboardHost]). A dashboard that must restart to serve
+/// the installed plugin is restarted through the running plugin when it can
+/// be, and followed until it answers again.
 ///
 /// It looks as soon as it is read, after each install and on [checkAgain];
 /// a computer being prepared is looked at every [RemoteSetupTiming.poll]
