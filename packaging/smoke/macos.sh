@@ -44,7 +44,7 @@ LOCAL_SECRETS=hermes/hermuse-local/
 # UI copy the automation reads and clicks (OCR). It MUST equal the app's
 # English labels: a missing core label fails the flow, a missing secondary one
 # turns that GUI proof into a manual gate.
-UI_CONNECT_TITLE='Connect to a Hermes'
+UI_CONNECT_TITLE='Connect to a machine'
 UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_KEYSTORE_ERROR='Secure storage unavailable'
 UI_RETRY_STAGE='Retry this stage'
