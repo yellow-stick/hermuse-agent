@@ -461,6 +461,29 @@ the update runs. The web app cannot offer these sign-ins (its browser cannot
 receive the sign-in callback). Using a consumer subscription outside its
 official clients may breach the vendor's terms: personal use only.
 
+## Use your own endpoint
+
+Any server that speaks the OpenAI chat API (LiteLLM, vLLM, Ollama, LM Studio,
+a company gateway, …) or the Anthropic messages API can serve your Hermes. On
+**Model accounts**, under **Your own endpoint**, choose **Add a connection**:
+
+1. Pick the **API type**: **OpenAI-compatible**, **Anthropic-compatible**, or
+   **Auto-detect** to let Hermes find out. Enter a name, the base URL (for
+   example `https://llm.example.com/v1`) and the API key, then **Check**.
+   Hermes reaches the endpoint from the server, lists its models and tries
+   the route the API type uses; a refusal is shown in Hermes' words.
+2. Pick the default model among the models found (or type its id when the
+   endpoint lists none), then **Add**.
+
+The connection then shows under **Connected** with its API type, its default
+model and how many models it serves. **Manage** lists them and picks the two
+offered in the chat's model menu (a large and a small one); **Use as default**
+makes the large one Hermes' default model for new chats and the small one the
+model of its side tasks (titles, approvals, summaries). When Hermes warns
+about a model (an expensive one, or a tier that trains on your data) it says
+why and asks before switching. The key is stored by Hermes on the server, not
+in the app.
+
 ## Troubleshooting
 
 - **`400 Invalid Host header`**: set `dashboard.public_url` (step 2).

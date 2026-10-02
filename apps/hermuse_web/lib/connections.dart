@@ -17,14 +17,14 @@ import 'screens.dart';
 /// `ConnectionsScreen` parity).
 ///
 /// Subscription sign-ins come first ([_featuredSignIns]), then the
-/// connected providers; "Show other providers" unfolds the available ones
-/// and the custom endpoint form. A connected provider never folds away and
-/// a search shows every match.
+/// connected providers and "Your own endpoint" (the custom endpoint form);
+/// "Show other providers" unfolds the available ones. A connected provider
+/// never folds away and a search shows every match.
 ///
 /// Cards come from [connectionCardsProvider]: device-code logins show the
 /// user code + verification URL with polling state and cancel; API keys use
-/// a masked field with server validate errors; custom endpoints get an
-/// add/delete form; external cards explain the terminal step. Bridge cards
+/// a masked field with server validate errors; custom endpoints get a
+/// two-step check/add form; external cards explain the terminal step. Bridge cards
 /// never appear on web ([bridgeHostProvider] is null, no sidecar).
 class HermuseConnections extends StatefulComponent {
   const HermuseConnections({
@@ -229,14 +229,43 @@ class HermuseConnections extends StatefulComponent {
       raw: {'flex-shrink': '0'},
     ),
     css('.hermuse-conn-slot-pick').styles(flex: .grow(1)),
+    // The add-a-connection form (desktop `_CustomEndpointCard` parity).
+    css('.hermuse-conn-card').styles(
+      padding: .all(16.px),
+      radius: .circular(YsRadius.bubble.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(12.px),
+      backgroundColor: .variable('--neutral-ambient'),
+    ),
+    css('.hermuse-conn-card-title')
+        .styles(fontSize: 15.px, lineHeight: 20.px, fontWeight: .w600),
+    css('.hermuse-conn-note').styles(
+      margin: .zero,
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
+      color: .variable('--content-muted'),
+      raw: {'word-break': 'break-word'},
+    ),
+    // The default-model confirmation covers the viewport, not the card, and
+    // keeps the line breaks of Hermes' warning.
+    css('.hermuse-conn-models .ys-dialog-root').styles(
+      position: .fixed(top: 0.px, left: 0.px),
+    ),
+    css('.hermuse-conn-confirm').styles(
+      margin: .zero,
+      fontSize: YsType.body.size.px,
+      lineHeight: YsType.body.lineHeight.px,
+      color: .variable('--content-muted'),
+      raw: {'white-space': 'pre-line', 'word-break': 'break-word'},
+    ),
   ];
 }
 
 class _HermuseConnectionsState extends State<HermuseConnections> {
   var _query = '';
 
-  /// "Show other providers" unfolded the available providers and the custom
-  /// endpoint form.
+  /// "Show other providers" unfolded the available providers.
   var _others = false;
 
   @override
@@ -342,6 +371,11 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
             p(classes: 'hermuse-conn-group', [.text('Connected')]),
             list([for (final card in connected) row(card)]),
           ],
+          p(classes: 'hermuse-conn-group', [.text('Your own endpoint')]),
+          p(classes: 'hermuse-conn-pool', [
+            .text('OpenAI-compatible or Anthropic-compatible API'),
+          ]),
+          _CustomEndpointCard(instanceId: component.instance.id),
           if (foldable)
             div(classes: 'hermuse-conn-more', [
               YsButton.neutral(
@@ -358,8 +392,6 @@ class _HermuseConnectionsState extends State<HermuseConnections> {
             ],
             if (featured.isEmpty && others.isEmpty)
               p(classes: 'hermuse-conn-sub', [.text('No connection matches.')]),
-            p(classes: 'hermuse-conn-group', [.text('Custom endpoint')]),
-            _CustomEndpointCard(instanceId: component.instance.id),
           ],
         ],
       ]),
@@ -531,6 +563,7 @@ class _ConnectionCardState extends State<_ConnectionCard> {
           if (card.flow == ConnectionFlow.apiKey && !connected)
             _keyBody(context, card),
           if (card.flow == ConnectionFlow.external) _externalBody(card),
+          if (card.flow == ConnectionFlow.customEndpoint) _endpointBody(card),
           if (card.poolEntries.isNotEmpty)
             p(classes: 'hermuse-conn-pool', [
               .text(
@@ -671,6 +704,25 @@ class _ConnectionCardState extends State<_ConnectionCard> {
     if (mounted) setState(() => _busy = false);
   }
 
+  /// A custom endpoint's API type, base URL and the models it lists; the
+  /// slots below pick which ≤2 the chat offers (desktop parity).
+  Component _endpointBody(ConnectionCard card) =>
+      div(classes: 'hermuse-conn-models', [
+        p(classes: 'hermuse-conn-note', [
+          .text(customEndpointApiLabel(card.apiMode)),
+        ]),
+        if (card.baseUrl.isNotEmpty)
+          p(classes: 'hermuse-conn-pool', [.text(card.baseUrl)]),
+        if (card.models.isNotEmpty)
+          p(classes: 'hermuse-conn-pool', [
+            .text(
+              '${card.models.length} '
+              '${card.models.length == 1 ? 'model' : 'models'}: '
+              '${card.models.join(' · ')}',
+            ),
+          ]),
+      ]);
+
   Component _externalBody(ConnectionCard card) =>
       p(classes: 'hermuse-conn-sub', [
         .text(
@@ -712,6 +764,10 @@ class _ModelSlots extends StatefulComponent {
 class _ModelSlotsState extends State<_ModelSlots> {
   var _busy = false;
   String? _error;
+
+  /// Hermes' warning while it waits for the user to confirm a guarded
+  /// (expensive or data-training) default model.
+  String? _confirm;
 
   @override
   Component build(BuildContext context) => HermuseWatch(
@@ -768,6 +824,25 @@ class _ModelSlotsState extends State<_ModelSlots> {
       ]),
       if (_error case final error?)
         p(classes: 'hermuse-card-error', [.text(error)]),
+      if (_confirm case final message?)
+        YsDialog(
+          title: 'Use this model?',
+          onClose: () => setState(() => _confirm = null),
+          actions: [
+            YsButton.neutral(
+              label: 'Cancel',
+              onPressed: () => setState(() => _confirm = null),
+            ),
+            YsButton.primary(
+              label: 'Use it anyway',
+              onPressed: () {
+                setState(() => _confirm = null);
+                unawaited(_makeDefault(context, confirmed: true));
+              },
+            ),
+          ],
+          child: p(classes: 'hermuse-conn-confirm', [.text(message)]),
+        ),
     ]);
   }
 
@@ -791,7 +866,10 @@ class _ModelSlotsState extends State<_ModelSlots> {
     }
   }
 
-  Future<void> _makeDefault(BuildContext context) async {
+  Future<void> _makeDefault(
+    BuildContext context, {
+    bool confirmed = false,
+  }) async {
     setState(() {
       _busy = true;
       _error = null;
@@ -804,7 +882,9 @@ class _ModelSlotsState extends State<_ModelSlots> {
               component.card.id,
             ).notifier,
           )
-          .makeDefault();
+          .makeDefault(confirmExpensiveModel: confirmed);
+    } on ExpensiveModelConfirmation catch (e) {
+      if (mounted) setState(() => _confirm = e.message);
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -812,6 +892,10 @@ class _ModelSlotsState extends State<_ModelSlots> {
   }
 }
 
+/// "Your own endpoint": adds an OpenAI- or Anthropic-compatible API in two
+/// steps (desktop `_CustomEndpointCard` parity). Check probes it with the
+/// chosen API type and lists its models; Add saves it with the default model
+/// picked from that list (typed when the endpoint lists none).
 class _CustomEndpointCard extends StatefulComponent {
   const _CustomEndpointCard({required this.instanceId});
 
@@ -823,12 +907,90 @@ class _CustomEndpointCard extends StatefulComponent {
 
 class _CustomEndpointCardState extends State<_CustomEndpointCard> {
   var _open = false;
+  var _apiMode = customEndpointApiModes.first.$1;
   var _name = '';
   var _baseUrl = '';
   var _apiKey = '';
   var _model = '';
+
+  /// What Check found; null while on the first step.
+  CustomEndpointProbe? _probe;
+
+  /// The default model picked from [_probe]'s list.
+  var _picked = '';
   var _busy = false;
   String? _error;
+
+  ConnectionCards _cards(BuildContext context) => context.container.read(
+    connectionCardsProvider(component.instanceId).notifier,
+  );
+
+  bool get _canCheck =>
+      !_busy && _name.trim().isNotEmpty && _baseUrl.trim().isNotEmpty;
+
+  Future<void> _check(BuildContext context) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final probe = await _cards(context).checkCustomEndpoint(
+        name: _name.trim(),
+        baseUrl: _baseUrl.trim(),
+        apiKey: _apiKey,
+        apiMode: _apiMode,
+      );
+      if (mounted) {
+        setState(() {
+          _probe = probe;
+          _picked = probe.models.isEmpty
+              ? ''
+              : pickLargeAndSmall(probe.models).large ?? probe.models.first;
+          _model = '';
+        });
+      }
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _add(
+    BuildContext context,
+    CustomEndpointProbe probe,
+    String model,
+  ) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _cards(context).addCustomEndpoint(
+        name: _name.trim(),
+        baseUrl: probe.resolvedBaseUrl,
+        apiKey: _apiKey,
+        apiMode: _apiMode,
+        model: model,
+        models: probe.models,
+      );
+      if (mounted) _close();
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  void _close() => setState(() {
+    _open = false;
+    _apiMode = customEndpointApiModes.first.$1;
+    _probe = null;
+    _picked = '';
+    _error = null;
+    _name = '';
+    _baseUrl = '';
+    _apiKey = '';
+    _model = '';
+  });
 
   @override
   Component build(BuildContext context) {
@@ -836,108 +998,141 @@ class _CustomEndpointCardState extends State<_CustomEndpointCard> {
       return div(classes: 'hermuse-conn-row', [
         div(classes: 'hermuse-conn-grow', []),
         YsButton.neutral(
-          label: 'Add custom endpoint',
+          label: 'Add a connection',
           onPressed: () => setState(() => _open = true),
         ),
       ]);
     }
+    final probe = _probe;
+    final model = probe == null
+        ? ''
+        : probe.models.isEmpty
+        ? _model.trim()
+        : _picked;
     return div(classes: 'hermuse-conn-card', [
-      div(classes: 'hermuse-conn-head', [
-        div(classes: 'hermuse-conn-title', [
-          span(classes: 'hermuse-conn-name', [.text('Custom endpoint')]),
-          span(classes: 'hermuse-conn-detail', [
-            .text('Any OpenAI-compatible API.'),
-          ]),
+      div(classes: 'hermuse-conn-title', [
+        span(classes: 'hermuse-conn-card-title', [.text('Add a connection')]),
+        p(classes: 'hermuse-conn-note', [
+          .text(
+            probe == null
+                ? 'Step 1 of 2 · Check the endpoint'
+                : 'Step 2 of 2 · Choose the default model',
+          ),
         ]),
       ]),
-      YsField(
-        label: 'Name',
-        child: YsInputBox(
-          value: _name,
-          onChanged: (v) => setState(() => _name = v),
-          placeholder: 'Local model',
-          name: 'endpoint-name',
-          label: 'Endpoint name',
+      if (probe == null) ...[
+        YsField(
+          label: 'API type',
+          child: YsSelect(
+            value: _apiMode,
+            options: customEndpointApiModes,
+            onChanged: (v) => setState(() => _apiMode = v),
+            label: 'Endpoint API type',
+          ),
         ),
-      ),
-      YsField(
-        label: 'Base URL',
-        child: YsInputBox(
-          value: _baseUrl,
-          onChanged: (v) => setState(() => _baseUrl = v),
-          placeholder: 'http://localhost:1234/v1',
-          name: 'endpoint-url',
-          label: 'Endpoint base URL',
-          autocomplete: 'off',
+        YsField(
+          label: 'Name',
+          child: YsInputBox(
+            value: _name,
+            onChanged: (v) => setState(() => _name = v),
+            placeholder: 'My models',
+            name: 'endpoint-name',
+            label: 'Endpoint name',
+          ),
         ),
-      ),
-      YsField(
-        label: 'API key (optional)',
-        child: YsInputBox(
-          value: _apiKey,
-          onChanged: (v) => setState(() => _apiKey = v),
-          placeholder: 'sk-…',
-          name: 'endpoint-key',
-          label: 'Endpoint API key',
-          obscure: true,
-          autocomplete: 'off',
+        YsField(
+          label: 'Base URL',
+          child: YsInputBox(
+            value: _baseUrl,
+            onChanged: (v) => setState(() => _baseUrl = v),
+            placeholder: 'https://api.example.com/v1',
+            name: 'endpoint-url',
+            label: 'Endpoint base URL',
+            autocomplete: 'off',
+          ),
         ),
-      ),
-      YsField(
-        label: 'Model (optional)',
-        child: YsInputBox(
-          value: _model,
-          onChanged: (v) => setState(() => _model = v),
-          placeholder: 'model id',
-          name: 'endpoint-model',
-          label: 'Endpoint model',
-          autocomplete: 'off',
+        YsField(
+          label: 'API key (optional)',
+          child: YsInputBox(
+            value: _apiKey,
+            onChanged: (v) => setState(() => _apiKey = v),
+            onSubmitted: () {
+              if (_canCheck) unawaited(_check(context));
+            },
+            placeholder: 'sk-…',
+            name: 'endpoint-key',
+            label: 'Endpoint API key',
+            obscure: true,
+            autocomplete: 'off',
+          ),
         ),
-      ),
+      ] else ...[
+        p(classes: 'hermuse-conn-note', [
+          .text(
+            '${customEndpointApiLabel(_apiMode)} · ${probe.resolvedBaseUrl}',
+          ),
+        ]),
+        p(classes: 'hermuse-conn-note', [
+          .text(
+            probe.models.isEmpty
+                ? 'The endpoint lists no models: type the id of the one to '
+                      'use.'
+                : 'Found ${probe.models.length} '
+                      '${probe.models.length == 1 ? 'model' : 'models'}. '
+                      'Pick the default one.',
+          ),
+        ]),
+        if (probe.models.isEmpty)
+          YsField(
+            label: 'Model',
+            child: YsInputBox(
+              value: _model,
+              onChanged: (v) => setState(() => _model = v),
+              placeholder: 'model id',
+              name: 'endpoint-model',
+              label: 'Endpoint model',
+              autocomplete: 'off',
+            ),
+          )
+        else
+          YsField(
+            label: 'Default model',
+            child: YsSelect(
+              value: _picked,
+              options: [for (final id in probe.models) (id, id)],
+              onChanged: (v) => setState(() => _picked = v),
+              label: 'Endpoint default model',
+            ),
+          ),
+      ],
       if (_error case final error?)
         p(classes: 'hermuse-card-error', [.text(error)]),
       div(classes: 'hermuse-conn-row', [
         div(classes: 'hermuse-conn-grow', []),
-        YsButton.neutral(
-          label: 'Cancel',
-          onPressed: _busy ? null : () => setState(() => _open = false),
-        ),
-        YsButton.primary(
-          label: _busy ? 'Adding…' : 'Add',
-          onPressed: _busy || _name.trim().isEmpty || _baseUrl.trim().isEmpty
-              ? null
-              : () async {
-                  setState(() {
-                    _busy = true;
+        if (probe == null)
+          YsButton.neutral(label: 'Cancel', onPressed: _busy ? null : _close)
+        else
+          YsButton.neutral(
+            label: 'Back',
+            onPressed: _busy
+                ? null
+                : () => setState(() {
+                    _probe = null;
                     _error = null;
-                  });
-                  try {
-                    await context.container
-                        .read(
-                          connectionCardsProvider(component.instanceId)
-                              .notifier,
-                        )
-                        .addCustomEndpoint(
-                          name: _name.trim(),
-                          baseUrl: _baseUrl.trim(),
-                          apiKey: _apiKey,
-                          model: _model.trim(),
-                        );
-                    if (mounted) {
-                      setState(() {
-                        _open = false;
-                        _name = '';
-                        _baseUrl = '';
-                        _apiKey = '';
-                        _model = '';
-                      });
-                    }
-                  } on Object catch (e) {
-                    if (mounted) setState(() => _error = '$e');
-                  }
-                  if (mounted) setState(() => _busy = false);
-                },
-        ),
+                  }),
+          ),
+        if (probe == null)
+          YsButton.primary(
+            label: _busy ? 'Checking…' : 'Check',
+            onPressed: _canCheck ? () => unawaited(_check(context)) : null,
+          )
+        else
+          YsButton.primary(
+            label: _busy ? 'Adding…' : 'Add',
+            onPressed: _busy || model.isEmpty
+                ? null
+                : () => unawaited(_add(context, probe, model)),
+          ),
       ]),
     ]);
   }

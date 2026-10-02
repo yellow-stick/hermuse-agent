@@ -15,12 +15,14 @@ part 'model_selection.g.dart';
 
 /// One provider's models, tiered and ranked, with the user's ≤2 selection.
 ///
-/// [providerId] is the Hermes slug (`anthropic`, `zai`, `kimi-coding`, …)
-/// or a bridge card id (`bridge:meta`, …). [allModels] is the full discovered
-/// list (native: `model.options` row; bridge: `/v1/models` of the bridge
-/// serving the instance, filtered to the spec owners); [large]/[small] hold at
-/// most one id each — the current selection, defaulting to the newest large +
-/// newest small.
+/// [providerId] is the card id: a Hermes slug (`anthropic`, `zai`, …), a
+/// custom endpoint card (`custom:<slug>`, sent to Hermes as `<slug>`, see
+/// [hermesProviderId]) or a bridge card id (`bridge:meta`, …). [allModels]
+/// is the full discovered list (native and custom endpoints: the
+/// `model.options` row; bridge: `/v1/models` of the bridge serving the
+/// instance, filtered to the spec owners); [large]/[small] hold at most one
+/// id each — the current selection, defaulting to the newest large + newest
+/// small (a custom endpoint: the model it was saved with as large).
 final class ModelSelection {
   const ModelSelection({
     required this.providerId,
@@ -93,6 +95,8 @@ final class AvailableModel {
     required this.tier,
   });
 
+  /// The provider as Hermes resolves it (`ChatModel.provider`): a custom
+  /// endpoint's slug, not its `custom:` card id ([hermesProviderId]).
   final String providerId;
   final String providerName;
   final String modelId;
@@ -135,12 +139,20 @@ class ModelSelectionState extends _$ModelSelectionState {
       models,
       stored,
     );
-    // Fill empty slots with the newest discovered id of that tier.
+    // Fill empty slots: a custom endpoint's large slot is the model it was
+    // saved with; otherwise the newest discovered id of that tier.
     final defaults = pickLargeAndSmall(models);
-    if (selection.large == null && defaults.large != null) {
-      selection = selection.copyWith(large: () => defaults.large);
+    final configured =
+        card.flow == ConnectionFlow.customEndpoint &&
+            models.contains(card.defaultModel)
+        ? card.defaultModel
+        : null;
+    if (selection.large == null && (configured ?? defaults.large) != null) {
+      selection = selection.copyWith(large: () => configured ?? defaults.large);
     }
-    if (selection.small == null && defaults.small != null) {
+    if (selection.small == null &&
+        defaults.small != null &&
+        defaults.small != selection.large) {
       selection = selection.copyWith(small: () => defaults.small);
     }
     return selection;
@@ -185,14 +197,45 @@ class ModelSelectionState extends _$ModelSelectionState {
   /// (`POST /api/model/set`, scope `main`), small → every auxiliary slot
   /// (scope `auxiliary`, empty task = all slots). For bridge cards the
   /// Hermes custom endpoint is first re-registered with exactly the ≤2
-  /// selected models, at the bridge serving the instance.
-  Future<void> makeDefault() async {
+  /// selected models, at the bridge serving the instance. Custom endpoints
+  /// are referenced by their Hermes slug ([hermesProviderId]).
+  ///
+  /// Hermes guards expensive and data-training models: it answers
+  /// `confirm_required` and changes nothing. That throws
+  /// [ExpensiveModelConfirmation] with its message; call again with
+  /// [confirmExpensiveModel] once the user agreed. Any other `ok: false`
+  /// throws [ConnectionRejected].
+  Future<void> makeDefault({bool confirmExpensiveModel = false}) async {
     final current = state.value;
     if (current == null) throw StateError('selection is still loading');
     final large = current.large;
     if (large == null) throw StateError('no large model selected');
     final rest = await ref.read(restClientProvider(instanceId).future);
+    Future<void> assign(Map<String, Object?> body) async {
+      final response = await rest.postJson('/api/model/set', {
+        ...body,
+        if (confirmExpensiveModel) 'confirm_expensive_model': true,
+      });
+      if (response['confirm_required'] == true) {
+        throw ExpensiveModelConfirmation(
+          message:
+              response['confirm_message'] as String? ??
+              'This model needs your confirmation.',
+        );
+      }
+      if (response['ok'] == false) {
+        throw ConnectionRejected(
+          response['message'] as String? ??
+              response['error'] as String? ??
+              'Hermes did not change the model.',
+        );
+      }
+    }
+
     final spec = bridgeSpecForCard(providerId);
+    final provider = spec == null
+        ? hermesProviderId(providerId)
+        : 'custom:${spec.label}';
     Uri? bridgeUrl;
     if (spec != null) {
       final bridge = await _bridge(rest);
@@ -208,25 +251,21 @@ class ModelSelectionState extends _$ModelSelectionState {
           chatCompletionsPath: true,
         ),
       );
-      await rest.postJson('/api/model/set', {
+      await assign({
         'scope': 'main',
-        'provider': 'custom:${spec.label}',
+        'provider': provider,
         'model': large,
         'base_url': bridgeUrl.toString(),
         'api_key': bridge.apiKey,
       });
     } else {
-      await rest.postJson('/api/model/set', {
-        'scope': 'main',
-        'provider': providerId,
-        'model': large,
-      });
+      await assign({'scope': 'main', 'provider': provider, 'model': large});
     }
     final small = current.small;
     if (small != null) {
-      await rest.postJson('/api/model/set', {
+      await assign({
         'scope': 'auxiliary',
-        'provider': spec == null ? providerId : 'custom:${spec.label}',
+        'provider': provider,
         'model': small,
         if (bridgeUrl != null) 'base_url': bridgeUrl.toString(),
       });
@@ -292,12 +331,22 @@ class ModelSelectionState extends _$ModelSelectionState {
       const ModelOptionsParams(),
     );
     final row = options.providers
-        .where((p) => p.slug == providerId)
+        .where((p) => p.slug == card.hermesProvider)
         .firstOrNull;
-    return [
-      for (final id in row?.models ?? const <String>[])
+    // A custom endpoint is a `model.options` row under its slug; its own
+    // saved list stands in when the row is missing, and the model it was
+    // saved with is always offered.
+    return {
+      if (card.flow == ConnectionFlow.customEndpoint &&
+          card.defaultModel.isNotEmpty)
+        card.defaultModel,
+      for (final id
+          in row?.models ??
+              (card.flow == ConnectionFlow.customEndpoint
+                  ? card.models
+                  : const <String>[]))
         if (isSelectableModelId(id)) id,
-    ];
+    }.toList();
   }
 }
 
@@ -329,7 +378,7 @@ Future<List<AvailableModel>> availableModels(Ref ref, String instanceId) async {
       for (final id in selection.selected) {
         models.add(
           AvailableModel(
-            providerId: card.id,
+            providerId: card.hermesProvider,
             providerName: card.name,
             modelId: id,
             tier: selection.tiers[id] ?? ModelTier.unknown,
