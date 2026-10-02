@@ -47,10 +47,13 @@ LOCAL_SECRETS=hermes/hermuse-local/
 UI_CONNECT_TITLE='Connect to a machine'
 UI_LOCAL_CHOICE='Install Hermes on this computer'
 UI_KEYSTORE_ERROR='Secure storage unavailable'
+# Shown under a failed stage only. Its hint line ('Fix the cause, then retry
+# just this stage.') is grey on the error wash, which OCR misreads; the
+# button's label reads reliably.
 UI_RETRY_STAGE='Retry this stage'
-# A failed stage's hint ('Stage "<name>" failed; fix the cause, then retry
-# just this stage.') and the progress line of running stages.
-UI_RETRY_HINT='fix the cause'
+# Expands the install log under the stages: the failed command's output.
+UI_SHOW_DETAILS='Show details'
+# The progress line of running stages.
 UI_STAGE_PROGRESS='step [0-9]+ of [0-9]+'
 UI_ENABLE_PLUGIN='Enable the Hermuse plugin'
 UI_INSTALL_PLUGIN='Install the plugin'
@@ -236,19 +239,20 @@ app_close() { # [timeout-s]
 # failure before the first stage) with Cancel and the local choice again. An
 # error word in the log of running stages is no failure. The screen is read
 # at most every minute; at most USER_RETRIES tries, 3 minutes apart, each
-# clicked one kept as evidence (a failure the automation could not act on
-# counts too). An error still shown after them ends the wait: RETRY_GAVE_UP
-# names its screenshot.
+# clicked one kept as evidence with the expanded install log (a failure the
+# automation could not act on counts too). An error still shown after them
+# ends the wait: RETRY_GAVE_UP names its screenshot.
 USER_RETRIES=3
 RETRY_LOOKED=-1000 RETRY_CLICKED=-1000 RETRIES=0 RETRY_GAVE_UP=''
 retry_when_offered() { # <id>
   [ $((SECONDS - RETRY_LOOKED)) -ge 60 ] && [ $((SECONDS - RETRY_CLICKED)) -ge 180 ] || return 0
   RETRY_LOOKED=$SECONDS
-  local png text stage_failed='' how=''
+  local png text stage_failed='' how='' details=''
   png=$(shot retry-offered) || return 0
   text=$(D text "$png")
-  if grep -qi "$UI_RETRY_HINT" <<<"$text"; then
+  if grep -qi "$UI_RETRY_STAGE" <<<"$text"; then
     stage_failed=1
+    ui_click "$UI_SHOW_DETAILS" 15 >/dev/null && details=$(shot stage-failed-details)
   elif ! grep -qiwE 'cannot|failed|error|unable' <<<"$text" || grep -qiE "$UI_STAGE_PROGRESS" <<<"$text"; then
     rm -f "$png"
     return 0
@@ -266,7 +270,7 @@ retry_when_offered() { # <id>
   fi
   [ -n "$how" ] || return 0
   RETRY_CLICKED=$SECONDS
-  check "$1" "user-retry-$RETRIES" pass "the app reported an error; $how, as a user does" "$png"
+  check "$1" "user-retry-$RETRIES" pass "the app reported an error; $how, as a user does" "$png" ${details:+"$details"}
 }
 
 # The predicate, else maybe a user's retry; also ends the wait once the

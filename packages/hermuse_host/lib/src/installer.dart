@@ -675,10 +675,10 @@ final class HermesInstaller {
         ];
 
   /// The complete environment of a stage; on POSIX the [ManagedRuntime]
-  /// (whose `HOME` is created here).
+  /// (whose `HOME` is created here), on Windows [_lfCheckout].
   Future<Map<String, String>> _stageEnvironment() async {
     final environment = {..._environment, 'HERMES_HOME': hermesHome};
-    if (_isWindows) return environment;
+    if (_isWindows) return _lfCheckout(environment);
     final runtime = _runtime;
     await Directory(runtime.home).create(recursive: true);
     environment.removeWhere(
@@ -688,6 +688,27 @@ final class HermesInstaller {
       ...environment,
       'HOME': runtime.home,
       'PATH': runtime.prefixPath(environment['PATH']),
+    };
+  }
+
+  /// [environment] plus `core.autocrlf=false` for every git command of the
+  /// stage, after the host's own `GIT_CONFIG_PARAMETERS`.
+  ///
+  /// Git for Windows (and the PortableGit `install.ps1` provisions) ships
+  /// `core.autocrlf=true`. `install.ps1` sets it to false on its clone only
+  /// after cloning, so the files without an `eol` attribute upstream (the
+  /// website's `.mdx`) are checked out with CRLF and then read as modified
+  /// whenever git re-reads them; the pinning `git checkout` then refuses
+  /// ("local changes would be overwritten"). `GIT_CONFIG_PARAMETERS` is the
+  /// channel of `git -c`: command-level, above the system and global files,
+  /// so the clone writes LF, as the script then expects. Not
+  /// `GIT_CONFIG_COUNT`: the script overwrites it right before cloning.
+  static Map<String, String> _lfCheckout(Map<String, String> environment) {
+    const entry = "'core.autocrlf'='false'";
+    final host = environment['GIT_CONFIG_PARAMETERS'] ?? '';
+    return {
+      ...environment,
+      'GIT_CONFIG_PARAMETERS': host.isEmpty ? entry : '$host $entry',
     };
   }
 

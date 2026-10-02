@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Smoke legs and release proof of the release workflow (stdlib only).
+"""Smoke legs and release proof of the release and smoke workflows (stdlib only).
 
 The legs listed here are the single source of truth: the workflow matrices are
 generated from them and the summary fails any leg or result that is absent.
 
-  proof_summary.py matrix guests|containers|desktop [--set full|queue] [--filter REGEX]
+  proof_summary.py matrix guests|containers|desktop [--set full] [--filter REGEX]
                                                GitHub matrix JSON of the selected legs
   proof_summary.py leg <leg-dir> <scenario> [--target T]
                                                exit 1 when a result of one leg failed or is
@@ -27,9 +27,9 @@ manual gate carries its recorded evidence and the model-account proof did not
 fail. What the run could not prove (no model test account, unsigned macOS or
 Windows artifacts, manual gates, the checks outside CI) is listed under "Not
 yet proven" in its notes and checked before the manual promotion to latest.
-Merge groups run the `queue` set (the fresh scenario of both guests and
-formats, the containers, the macOS and Windows runners); the nightly run, test
-runs and releases run the `full` set; pull requests run no leg.
+Releases (release.yml) and manual test runs (smoke.yml) run the `full` set,
+every leg; a test run may narrow it to the legs whose name matches --filter.
+Pull requests and the merge queue run no leg.
 """
 
 from __future__ import annotations
@@ -44,9 +44,6 @@ from typing import Any
 GUESTS = ("ubuntu-22.04", "debian-12")
 CONTAINERS = ("ubuntu-24.04", "ubuntu-26.04", "debian-13")
 FORMATS = ("deb", "appimage")
-
-# The legs a merge group runs; the nightly run, test runs and releases run every leg.
-QUEUE_SCENARIOS = ("fresh",)
 
 # scenario -> formats, result ids (as linux.sh `expect`s them)
 SCENARIOS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
@@ -150,8 +147,6 @@ def cmd_matrix(args: argparse.Namespace) -> int:
     include = []
     for leg in legs():
         if matrix_kind(leg) != args.which:
-            continue
-        if args.set != "full" and leg["kind"] == "smoke" and leg["scenario"] not in QUEUE_SCENARIOS:
             continue
         if pattern is not None and not pattern.search(leg_name(leg)):
             continue
@@ -319,7 +314,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     matrix = sub.add_parser("matrix")
     matrix.add_argument("which", choices=("guests", "containers", "desktop"))
-    matrix.add_argument("--set", choices=("full", "queue"), default="full")
+    matrix.add_argument("--set", choices=("full",), default="full", help="full: every leg (the only set)")
     matrix.add_argument("--filter", default="")
     matrix.set_defaults(run=cmd_matrix)
     leg = sub.add_parser("leg")
