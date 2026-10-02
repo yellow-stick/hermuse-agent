@@ -136,6 +136,32 @@ final class YsPalette {
     shadow: YsColor(0x73000000),
   );
 
+  /// Yellow Stick light theme: warm paper canvas, golden-hour yellow.
+  static const light = YsPalette(
+    canvas: YsColor(0xFFF7F6F1),
+    paper: YsColor(0xFFFFFFFF),
+    paperClear: YsColor(0xCCFFFFFF),
+    neutralAmbient: YsColor(0xFFE9E7E0),
+    neutralFilm: YsColor(0xFFDBD8CE),
+    content: YsColor(0xFF1C1808),
+    contentMuted: YsColor(0x8C1C1808),
+    contentSubtle: YsColor(0x611C1808),
+    primary: YsColor(0xFFF5C21B),
+    primary2: YsColor(0xFFD9A90A),
+    primaryMuted: YsColor(0x2BD9A90A),
+    primaryWash: YsColor(0x14D9A90A),
+    primaryContent: YsColor(0xFF1A1505),
+    line: YsColor(0x1F000000),
+    backdrop: YsColor(0x59000000),
+    success: YsColor(0xFF0B8A1E),
+    successMuted: YsColor(0x290B8A1E),
+    error: YsColor(0xFFD92D20),
+    errorWash: YsColor(0x14D92D20),
+    logoSurface: YsColor(0xFFFFFFFF),
+    avatarSurface: YsColor(0xFFE7DFD2),
+    shadow: YsColor(0x241A1505),
+  );
+
   /// Every role by its CSS custom-property name (`--paper-clear`, ...).
   Map<String, YsColor> get byCssName => {
     'canvas': canvas,
@@ -162,3 +188,14 @@ final class YsPalette {
     'shadow': shadow,
   };
 }
+
+/// Which theme the app shows.
+enum YsThemeMode { system, light, dark }
+
+/// Resolves [mode] to a palette: [system] follows [platformDark].
+YsPalette resolveTheme(YsThemeMode mode, {required bool platformDark}) =>
+    switch (mode) {
+      YsThemeMode.system => platformDark ? YsPalette.dark : YsPalette.light,
+      YsThemeMode.light => YsPalette.light,
+      YsThemeMode.dark => YsPalette.dark,
+    };

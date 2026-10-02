@@ -50,14 +50,25 @@ final class HermuseApp extends StatefulWidget {
   State<HermuseApp> createState() => HermuseAppState();
 }
 
-final class HermuseAppState extends State<HermuseApp> {
+final class HermuseAppState extends State<HermuseApp>
+    with WidgetsBindingObserver {
   ChatListenable? _chat;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _chat?.dispose();
     super.dispose();
   }
+
+  @override
+  void didChangePlatformBrightness() => setState(() {});
 
   void _adopt(ChatController controller) {
     if (identical(_chat?.controller, controller)) return;
@@ -68,24 +79,28 @@ final class HermuseAppState extends State<HermuseApp> {
   @override
   Widget build(BuildContext context) {
     final keystoreError = widget.keystoreError;
+    final palette = resolveTheme(
+      YsThemeMode.system,
+      platformDark:
+          View.of(context).platformDispatcher.platformBrightness ==
+          Brightness.dark,
+    );
     return YsTheme(
-      palette: YsPalette.dark,
+      palette: palette,
       child: WidgetsApp(
         title: 'Hermuse Agent',
-        color: const Color(0xFF181819),
+        color: Color(palette.canvas.value),
         debugShowCheckedModeBanner: false,
         builder: (context, child) => MediaQuery(
           data: MediaQueryData.fromView(View.of(context)),
           child: DefaultTextStyle(
-            style: YsType.body.flutter.copyWith(
-              color: YsPalette.dark.contentColor,
-            ),
+            style: YsType.body.flutter.copyWith(color: palette.contentColor),
             // No Navigator (single screen), so no route Overlay: provide one
             // for kit overlays (tooltips, popovers) anchored in the shell.
             child: Overlay.wrap(
               child: keystoreError != null
                   ? ColoredBox(
-                      color: YsPalette.dark.canvasColor,
+                      color: palette.canvasColor,
                       child: KeystoreErrorScreen(error: keystoreError),
                     )
                   : _Root(

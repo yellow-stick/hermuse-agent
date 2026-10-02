@@ -26,7 +26,7 @@ void main() {
       meta: {
         'theme-color': '#181819',
         'description': 'Hermuse — your personal agent',
-        'color-scheme': 'dark',
+        'color-scheme': 'light dark',
         // Installed on iOS: standalone window, opaque status bar (the layout
         // does not handle safe-area insets, so content stays below it).
         'apple-mobile-web-app-capable': 'yes',
