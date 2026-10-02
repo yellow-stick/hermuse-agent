@@ -69,10 +69,13 @@ $UserPath = @(
 $UiConnectTitle = 'Connect to a Hermes'
 $UiLocalChoice = 'Install Hermes on this computer'
 $UiKeystoreError = 'Secure storage unavailable'
+# Shown under a failed stage only. Its hint line ('Fix the cause, then retry
+# just this stage.') is grey on the error wash, which OCR misreads; the
+# button's label reads reliably.
 $UiRetryStage = 'Retry this stage'
-# A failed stage's hint ('Stage "<name>" failed; fix the cause, then retry
-# just this stage.') and the progress line of running stages (a regex).
-$UiRetryHint = 'fix the cause'
+# Expands the install log under the stages: the failed command's output.
+$UiShowDetails = 'Show details'
+# The progress line of running stages (a regex).
 $UiStageProgress = 'step [0-9]+ of [0-9]+'
 $UiEnablePlugin = 'Enable the Hermuse plugin'
 $UiInstallPlugin = 'Install the plugin'
@@ -222,9 +225,9 @@ function Stop-App([int]$TimeoutSec = (T 300)) {
 # failure before the first stage) with Cancel and the local choice again. An
 # error word in the log of running stages is no failure. The screen is read
 # at most every minute; at most $UserRetries tries, 3 minutes apart, each
-# clicked one kept as evidence (a failure the automation could not act on
-# counts too). An error still shown after them ends the wait:
-# $script:RetryGaveUp names its screenshot.
+# clicked one kept as evidence with the expanded install log (a failure the
+# automation could not act on counts too). An error still shown after them
+# ends the wait: $script:RetryGaveUp names its screenshot.
 $UserRetries = 3
 $script:RetryLooked = -1000
 $script:RetryClicked = -1000
@@ -237,7 +240,12 @@ function Invoke-RetryWhenOffered([string]$Id) {
   $png = Save-Shot 'retry-offered'
   if (-not $png) { return }
   $text = (D text $png) -join "`n"
-  $stageFailed = $text -match "(?i)$([regex]::Escape($UiRetryHint))"
+  $stageFailed = $text -match "(?i)$([regex]::Escape($UiRetryStage))"
+  $evidence = @($png)
+  if ($stageFailed -and (Invoke-UiClick $UiShowDetails 15)) {
+    $details = Save-Shot 'stage-failed-details'
+    if ($details) { $evidence += $details }
+  }
   if (-not $stageFailed -and ($text -notmatch '(?i)\b(cannot|failed|error|unable)\b' -or $text -match "(?i)$UiStageProgress")) {
     Remove-Item $png -ErrorAction SilentlyContinue
     return
@@ -255,7 +263,7 @@ function Invoke-RetryWhenOffered([string]$Id) {
   }
   if (-not $how) { return }
   $script:RetryClicked = [int]$Started.Elapsed.TotalSeconds
-  Add-Check $Id "user-retry-$($script:Retries)" 'pass' "the app reported an error; $how, as a user does" @($png)
+  Add-Check $Id "user-retry-$($script:Retries)" 'pass' "the app reported an error; $how, as a user does" $evidence
 }
 
 # The predicate, else maybe a user's retry; also ends the wait once the
