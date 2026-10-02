@@ -12,6 +12,13 @@
 # smoke tests run for a release (release.yml) and for a manual test run
 # (smoke.yml).
 #
+# A tree already checked builds nothing again: the `CI` gate of a passing run
+# leaves the artifact `ci-passed-<tree>`, and `changes` skips the build when a
+# passing run of this repository already checked the same tree
+# (tool/ci/tree-passed.sh). A pull request checked on top of the current main
+# therefore goes through the merge queue in about a minute; one whose main
+# moved is checked there again.
+#
 # Required check of main: `CI`, the last job. It runs whatever happened before
 # it and passes only when every job succeeded or was skipped, so a failure
 # upstream never passes as a skipped check. The web app has its own required
@@ -41,8 +48,13 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # the artifacts of earlier runs (tool/ci/tree-passed.sh)
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      tree: ${{ steps.tested.outputs.tree }}
+      tested: ${{ steps.tested.outputs.tested }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,11 +95,20 @@ jobs:
           [ "$code" = true ] || echo "::notice::documentation only: nothing to build"
           echo "code=$code" >>"$GITHUB_OUTPUT"
 
+      - name: Whether this exact tree already passed
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >>"$GITHUB_OUTPUT"
+          echo "tested=$(tool/ci/tree-passed.sh ci-passed .github/workflows/ci.yml)" | tee -a "$GITHUB_OUTPUT"
+
   build:
     name: Build
     needs: changes
-    # Documentation-only filter: a change of documentation only builds nothing.
-    if: needs.changes.outputs.code == 'true'
+    # Documentation-only filter, and a tree a passing run already checked: nothing to build.
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tested != 'true'
     # Unsigned, every platform, no tag: the defaults of build.yml, without secrets.
     uses: ./.github/workflows/build.yml
     permissions:
@@ -111,3 +132,17 @@ jobs:
             echo "::error::a job failed or was cancelled"
             exit 1
           fi
+
+      # A draft has no tree (changes skipped): nothing to record.
+      - name: Record the tree that passed
+        if: needs.changes.outputs.tree != ''
+        env:
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: echo "$TREE" >"$RUNNER_TEMP/tree"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        # Same condition as the step above.
+        if: needs.changes.outputs.tree != ''
+        with:
+          name: ci-passed-${{ needs.changes.outputs.tree }}
+          path: ${{ runner.temp }}/tree
+          retention-days: 14

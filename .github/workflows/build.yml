@@ -149,7 +149,7 @@ jobs:
       - name: Lint the workflows and the release scripts
         run: |
           set -euo pipefail
-          mapfile -t scripts < <(git ls-files packaging tool/release | while read -r file; do
+          mapfile -t scripts < <(git ls-files packaging tool/release tool/ci | while read -r file; do
             case $file in
               *.sh) echo "$file" ;;
               *) head -n 1 "$file" | grep -Eq '^#!.*[/ ](ba|da)?sh( |$)' && echo "$file" || true ;;

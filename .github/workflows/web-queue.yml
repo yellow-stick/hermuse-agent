@@ -9,9 +9,14 @@
 # web workflows), nothing is built. The demo is deployed to production once the
 # change is on main (web-deploy.yml).
 #
+# A tree already checked builds nothing again: when a passing `Web` gate of
+# this repository (here or on a pull request, web-pr.yml) already checked the
+# same tree, the build is skipped (tool/ci/tree-passed.sh).
+#
 # Required check of main: `Web`, the last job, here and on pull requests
 # (web-pr.yml). It runs whatever happened before it and passes only when every
-# job succeeded or was skipped.
+# job succeeded or was skipped. When it passes it leaves the artifact
+# `web-passed-<tree>`.
 #
 # Actions are pinned by commit (tag in the trailing comment).
 name: Web queue
@@ -28,8 +33,13 @@ jobs:
     name: Changes
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read # the artifacts of earlier runs (tool/ci/tree-passed.sh)
     outputs:
       web: ${{ steps.paths.outputs.web }}
+      tree: ${{ steps.tested.outputs.tree }}
+      tested: ${{ steps.tested.outputs.tested }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,12 +67,21 @@ jobs:
             done <"$RUNNER_TEMP/changed"
           fi
           echo "web=$web" | tee -a "$GITHUB_OUTPUT"
+      - name: Whether this exact tree already passed
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "tree=$(git rev-parse 'HEAD^{tree}')" >>"$GITHUB_OUTPUT"
+          echo "tested=$(tool/ci/tree-passed.sh web-passed .github/workflows/web-pr.yml .github/workflows/web-queue.yml)" |
+            tee -a "$GITHUB_OUTPUT"
 
   build:
     name: Build
     needs: changes
-    # Web paths filter: a change outside the web inputs builds nothing.
-    if: needs.changes.outputs.web == 'true'
+    # Web paths filter, and a tree a passing run already checked: nothing to build.
+    if: needs.changes.outputs.web == 'true' && needs.changes.outputs.tested != 'true'
     uses: ./.github/workflows/web-build.yml
     permissions:
       contents: read
@@ -85,3 +104,13 @@ jobs:
             echo "::error::a job failed or was cancelled"
             exit 1
           fi
+
+      - name: Record the tree that passed
+        env:
+          TREE: ${{ needs.changes.outputs.tree }}
+        run: echo "$TREE" >"$RUNNER_TEMP/tree"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-passed-${{ needs.changes.outputs.tree }}
+          path: ${{ runner.temp }}/tree
+          retention-days: 14

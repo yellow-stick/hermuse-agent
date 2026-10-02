@@ -28,7 +28,9 @@ of the project and of this flow.
    deployed for branches of this repository.
 4. **Review and merge queue.** The maintainer reviews every pull request (code
    owner). An approved one goes through the merge queue: the merged result is
-   checked and built again for every platform before `main` moves. The
+   checked and built again for every platform before `main` moves, unless its
+   pull request run already checked that exact result (a branch up to date
+   with `main`): the queue then passes in about a minute. The
    installed-package smoke tests do not run there: they run for each release
    and in manual test runs ([CI at a glance](#ci-at-a-glance)).
 5. **One squashed commit.** Pull requests are squash-merged only: the pull
@@ -69,7 +71,7 @@ One workflow per scenario, in `.github/workflows/`:
 | --- | --- | --- |
 | Draft pull request | `ci.yml`, `web-pr.yml` | Nothing |
 | Pull request ready for review | `ci.yml`, `web-pr.yml` | Checks, the Linux, macOS and Windows packages, the web app and demo builds, and a demo preview |
-| Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview |
+| Merge queue | `ci.yml`, `web-queue.yml` | The same checks and builds, without preview; nothing when a passing run already checked the same tree (`tool/ci/tree-passed.sh`) |
 | Push to `main` touching the web app or the demo | `web-deploy.yml` | The read-only demo deployed to https://demo.hermuse.app |
 | Release tag | `release.yml` | Every smoke scenario on the signed packages, then the release below |
 | Manual test run | `smoke.yml` | Unsigned packages of a branch, then every smoke scenario or those selected |
