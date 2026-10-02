@@ -1,12 +1,13 @@
-# Web app of a merge group (merge queue): build only, nothing is deployed.
+# Web app and read-only demo of a merge group (merge queue): build only,
+# nothing is deployed.
 #
 #   changes -> build (web-build.yml) -> Web
 #
 # Trigger: a merge group of the merge queue. `changes` compares the merge
-# group with its base commit; when none of the web app's inputs changed
-# (apps/hermuse_web, packages, pubspec.*, netlify.toml, the toolchain lock, the
-# web workflows), nothing is built. Production is deployed once the change is
-# on main (web-deploy.yml).
+# group with its base commit; when none of the web inputs changed (demo,
+# apps/hermuse_web, packages, pubspec.*, netlify.toml, the toolchain lock, the
+# web workflows), nothing is built. The demo is deployed to production once the
+# change is on main (web-deploy.yml).
 #
 # Required check of main: `Web`, the last job, here and on pull requests
 # (web-pr.yml). It runs whatever happened before it and passes only when every
@@ -48,9 +49,9 @@ jobs:
             cat "$RUNNER_TEMP/changed"
             web=false
             while IFS= read -r file; do
-              # The web app's inputs (listed in web-pr.yml and web-deploy.yml too), the web workflows.
+              # The web inputs (listed in web-pr.yml and web-deploy.yml too), the web workflows.
               case $file in
-                apps/hermuse_web/* | packages/* | pubspec.yaml | pubspec.lock | netlify.toml | \
+                demo/* | apps/hermuse_web/* | packages/* | pubspec.yaml | pubspec.lock | netlify.toml | \
                   tool/release/toolchain.lock.json | .github/workflows/web-*.yml) web=true ;;
               esac
             done <"$RUNNER_TEMP/changed"
@@ -60,7 +61,7 @@ jobs:
   build:
     name: Build
     needs: changes
-    # Web paths filter: a change outside the web app's inputs builds nothing.
+    # Web paths filter: a change outside the web inputs builds nothing.
     if: needs.changes.outputs.web == 'true'
     uses: ./.github/workflows/web-build.yml
     permissions:

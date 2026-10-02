@@ -14,7 +14,7 @@ requests are squash-merged: the title becomes the single commit on main
 <!--
 The checks that actually ran, and their result (AGENTS.md, "Validation per area"):
 - Dart/Flutter: `melos run analyze` and the package's tests (`melos run test:dart` / `melos run test:flutter`)
-- Web: `jaspr build` in apps/hermuse_web, on top of analyze and tests
+- Web: `jaspr build` in apps/hermuse_web, on top of analyze and tests; `demo/build.sh` when the chat shell, the app scope or demo/ changes
 - Plugin: `pytest tests/ -q` in hermes-plugin/hermuse, then `plugin_assets_test.dart` after re-syncing the assets
 - Contract: regenerate, then `drift_test.dart`
 Do not list a check that did not run; say what failed.
