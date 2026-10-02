@@ -20,7 +20,7 @@ as pull requests from forks (`CONTRIBUTING.md`).
 - `packages/hermuse_state/` — shared Riverpod state for both apps.
 - `packages/hermuse_host/` — desktop only: Hermes install, supervision, bridge sidecar.
 - `hermes-plugin/hermuse/` — Hermes plugin: Feed, Ideas, Goals, Library, Reflections, agent's computer. Python, stdlib-only store.
-- `demo/` — read-only web demo (`hermuse_demo`): fictional instances, chats and plugin data answered in the browser; `demo/build.sh` builds the web app with `HERMUSE_DEMO=true` into `demo/build/web` for Netlify.
+- `demo/` — read-only web demo (`hermuse_demo`): fictional instances, chats and plugin data answered in the browser; `demo/build.sh` builds the web app with `HERMUSE_DEMO=true` into `demo/build/web`, published at https://demo.hermuse.app.
 - `.agents/skills/` — 41 vendored skills (dart-*, flutter-*, jaspr-*, riverpod, …). Read the matching skill before working in its area.
 
 ## Architecture rules
@@ -53,12 +53,18 @@ cd apps/hermuse_web && jaspr build            # static output in build/jaspr
 cd hermes-plugin/hermuse && ~/.hermes/hermes-agent/venv/bin/python -m pytest tests/ -q
 ```
 
-Web deploy: `.github/workflows/web.yml` builds `apps/hermuse_web` and deploys it
-with the Netlify CLI to project `hermuse-agent` (https://hermuse.app): production
-on push to `main`, draft alias `pr-<N>` on pull requests of this repository once
-ready for review; merge groups only build. Netlify's Git builds
-are stopped; `netlify.toml` (headers, manual deploy commands) is the only site
-config. Secrets: `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`.
+Web deploy: the real web app is not hosted by Yellow Stick; each user's
+`hermuse_relay` serves it on their own server (`docs/guides/web-app-and-relay.md`).
+Netlify publishes only the read-only demo, project `hermuse-demo`
+(https://demo.hermuse.app). `.github/workflows/web-build.yml` runs `jaspr build`
+of `apps/hermuse_web` as a check, then `demo/build.sh`, and the Netlify CLI
+deploys `demo/build/web`: production from `web-deploy.yml` on push to `main`
+touching the web inputs (or on dispatch), draft alias `pr-<N>` from `web-pr.yml`
+on pull requests of this repository once ready for review; `web-queue.yml` only
+builds in the merge queue. The project has no Git builds; `netlify.toml`
+(headers, manual deploy commands) is the only site config. Secrets:
+`NETLIFY_AUTH_TOKEN`, `NETLIFY_DEMO_SITE_ID`. The product homepage is
+https://hermuse.app (`yellow-stick/hermuse-website`).
 
 Worktrees (Orca): `orca.yaml` runs `tool/orca/setup-worktree.sh` on create
 (`flutter pub get --enforce-lockfile`; codegen is committed, nothing shared with
@@ -72,6 +78,7 @@ overrides). Jaspr always binds the Dart VM service to 8181: a second concurrent
 
 - `packages/hermes_contract/lib/src/contract.g.dart` (`// GENERATED … do not edit`). Regenerate from `packages/hermes_contract`: `dart run tool/gen_hermes_contract.dart`. `test/drift_test.dart` fails when the committed output is stale.
 - Desktop app bundles a copy of the plugin. After changing `hermes-plugin/hermuse`, refresh it from `apps/hermuse_app`: `dart run tool/sync_plugin_assets.dart` (covered by `plugin_assets_test.dart`).
+- Native app icons (Android `mipmap-*` + adaptive icon, iOS/macOS `AppIcon.appiconset`, Windows `app_icon.ico`, Linux `runner/resources/app_icon.png`) are rendered from `packaging/icon/icon.svg`: `packaging/icon/render-app-icons.sh` (rsvg-convert + ImageMagick). The `.deb`/AppImage render their hicolor icons from the same SVG.
 - `jaspr_builder` 0.23.5 wants `analyzer ^12`, capped at `build_runner` 2.15.1 / `build_web_compilers` 4.8.5. The root `dependency_overrides` pins `analyzer ^13.3.0` (jaspr builds fine on 13.x). Bump these together with Jaspr.
 
 ## Commits, branches and PRs
@@ -85,7 +92,7 @@ Commit subject: `<Area>: <what changed>` — one line, English, present tense, l
 
 Branches: `yellow-stick/<topic>` in kebab-case (`yellow-stick/docs-guides`, `yellow-stick/orca-worktrees`), cut from `origin/main`. Never commit to `main` directly.
 
-Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review runs the checks and the builds of every platform, and the merge queue runs the installed-package smoke tests before merging (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
+Pull requests: target `main`. Title in the commit style, summarizing the whole branch. Description in English: what changes for the user or developer, then the validation that actually ran (see below). Open it as a draft while in progress: drafts run no CI; ready for review and the merge queue run the checks and the builds of every platform (`ci.yml`, required check `CI`) and the web build (required check `Web`). The installed-package smoke tests run only for a release tag (`release.yml`) and for a manual test run (`smoke.yml`), never on pull requests nor in the merge queue (`CONTRIBUTING.md`). Squash merge only: the PR title (commit style `<Area>: <what>`) becomes the single commit on `main`, suffixed by GitHub with `(#N)`, and the PR body becomes its message. Intermediate commits on the branch are free-form, but the PR title must follow the commit style; split a PR too big for one commit. Delete the branch after the merge.
 
 ## Validation per area
 

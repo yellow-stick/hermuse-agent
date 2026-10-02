@@ -13,6 +13,7 @@ dependencies:
   hermuse_state: ^0.1.0
   http: ^1.6.0
   riverpod: ^3.4.3
+  web_socket: ^1.0.1
 
 dev_dependencies:
   hermuse_chat: ^0.1.0

@@ -40,7 +40,17 @@ from typing import Any, Optional, Protocol, Sequence
 
 from . import state
 
-IMAGE = "hermuse-computer:0.2.0"
+
+def _plugin_version() -> str:
+    """``version:`` of plugin.yaml: the image is published under this tag."""
+    manifest = Path(__file__).resolve().parent.parent / "plugin.yaml"
+    match = re.search(r"^version:\s*[\"']?([^\"'\s]+)", manifest.read_text(encoding="utf-8"), re.M)
+    if match is None:
+        raise RuntimeError(f"no version in {manifest}")
+    return match.group(1)
+
+
+IMAGE = f"hermuse-computer:{_plugin_version()}"
 # Published by .github/workflows/computer-image.yml (linux/amd64 + linux/arm64).
 REGISTRY_IMAGE = f"ghcr.io/yellow-stick/{IMAGE}"
 REGISTRY_REPOSITORY = REGISTRY_IMAGE.rsplit(":", 1)[0]

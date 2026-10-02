@@ -6,11 +6,11 @@ import 'keyframes.dart';
 import 'motion.dart';
 
 /// Progress through a short flow: one badge per step with its label under
-/// it, joined by lines. Steps before [current] show a calm tick on a soft
-/// disc ([YsStepMark.calmTick]) and a filled line, the current one its icon
-/// in an accent ring, later ones stay muted. Icons draw in stroke after
-/// stroke ([YsStepMotion.drawIn]) and the line into the current step fills
-/// ([YsStepMotion.progress] ms) when the stepper shows.
+/// it, joined by lines. Steps before [current] show a calm green tick on a
+/// soft success disc ([YsStepMark.calmTick]) and a filled line, the current
+/// one its icon in an accent ring, later ones stay muted. Icons draw in
+/// stroke after stroke ([YsStepMotion.drawIn]) and the line into the current
+/// step fills ([YsStepMotion.progress] ms) when the stepper shows.
 ///
 /// Announced as "Step 2 of 4: Accounts"; with reduced motion everything
 /// shows at once.

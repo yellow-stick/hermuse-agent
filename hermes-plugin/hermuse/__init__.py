@@ -2,8 +2,10 @@
 
 Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, the
 ``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
-and its ``pre_tool_call`` / ``transform_tool_result`` hooks, and — inside a
-running dashboard — mounts the dashboard backend right away (see
+and its ``pre_tool_call`` / ``transform_tool_result`` hooks, restarts the
+subscription bridge when it was set up and does not run (see
+:func:`subscription_bridge.start_if_configured`), and — inside a running
+dashboard — mounts the dashboard backend right away (see
 :func:`mount_dashboard_api`). Cron jobs are NOT auto-registered here:
 installing a plugin must not start background agents as a side effect — the
 operator runs ``hermes hermuse enable`` (or the Hermuse app calls the
@@ -17,7 +19,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent_tools, plugin_cli
+from . import agent_tools, plugin_cli, subscription_bridge
 from .computer import hooks as computer_hooks
 from .computer.provider import make_provider
 
@@ -59,7 +61,22 @@ def register(ctx) -> None:
     # (agent workers included) and would wipe a live Take control lease.
     ctx.register_hook("pre_tool_call", computer_hooks.pre_tool_call)
     ctx.register_hook("transform_tool_result", computer_hooks.transform_tool_result)
+    _start_bridge()
     mount_dashboard_api()
+
+
+def _start_bridge() -> None:
+    """Bring back a subscription bridge set up earlier (server reboot, crash).
+
+    Runs in every Hermes process loading the plugin: one ``/proc`` read when
+    the bridge runs, never a wait or a download. Never raises.
+    """
+    try:
+        from hermes_constants import get_hermes_home
+
+        subscription_bridge.start_if_configured(get_hermes_home())
+    except Exception as exc:  # noqa: BLE001 — plugin loading must never fail on the bridge
+        logger.warning("hermuse: subscription bridge not checked: %s", exc)
 
 
 def mount_dashboard_api() -> None:

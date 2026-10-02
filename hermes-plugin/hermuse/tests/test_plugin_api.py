@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+import dashboard_restart
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -156,3 +160,81 @@ def test_reflections_and_artifacts_lists(client):
     assert client.get("/api/plugins/hermuse/artifacts").json() == {"artifacts": []}
     assert client.get("/api/plugins/hermuse/reflections/2026-01-01").status_code == 404
     assert client.get("/api/plugins/hermuse/artifacts/nope").status_code == 404
+
+
+# How the dashboard runs: the `hermes` launcher of the installer (it `exec`s
+# the venv Python on the checkout's `hermes` script), `python -m`, `serve`.
+LAUNCHER = [sys.executable, "/home/hermes/.hermes/hermes-agent/hermes",
+            "dashboard", "--port", "9119", "--host", "127.0.0.1", "--no-open"]
+
+
+@pytest.fixture()
+def restart(monkeypatch):
+    """Restarts recorded instead of run: what happened, in order, once ``exec`` came."""
+    events: list[object] = []
+    replaced = threading.Event()
+
+    def execv(path, argv):
+        events.append(("exec", path, list(argv)))
+        replaced.set()
+
+    monkeypatch.setattr(dashboard_restart, "_scheduled", False)
+    monkeypatch.setattr(dashboard_restart, "DELAY_S", 0)
+    monkeypatch.setattr(dashboard_restart, "_finish_sessions", lambda: events.append("sessions"))
+    monkeypatch.setattr(os, "execv", execv)
+    monkeypatch.setattr(sys, "orig_argv", LAUNCHER)
+    monkeypatch.delenv("HERMES_DASHBOARD_SESSION_TOKEN", raising=False)
+    return events, replaced
+
+
+def test_dashboard_restart_reexecutes_its_launch_command_after_the_sessions(client, restart):
+    events, replaced = restart
+    boot = client.get("/api/plugins/hermuse/dashboard").json()["boot"]
+
+    answer = client.post("/api/plugins/hermuse/dashboard/restart")
+
+    assert answer.status_code == 202, answer.text
+    assert answer.json() == {"boot": boot}
+    assert replaced.wait(5)
+    # Same interpreter and command line (flags, launcher, options) in place:
+    # open chats were persisted first.
+    assert events == ["sessions", ("exec", sys.executable, LAUNCHER)]
+
+
+def test_dashboard_restart_runs_once(client, restart):
+    _, replaced = restart
+    assert client.post("/api/plugins/hermuse/dashboard/restart").status_code == 202
+    assert replaced.wait(5)
+
+    again = client.post("/api/plugins/hermuse/dashboard/restart")
+
+    assert again.status_code == 409
+
+
+@pytest.mark.parametrize("argv, env", [
+    (["python", "-m", "pytest", "tests/"], {}),
+    (["python", "/opt/hermes/hermes", "chat"], {}),
+    ([*LAUNCHER, "--ssh-session-token-file", "/tmp/token"], {}),
+    (LAUNCHER, {"HERMES_DESKTOP": "1", "HERMES_DASHBOARD_SESSION_TOKEN": "t"}),
+])
+def test_dashboard_restart_refused_where_it_cannot_restart_in_place(
+        client, restart, monkeypatch, argv, env):
+    events, _ = restart
+    monkeypatch.setattr(sys, "orig_argv", argv)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    answer = client.post("/api/plugins/hermuse/dashboard/restart")
+
+    assert answer.status_code == 501
+    assert events == []
+
+
+@pytest.mark.parametrize("argv", [
+    LAUNCHER,
+    ["/srv/venv/bin/python", "/srv/venv/bin/hermes", "dashboard"],
+    ["/srv/venv/bin/python", "-I", "-m", "hermes_cli.main", "-p", "default", "dashboard"],
+    ["/srv/venv/bin/python", "/srv/venv/bin/hermes", "serve", "--port", "9120"],
+])
+def test_dashboard_launches_that_restart_in_place(argv):
+    assert dashboard_restart.command_line(argv, environ={}) == argv

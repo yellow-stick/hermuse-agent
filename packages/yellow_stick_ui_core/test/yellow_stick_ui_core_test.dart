@@ -128,4 +128,39 @@ void main() {
       }
     });
   });
+
+  group('light theme', () {
+    test('covers exactly the same roles as dark', () {
+      expect(
+        YsPalette.light.byCssName.keys.toSet(),
+        YsPalette.dark.byCssName.keys.toSet(),
+      );
+    });
+
+    test('resolveTheme follows the platform in system mode', () {
+      expect(
+        resolveTheme(YsThemeMode.system, platformDark: true),
+        same(YsPalette.dark),
+      );
+      expect(
+        resolveTheme(YsThemeMode.system, platformDark: false),
+        same(YsPalette.light),
+      );
+      expect(
+        resolveTheme(YsThemeMode.light, platformDark: true),
+        same(YsPalette.light),
+      );
+      expect(
+        resolveTheme(YsThemeMode.dark, platformDark: false),
+        same(YsPalette.dark),
+      );
+    });
+
+    test('light canvas renders as the warm paper colour', () {
+      expect(
+        YsPalette.light.byCssName['canvas']!.css,
+        const YsColor(0xFFF7F6F1).css,
+      );
+    });
+  });
 }

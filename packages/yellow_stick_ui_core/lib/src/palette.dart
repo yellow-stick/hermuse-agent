@@ -36,6 +36,8 @@ final class YsPalette {
     required this.backdrop,
     required this.success,
     required this.successMuted,
+    required this.info,
+    required this.infoMuted,
     required this.error,
     required this.errorWash,
     required this.logoSurface,
@@ -91,8 +93,15 @@ final class YsPalette {
   /// Positive status (Connected).
   final YsColor success;
 
-  /// Positive wash: behind a check that was already in place.
+  /// Positive wash: behind the calm tick of a flow step the user has gone
+  /// past.
   final YsColor successMuted;
+
+  /// Informational status: something already in place, nothing done now.
+  final YsColor info;
+
+  /// Informational wash: behind the tick of a check already in place.
+  final YsColor infoMuted;
 
   /// Negative status (errors, destructive actions).
   final YsColor error;
@@ -129,11 +138,41 @@ final class YsPalette {
     backdrop: YsColor(0x8C000000),
     success: YsColor(0xFF07B123),
     successMuted: YsColor(0x2907B123),
+    info: YsColor(0xFF3B82F6),
+    infoMuted: YsColor(0x293B82F6),
     error: YsColor(0xFFE5484D),
     errorWash: YsColor(0x14E5484D),
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
     shadow: YsColor(0x73000000),
+  );
+
+  /// Yellow Stick light theme: warm paper canvas, golden-hour yellow.
+  static const light = YsPalette(
+    canvas: YsColor(0xFFF7F6F1),
+    paper: YsColor(0xFFFFFFFF),
+    paperClear: YsColor(0xCCFFFFFF),
+    neutralAmbient: YsColor(0xFFE9E7E0),
+    neutralFilm: YsColor(0xFFDBD8CE),
+    content: YsColor(0xFF1C1808),
+    contentMuted: YsColor(0x8C1C1808),
+    contentSubtle: YsColor(0x611C1808),
+    primary: YsColor(0xFFF5C21B),
+    primary2: YsColor(0xFFD9A90A),
+    primaryMuted: YsColor(0x2BD9A90A),
+    primaryWash: YsColor(0x14D9A90A),
+    primaryContent: YsColor(0xFF1A1505),
+    line: YsColor(0x1F000000),
+    backdrop: YsColor(0x59000000),
+    success: YsColor(0xFF0B8A1E),
+    successMuted: YsColor(0x290B8A1E),
+    info: YsColor(0xFF2563EB),
+    infoMuted: YsColor(0x292563EB),
+    error: YsColor(0xFFD92D20),
+    errorWash: YsColor(0x14D92D20),
+    logoSurface: YsColor(0xFFFFFFFF),
+    avatarSurface: YsColor(0xFFE7DFD2),
+    shadow: YsColor(0x241A1505),
   );
 
   /// Every role by its CSS custom-property name (`--paper-clear`, ...).
@@ -155,6 +194,8 @@ final class YsPalette {
     'backdrop': backdrop,
     'success': success,
     'success-muted': successMuted,
+    'info': info,
+    'info-muted': infoMuted,
     'error': error,
     'error-wash': errorWash,
     'logo-surface': logoSurface,
@@ -162,3 +203,14 @@ final class YsPalette {
     'shadow': shadow,
   };
 }
+
+/// Which theme the app shows.
+enum YsThemeMode { system, light, dark }
+
+/// Resolves [mode] to a palette: [system] follows [platformDark].
+YsPalette resolveTheme(YsThemeMode mode, {required bool platformDark}) =>
+    switch (mode) {
+      YsThemeMode.system => platformDark ? YsPalette.dark : YsPalette.light,
+      YsThemeMode.light => YsPalette.light,
+      YsThemeMode.dark => YsPalette.dark,
+    };

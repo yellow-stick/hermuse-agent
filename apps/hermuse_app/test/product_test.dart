@@ -83,11 +83,16 @@ Future<List<http.Request>> _pump(
 }
 
 void main() {
-  testWidgets('missing plugin shows the enable instructions', (tester) async {
+  testWidgets('missing plugin offers its install, and the server guide to '
+      'install it by hand', (tester) async {
     await _pump(tester, FeedScreen(instance: _instance, onDiscuss: (_) {}), {});
     expect(find.text('Enable the Hermuse plugin'), findsOneWidget);
     expect(
-      find.textContaining('hermes plugins enable hermuse'),
+      find.widgetWithText(YsButton, 'Install Hermuse on this Hermes'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(YsButton, 'Open the server guide'),
       findsOneWidget,
     );
   });

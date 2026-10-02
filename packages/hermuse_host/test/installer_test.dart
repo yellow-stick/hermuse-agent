@@ -411,9 +411,12 @@ void main() {
             '-Json',
           ]),
         );
+        // Git for Windows' system autocrlf=true would check the clone out
+        // with CRLF and fail the pinning checkout.
         expect(stageEnvironment, {
           ...environment,
           'HERMES_HOME': script.hermesHome,
+          'GIT_CONFIG_PARAMETERS': "'core.autocrlf'='false'",
         });
         // The setup wizard and the gateway belong to the app's onboarding.
         expect(script.stagesRun, isNot(contains('configure')));
@@ -423,6 +426,20 @@ void main() {
         expect(closed.finished, isTrue);
         expect(closed.runtimeHome, isNull);
         expect(Directory('${script.hermesHome}/runtime').existsSync(), isFalse);
+      });
+
+      test('the LF checkout keeps the git configuration the host passes '
+          'through GIT_CONFIG_PARAMETERS', () async {
+        const environment = {
+          'Path': r'C:\Windows\system32',
+          'GIT_CONFIG_PARAMETERS': "'http.proxy'='http://proxy:3128'",
+        };
+        await drain(script.installer(windows: true, environment: environment));
+        final (_, stageEnvironment) = script.stageCalls['repository']!;
+        expect(
+          stageEnvironment['GIT_CONFIG_PARAMETERS'],
+          "'http.proxy'='http://proxy:3128' 'core.autocrlf'='false'",
+        );
       });
 
       test(

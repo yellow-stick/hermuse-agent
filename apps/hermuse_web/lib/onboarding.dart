@@ -59,13 +59,12 @@ class HermuseOnboarding extends StatelessComponent {
           p(classes: 'hermuse-card-error', [.text('${onboarding.error}')]),
           div(classes: 'hermuse-card-actions', [
             YsButton.neutral(label: 'Back to chat', onPressed: onSkipToChat),
+            // The first look failed: nothing to refresh, read it anew (the
+            // "Checking this Hermes…" card shows meanwhile).
             YsButton.primary(
               label: 'Retry',
-              onPressed: () => unawaited(
-                context.container
-                    .read(onboardingProvider(instance.id).notifier)
-                    .refresh(),
-              ),
+              onPressed: () =>
+                  context.container.invalidate(onboardingProvider(instance.id)),
             ),
           ]),
         ]),
@@ -82,6 +81,7 @@ class HermuseOnboarding extends StatelessComponent {
         OnboardingStep.connections => HermuseConnections(
           instance: instance,
           onBack: onSkipToChat,
+          lead: _stepper(OnboardingStep.connections),
         ),
         OnboardingStep.defaultModel => _DefaultModel(
           instanceId: instance.id,
@@ -372,9 +372,11 @@ class _RuntimeCheckState extends State<_RuntimeCheck> {
         ),
       ]),
       YsPressable(
-        onPressed: () => context.container
-            .read(onboardingProvider(component.instanceId).notifier)
-            .skip(),
+        onPressed: _busy
+            ? null
+            : () => context.container
+                  .read(onboardingProvider(component.instanceId).notifier)
+                  .skip(),
         label: 'Skip this step',
         classes: 'hermuse-ob-link',
         builder: (context, press) => span([.text('Skip for now')]),
@@ -450,7 +452,7 @@ class _DefaultModelState extends State<_DefaultModel> {
             if (freeTier.noticePending)
               div(classes: 'hermuse-ob-row', [
                 YsButton.neutral(
-                  label: _busy ? '…' : 'Use ${freeTier.model}',
+                  label: _busy ? 'Saving…' : 'Use ${freeTier.model}',
                   onPressed: _busy
                       ? null
                       : () async {

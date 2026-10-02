@@ -1,0 +1,54 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Hermuse computer — desktop</title>
+<style>
+*{box-sizing:border-box}
+html,body{width:1280px;height:800px;margin:0;overflow:hidden;font-family:sans-serif}
+.wall{position:absolute;inset:0;background:linear-gradient(135deg,#16303e 0%,#256073 55%,#3d8fa3 100%)}
+.panel{position:absolute;top:0;left:0;right:0;height:30px;background:#20292e;color:#ddd;display:flex;align-items:center;font-size:13px;padding:0 10px;gap:12px}
+.panel .menu{font-weight:bold}
+.panel .task{background:#3a464d;border-radius:4px;padding:3px 10px}
+.panel .spacer{flex:1}
+.chrome{position:absolute;top:52px;left:36px;width:900px;height:560px;background:#dee1e6;border-radius:8px 8px 0 0;box-shadow:0 8px 30px rgba(0,0,0,.5);overflow:hidden}
+.tabs{display:flex;background:#c9ccd2;padding:8px 8px 0;gap:6px;font-size:12px}
+.tab{background:#eef0f3;border-radius:7px 7px 0 0;padding:7px 14px;max-width:230px;white-space:nowrap;overflow:hidden;color:#333}
+.tab.active{background:#fff}
+.tab.dim{color:#888}
+.bar{display:flex;align-items:center;gap:8px;background:#fff;padding:8px 12px;border-bottom:1px solid #ddd}
+.nav{color:#666;font-size:14px}
+.url{flex:1;background:#eef1f4;border-radius:12px;padding:6px 14px;font-size:13px;color:#333;white-space:nowrap;overflow:hidden}
+.page{background:#f4f1ea;height:450px;padding:16px 24px;color:#222;overflow:hidden}
+.page h1{font-size:20px;margin:4px 0 10px}
+.page table{width:100%;border-collapse:collapse;background:#fff;font-size:13px}
+.page th,.page td{padding:8px 10px;border-bottom:1px solid #ddd;text-align:left}
+.page th{background:#eef3ee}
+.best{color:#0a7a3d;font-weight:bold}
+.cta{display:inline-block;margin-top:12px;background:#0a7a3d;color:#fff;padding:9px 18px;border-radius:8px;font-size:14px}
+.term{position:absolute;top:330px;left:700px;width:520px;height:300px;background:rgba(12,14,16,.96);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.6);color:#ddd;font-family:monospace;font-size:12px;padding:10px 14px;overflow:hidden}
+.term .title{color:#999;font-size:12px;border-bottom:1px solid #333;padding-bottom:6px;margin-bottom:8px}
+.term .g{color:#7CFC00}
+.term p{margin:2px 0;white-space:pre}
+</style></head>
+<body>
+<div class="wall"></div>
+<div class="panel"><span class="menu">Applications</span><span class="task">◉ Chromium — Watto Compare</span><span class="task">▣ Terminal</span><span class="spacer"></span><span>🔊 ⛁</span><span>Thu Oct 1, 19:42</span></div>
+<div class="chrome">
+  <div class="tabs"><div class="tab active">Watto Compare — Green electricity…</div><div class="tab dim">Lumen Pure — Switch form</div><div class="tab dim">Watto Stay — Annecy</div></div>
+  <div class="bar"><span class="nav">← → ⟳</span><span class="url">🔒 compare.watto.example/energy-lyon</span></div>
+  <div class="page">
+    <h1>October 2026 offers for a 60 m² flat</h1>
+    <table><tr><th>Offer</th><th>Price</th><th>A month for you</th><th>Exit fee</th></tr>
+    <tr><td>Voltia renewal</td><td>€0.24/kWh</td><td>€98</td><td>—</td></tr>
+    <tr><td>Voltia Verte</td><td>€0.19/kWh</td><td>€79</td><td>none</td></tr>
+    <tr><td class="best">Lumen Pure ✓</td><td class="best">€0.18/kWh</td><td class="best">€76</td><td>none</td></tr></table>
+    <p><span class="cta">Switch to Lumen Pure — starts Friday</span></p>
+  </div>
+</div>
+<div class="term">
+  <div class="title">hermuse@computer: ~</div>
+  <p>hermuse@computer:~$ ps -eo pid,comm,rss | sort -k3 -n | tail -5</p>
+  <p>&nbsp;&nbsp;PID COMMAND&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;RSS</p>
+  <p>&nbsp;&nbsp;824 Xvfb&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;41208</p>
+  <p>&nbsp;1018 chromium&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;191104</p>
+  <p>&nbsp;&nbsp;24 chromium&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;274636</p>
+  <p class="g">hermuse@computer:~$ █</p>
+</div>
+</body></html>

@@ -314,7 +314,7 @@ def test_upgrade_recreates_the_container_on_the_same_volume(tmp_path, docker, mo
     assert removed < run
     created = scripted.calls[run]
     assert created[created.index("-v") + 1] == "hermuse-computer-default-home:/home/hermuse"
-    assert created[-1] == "hermuse-computer:0.2.0"
+    assert created[-1] == runtime.IMAGE
     assert created[created.index("--name") + 1] == "hermuse-computer-default"
     assert ["127.0.0.1::9223", "127.0.0.1::8765"] == [
         created[i + 1] for i, arg in enumerate(created) if arg == "-p"]

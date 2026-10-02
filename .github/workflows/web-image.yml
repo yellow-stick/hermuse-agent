@@ -1,0 +1,105 @@
+# Publishes the Hermuse web app + relay image that the desktop app's SSH
+# installer runs on a server (its `web` step, behind Caddy at
+# https://app.hermuse.<ip-dashes>.sslip.io): ghcr.io/yellow-stick/hermuse-web:<version>,
+# <version> = `version:` of hermes-plugin/hermuse/plugin.yaml (the web app ships
+# with the plugin version it works with, like computer-image.yml), for
+# linux/amd64 and linux/arm64. The package must be public (GitHub → Packages →
+# hermuse-web → settings) so servers can pull it anonymously.
+#
+# The jaspr site and both relay bundles (`dart build cli`, cross-compiled) are
+# built on the runner; apps/hermuse_relay/Dockerfile only copies them, so the
+# multi-arch build needs no emulation. Actions are pinned by commit (tag in the
+# trailing comment); the Flutter SDK comes from tool/release/toolchain.lock.json,
+# checked by SHA-256.
+name: Web image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/hermuse_web/**
+      - apps/hermuse_relay/**
+      - packages/**
+      - pubspec.yaml
+      - pubspec.lock
+      - hermes-plugin/hermuse/plugin.yaml
+      - tool/release/toolchain.lock.json
+      - .github/workflows/web-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: web-image
+  cancel-in-progress: false
+
+env:
+  JASPR_CLI_VERSION: 0.23.5
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The Flutter SDK from toolchain.lock.json
+        run: |
+          set -euo pipefail
+          lock=tool/release/toolchain.lock.json
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/flutter.tar.xz" "$(jq -er '.flutter.url' "$lock")"
+          echo "$(jq -er '.flutter.sha256' "$lock")  $RUNNER_TEMP/flutter.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/flutter.tar.xz" -C "$RUNNER_TEMP"
+          rm "$RUNNER_TEMP/flutter.tar.xz"
+          "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics --no-cli-animations
+          echo "$RUNNER_TEMP/flutter/bin" >>"$GITHUB_PATH"
+          echo "$HOME/.pub-cache/bin" >>"$GITHUB_PATH"
+      - run: flutter pub get --enforce-lockfile
+      - run: dart pub global activate jaspr_cli "$JASPR_CLI_VERSION"
+      - run: jaspr build
+        working-directory: apps/hermuse_web
+      - name: Stage the build context
+        run: |
+          set -euo pipefail
+          ctx="$RUNNER_TEMP/context"
+          mkdir -p "$ctx"
+          cp -r apps/hermuse_web/build/jaspr "$ctx/web"
+          for arch in x64:amd64 arm64:arm64; do
+            (cd apps/hermuse_relay &&
+              dart build cli -t bin/server.dart --target-os linux --target-arch "${arch%%:*}" -o "$RUNNER_TEMP/relay-${arch%%:*}")
+            cp -r "$RUNNER_TEMP/relay-${arch%%:*}/bundle" "$ctx/relay-${arch##*:}"
+          done
+          cp apps/hermuse_relay/Dockerfile "$ctx/"
+          find "$ctx" -maxdepth 3 -path "$ctx/web" -prune -o -print
+
+      - name: Read the plugin version
+        id: version
+        run: |
+          version="$(sed -n 's/^version:[[:space:]]*//p' hermes-plugin/hermuse/plugin.yaml | tr -d "\"' ")"
+          if [ -z "$version" ]; then
+            echo "no version in hermes-plugin/hermuse/plugin.yaml" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ runner.temp }}/context
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/yellow-stick/hermuse-web:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=Hermuse web app served by hermuse_relay

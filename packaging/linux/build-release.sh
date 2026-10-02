@@ -104,6 +104,7 @@ hermuse_log "cliproxy $HERMUSE_CLIPROXY_SHA256, helper $HERMUSE_LINUX_HELPER_SHA
 
 hermuse_log "flutter build linux --release"
 (cd "$src/apps/hermuse_app" && flutter build linux --release --no-pub \
+  --dart-define=HERMUSE_APP_VERSION="$HERMUSE_PUBSPEC_VERSION" \
   --dart-define=HERMUSE_CLIPROXY_SHA256="$HERMUSE_CLIPROXY_SHA256" \
   --dart-define=HERMUSE_CLIPROXY_PLATFORM=linux-amd64 \
   --dart-define=HERMUSE_LINUX_HELPER_SHA256="$HERMUSE_LINUX_HELPER_SHA256")

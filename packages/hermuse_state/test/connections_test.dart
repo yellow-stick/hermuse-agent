@@ -704,10 +704,10 @@ void main() {
           hermuseDatabaseProvider.overrideWithValue(db),
           secretStoreProvider.overrideWithValue(MemorySecretStore()),
           transportFactoryProvider.overrideWithValue((_) async => fake),
-          restClientProvider('vps').overrideWith(
+          restClientProvider('desk').overrideWith(
             (ref) => HermesRestClient(
               rest.client,
-              baseUrl: Uri.parse('https://vps.example'),
+              baseUrl: Uri.parse('http://127.0.0.1:9119'),
             ),
           ),
           httpClientProvider.overrideWithValue(sidecar.client),
@@ -722,6 +722,17 @@ void main() {
           ),
         ],
       );
+      // The sidecar serves the Hermes on this computer.
+      final registry = await bridgeContainer.read(registryProvider.future);
+      await registry.add(
+        HermesInstance(
+          id: 'desk',
+          label: 'This computer',
+          kind: InstanceKind.local,
+          baseUrl: Uri.parse('http://127.0.0.1:9119'),
+          auth: AuthMethod.loopbackToken,
+        ),
+      );
     });
 
     tearDown(() async {
@@ -729,7 +740,7 @@ void main() {
     });
 
     Future<ConnectionsState> bridgeCards() =>
-        bridgeContainer.read(connectionCardsProvider('vps').future);
+        bridgeContainer.read(connectionCardsProvider('desk').future);
 
     test('hidden without a bridge host, shown with one', () async {
       // The default container has no host: no bridge cards.
@@ -795,7 +806,7 @@ void main() {
       rest.routes['GET /api/providers/custom-endpoints'] = ScriptedRest.json({
         'endpoints': [],
       });
-      bridgeContainer.invalidate(connectionCardsProvider('vps'));
+      bridgeContainer.invalidate(connectionCardsProvider('desk'));
       final again = await bridgeCards();
       final metaAgain = again.cards.where((c) => c.id == 'bridge:meta').single;
       expect(metaAgain.state, ConnectionCardState.disconnected);
@@ -870,7 +881,7 @@ void main() {
       };
       await bridgeCards();
       final notifier = bridgeContainer.read(
-        connectionCardsProvider('vps').notifier,
+        connectionCardsProvider('desk').notifier,
       );
       final result = await notifier.startBridgeLogin(
         'bridge:meta',
@@ -880,7 +891,7 @@ void main() {
       expect(authStatusCalls, greaterThanOrEqualTo(2));
       expect(
         bridgeContainer
-            .read(connectionCardsProvider('vps'))
+            .read(connectionCardsProvider('desk'))
             .value
             ?.pendingBridgeLogin,
         isNull,
@@ -921,7 +932,7 @@ void main() {
       });
       await bridgeCards();
       final notifier = bridgeContainer.read(
-        connectionCardsProvider('vps').notifier,
+        connectionCardsProvider('desk').notifier,
       );
       final result = await notifier.startBridgeLogin(
         'bridge:meta',
@@ -937,7 +948,7 @@ void main() {
         isFalse,
       );
       final card = bridgeContainer
-          .read(connectionCardsProvider('vps'))
+          .read(connectionCardsProvider('desk'))
           .value!
           .cards
           .where((c) => c.id == 'bridge:meta')
@@ -964,7 +975,7 @@ void main() {
       });
       await bridgeCards();
       final notifier = bridgeContainer.read(
-        connectionCardsProvider('vps').notifier,
+        connectionCardsProvider('desk').notifier,
       );
       final result = await notifier.startBridgeLogin(
         'bridge:meta',
@@ -1009,7 +1020,7 @@ void main() {
       };
       await bridgeCards();
       final notifier = bridgeContainer.read(
-        connectionCardsProvider('vps').notifier,
+        connectionCardsProvider('desk').notifier,
       );
       final pending = notifier.startBridgeLogin(
         'bridge:meta',
@@ -1037,7 +1048,7 @@ void main() {
           ScriptedRest.json({'ok': true});
       await bridgeCards();
       await bridgeContainer
-          .read(connectionCardsProvider('vps').notifier)
+          .read(connectionCardsProvider('desk').notifier)
           .disconnect('bridge:meta');
       expect(
         rest.calls.any(
@@ -1046,6 +1057,353 @@ void main() {
               c.path == '/api/providers/custom-endpoints/meta-bridge',
         ),
         isTrue,
+      );
+    });
+  });
+
+  group('subscription bridge on a server', () {
+    const name = 'claude-dev@shop.com.json';
+    const label = 'Claude Pro/Max (bridge)';
+    const bridgeBase = 'http://127.0.0.1:41000';
+    // Account files exactly as a sidecar stores them.
+    final freshGrant = jsonEncode({
+      'type': 'claude',
+      'email': 'dev@shop.com',
+      'refresh_token': 'rt-new',
+    });
+    final desktopGrant = jsonEncode({
+      'type': 'claude',
+      'email': 'dev@shop.com',
+      'refresh_token': 'rt-desk',
+    });
+    final serverAccount = {
+      'name': name,
+      'provider': 'claude',
+      'email': 'dev@shop.com',
+      'usable': true,
+    };
+
+    late ProviderContainer bridgeContainer;
+    late _CountingBridgeHost host;
+    late ScriptedRest sidecar;
+    // This desktop's sidecar auth dir, and the server bridge's accounts.
+    late Map<String, String> sidecarFiles;
+    late List<Map<String, Object?>> serverAccounts;
+    late List<Map<String, Object?>> uploads;
+    late List<Map<String, Object?>> endpoints;
+    late List<Map<String, Object?>> registered;
+    late bool modelsLag;
+
+    http.Response reply(Object? payload, [int status = 200]) =>
+        http.Response.bytes(
+          utf8.encode(jsonEncode(payload)),
+          status,
+          headers: {'content-type': 'application/json'},
+        );
+
+    setUp(() async {
+      sidecarFiles = {};
+      serverAccounts = [];
+      uploads = [];
+      endpoints = [];
+      registered = [];
+      modelsLag = false;
+      sidecar = ScriptedRest({
+        'GET /v0/management/auth-files': (_) async => reply({
+          'files': [
+            for (final MapEntry(:key, :value) in sidecarFiles.entries)
+              {
+                'name': key,
+                'provider': (jsonDecode(value) as Map)['type'],
+                'status': 'active',
+                'disabled': false,
+                'unavailable': false,
+              },
+          ],
+        }),
+        'GET /v0/management/auth-files/download': (request) async {
+          final content = sidecarFiles[request.url.queryParameters['name']];
+          return content == null
+              ? reply({'error': 'file not found'}, 404)
+              : http.Response.bytes(utf8.encode(content), 200);
+        },
+        'POST /v0/management/auth-files': (request) async {
+          sidecarFiles[request.url.queryParameters['name']!] = request.body;
+          return reply({'status': 'ok'});
+        },
+        'DELETE /v0/management/auth-files': (request) async {
+          final gone = sidecarFiles.remove(request.url.queryParameters['name']);
+          return gone == null
+              ? reply({'error': 'auth file not found'}, 404)
+              : reply({'status': 'ok'});
+        },
+        'GET /v0/management/anthropic-auth-url': (_) async => reply({
+          'status': 'ok',
+          'url': 'https://claude.ai/oauth/authorize?state=claude-1',
+          'state': 'claude-1',
+        }),
+        // The browser approves at once: the sidecar saves the new grant.
+        'GET /v0/management/get-auth-status': (_) async {
+          sidecarFiles[name] = freshGrant;
+          return reply({'status': 'ok'});
+        },
+      });
+      rest.routes
+        ..['GET /api/providers/custom-endpoints'] = ScriptedRest.dynamicJson(
+          () => {'endpoints': endpoints},
+        )
+        ..['POST /api/providers/custom-endpoints'] = (request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          registered.add(body);
+          endpoints = [
+            {
+              'id': 'claude-bridge',
+              'name': body['name'],
+              'base_url': body['base_url'],
+            },
+          ];
+          return reply({'ok': true, 'id': 'claude-bridge'});
+        }
+        ..['DELETE /api/providers/custom-endpoints/claude-bridge'] = (_) async {
+          endpoints = [];
+          return reply({'ok': true});
+        }
+        ..['GET $hermuseBridgeRoute/status'] = ScriptedRest.dynamicJson(
+          () => {
+            'supported': true,
+            'platform': 'linux-amd64',
+            'version': 'v7.3.18',
+            'installed': true,
+            'running': true,
+            'base_url': bridgeBase,
+            'accounts': serverAccounts,
+            'detail': '',
+          },
+        )
+        ..['POST $hermuseBridgeRoute/ensure'] = ScriptedRest.json({
+          'base_url': bridgeBase,
+          'api_key': 'server-key',
+          'version': 'v7.3.18',
+        })
+        ..['POST $hermuseBridgeRoute/accounts'] = (request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          uploads.add(body);
+          final account = jsonDecode(body['content']! as String) as Map;
+          serverAccounts.add({
+            'name': body['name'],
+            'provider': account['type'],
+            'email': account['email'],
+            'usable': true,
+          });
+          // CLIProxyAPI lists a new account's models a moment later.
+          modelsLag = true;
+          return reply({'ok': true, 'name': body['name']});
+        }
+        ..['GET $hermuseBridgeRoute/models'] = (_) async {
+          final lagging = modelsLag;
+          modelsLag = false;
+          return reply({
+            'object': 'list',
+            'data': [
+              if (!lagging && serverAccounts.isNotEmpty) ...[
+                {
+                  'id': 'claude-opus-4-6',
+                  'object': 'model',
+                  'owned_by': 'anthropic',
+                },
+                {
+                  'id': 'claude-sonnet-4-6',
+                  'object': 'model',
+                  'owned_by': 'anthropic',
+                },
+              ],
+            ],
+          });
+        };
+      // The server bridge's account route (the name is URL-encoded).
+      final accountRoute =
+          '$hermuseBridgeRoute/accounts/${Uri.encodeComponent(name)}';
+      rest.routes['DELETE $accountRoute'] = (_) async {
+        serverAccounts.removeWhere((a) => a['name'] == name);
+        return reply({'ok': true, 'name': name});
+      };
+      host = _CountingBridgeHost(
+        BridgeConnection(
+          baseUrl: Uri.parse('http://127.0.0.1:8317'),
+          apiKey: 'sidecar-api-key',
+          managementKey: 'sidecar-mgmt-key',
+        ),
+      );
+      bridgeContainer = ProviderContainer(
+        overrides: [
+          hermuseDatabaseProvider.overrideWithValue(db),
+          secretStoreProvider.overrideWithValue(MemorySecretStore()),
+          transportFactoryProvider.overrideWithValue((_) async => fake),
+          restClientProvider('vps').overrideWith(
+            (ref) => HermesRestClient(
+              rest.client,
+              baseUrl: Uri.parse('https://vps.example'),
+            ),
+          ),
+          httpClientProvider.overrideWithValue(sidecar.client),
+          bridgeHostProvider.overrideWithValue(host),
+        ],
+      );
+    });
+
+    tearDown(() async {
+      bridgeContainer.dispose();
+    });
+
+    Future<ConnectionsState> serverCards() =>
+        bridgeContainer.read(connectionCardsProvider('vps').future);
+
+    ConnectionCard card(ConnectionsState state, String id) =>
+        state.cards.where((c) => c.id == id).single;
+
+    Future<BridgePollResult> signIn() async {
+      await serverCards();
+      return bridgeContainer
+          .read(connectionCardsProvider('vps').notifier)
+          .startBridgeLogin('bridge:anthropic', pollInterval: Duration.zero);
+    }
+
+    test('cards come from the server accounts and endpoint', () async {
+      serverAccounts.add(serverAccount);
+      endpoints = [
+        {'id': 'claude-bridge', 'name': label, 'base_url': '$bridgeBase/v1'},
+      ];
+      final state = await serverCards();
+      final claude = card(state, 'bridge:anthropic');
+      expect(claude.state, ConnectionCardState.connected);
+      expect(claude.detail, 'on the server · dev@shop.com');
+      expect(claude.onServer, isTrue);
+      expect(
+        card(state, 'bridge:codex').state,
+        ConnectionCardState.disconnected,
+      );
+      // This desktop's sidecar holds none of the server's accounts.
+      expect(sidecar.calls, isEmpty);
+      expect(host.starts, 0);
+
+      // An entry pointing at a desktop sidecar cannot work from the server:
+      // it reads as not registered, so a tap re-registers it.
+      endpoints = [
+        {
+          'id': 'claude-bridge',
+          'name': label,
+          'base_url': 'http://127.0.0.1:8317/v1',
+        },
+      ];
+      bridgeContainer.invalidate(connectionCardsProvider('vps'));
+      final stale = card(await serverCards(), 'bridge:anthropic');
+      expect(stale.state, ConnectionCardState.disconnected);
+      expect(stale.detail, contains('register in Hermes'));
+    });
+
+    test('an old plugin says what to do before any login', () async {
+      rest.routes
+        ..['GET $hermuseBridgeRoute/status'] = ScriptedRest.json({
+          'detail': 'No such API endpoint: $hermuseBridgeRoute/status',
+        }, 404)
+        ..['GET $hermusePluginRoute/files'] = ScriptedRest.json({
+          'files': ['FEED_PROMPT.md'],
+        });
+      final claude = card(await serverCards(), 'bridge:anthropic');
+      expect(claude.needsPlugin, isTrue);
+      expect(claude.state, ConnectionCardState.disconnected);
+      expect(claude.detail, serverBridgeUpdatePlugin);
+
+      final result = await signIn();
+
+      expect(result.outcome, BridgePollOutcome.error);
+      expect(result.message, serverBridgeUpdatePlugin);
+      expect(sidecar.calls, isEmpty);
+      expect(host.starts, 0);
+
+      // No Hermuse plugin at all.
+      rest.routes['GET $hermusePluginRoute/files'] = ScriptedRest.json({
+        'detail': 'Not Found',
+      }, 404);
+      bridgeContainer.invalidate(connectionCardsProvider('vps'));
+      expect(
+        card(await serverCards(), 'bridge:anthropic').detail,
+        serverBridgeInstallPlugin,
+      );
+    });
+
+    test('sign-in moves the sidecar account to the server', () async {
+      // The sidecar's own account, used by a Hermes on this computer.
+      final ownGrant = jsonEncode({
+        'type': 'claude',
+        'email': 'me@home.com',
+        'refresh_token': 'rt-own',
+      });
+      sidecarFiles['claude-me@home.com.json'] = ownGrant;
+
+      final result = await signIn();
+
+      expect(result.outcome, BridgePollOutcome.ok);
+      expect(uploads, [
+        {'name': name, 'content': freshGrant},
+      ]);
+      // The new grant left the desktop; its own account is untouched.
+      expect(sidecarFiles, {'claude-me@home.com.json': ownGrant});
+      // Hermes points at the server's bridge, never at this desktop. The
+      // catalogue read right after the upload was empty, then retried.
+      final body = registered.single;
+      expect(body['name'], label);
+      expect(body['base_url'], '$bridgeBase/v1');
+      expect(body['api_key'], 'server-key');
+      expect(body['model'], 'claude-opus-4-6');
+      expect(body['models'], ['claude-opus-4-6', 'claude-sonnet-4-6']);
+      expect(body['api_mode'], 'chat_completions');
+      final state = bridgeContainer.read(connectionCardsProvider('vps')).value!;
+      expect(state.pendingBridgeLogin, isNull);
+      final claude = card(state, 'bridge:anthropic');
+      expect(claude.state, ConnectionCardState.connected);
+      expect(claude.detail, 'on the server · dev@shop.com');
+    });
+
+    test('the desktop keeps its own grant of the account', () async {
+      sidecarFiles[name] = desktopGrant;
+
+      expect((await signIn()).outcome, BridgePollOutcome.ok);
+
+      // One grant per CLIProxyAPI: the server gets the new one, the desktop
+      // keeps the one it was refreshing.
+      expect(uploads.single['content'], freshGrant);
+      expect(sidecarFiles, {name: desktopGrant});
+    });
+
+    test('a server account only needs the endpoint', () async {
+      serverAccounts.add(serverAccount);
+
+      expect((await signIn()).outcome, BridgePollOutcome.ok);
+
+      expect(registered.single['base_url'], '$bridgeBase/v1');
+      expect(uploads, isEmpty);
+      expect(sidecar.calls, isEmpty);
+      expect(host.starts, 0);
+    });
+
+    test('disconnect removes the server account and the endpoint', () async {
+      serverAccounts.add(serverAccount);
+      endpoints = [
+        {'id': 'claude-bridge', 'name': label, 'base_url': '$bridgeBase/v1'},
+      ];
+      await serverCards();
+
+      await bridgeContainer
+          .read(connectionCardsProvider('vps').notifier)
+          .disconnect('bridge:anthropic');
+
+      expect(serverAccounts, isEmpty);
+      expect(endpoints, isEmpty);
+      final state = bridgeContainer.read(connectionCardsProvider('vps')).value!;
+      expect(
+        card(state, 'bridge:anthropic').state,
+        ConnectionCardState.disconnected,
       );
     });
   });
@@ -1059,4 +1417,18 @@ final class _FakeBridgeHost implements BridgeHost {
 
   @override
   Future<BridgeConnection> ensureStarted() async => connection;
+}
+
+/// Test [BridgeHost] counting the sidecar starts.
+final class _CountingBridgeHost implements BridgeHost {
+  _CountingBridgeHost(this.connection);
+
+  final BridgeConnection connection;
+  var starts = 0;
+
+  @override
+  Future<BridgeConnection> ensureStarted() async {
+    starts++;
+    return connection;
+  }
 }

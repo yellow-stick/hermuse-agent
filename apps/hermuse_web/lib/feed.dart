@@ -18,8 +18,8 @@ import 'screens.dart';
 ///
 /// The page keeps the destination title and offers, in a card headed by
 /// the plugin drawing, to install the plugin through the instance's
-/// dashboard ([installHermusePlugin]), with the commands to install it by
-/// hand from a Hermuse checkout as a fallback.
+/// dashboard ([installHermusePlugin]); the server guide covers installing
+/// it by hand.
 class HermusePluginMissing extends StatefulComponent {
   const HermusePluginMissing({
     required this.instance,
@@ -31,14 +31,6 @@ class HermusePluginMissing extends StatefulComponent {
 
   /// Destination title (Feed, Ideas, Goals, Library).
   final String title;
-
-  static const commands =
-      '# on your computer, from the Hermuse repository\n'
-      'scp -r hermes-plugin/hermuse you@your-server:~/.hermes/plugins/\n'
-      '# on the server\n'
-      'hermes plugins enable hermuse\n'
-      'hermes hermuse enable\n'
-      '# then restart Hermes (hermes serve or the dashboard)';
 
   @override
   State<HermusePluginMissing> createState() => _HermusePluginMissingState();
@@ -80,6 +72,10 @@ class HermusePluginMissing extends StatefulComponent {
     ),
     css('.hermuse-plugin-actions')
         .styles(display: .flex, gap: .all(8.px), raw: {'flex-wrap': 'wrap'}),
+    css('.hermuse-plugin-body a').styles(
+      color: .variable('--primary-2'),
+      raw: {'text-decoration': 'underline', 'text-underline-offset': '2px'},
+    ),
     css('.hermuse-plugin-cmd').styles(
       width: 100.percent,
       margin: .zero,
@@ -105,8 +101,9 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
   String? _error;
   List<PluginScanFinding> _findings = const [];
 
-  /// The dashboard installed the plugin but must restart to serve it.
-  var _needsRestart = false;
+  /// How to restart the dashboard, which installed the plugin but must
+  /// restart to serve it: the way that works on that server.
+  ServerStep? _restart;
 
   /// Hermes' scan report while the install waits for the user's consent.
   String? _consent;
@@ -118,7 +115,7 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
       _busy = true;
       _error = null;
       _findings = const [];
-      _needsRestart = false;
+      _restart = null;
     });
     try {
       final rest = await context.container.read(restClientProvider(id).future);
@@ -131,7 +128,8 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
         case PluginNeedsConsent(:final detail):
           setState(() => _consent = detail);
         case PluginNeedsDashboardRestart():
-          setState(() => _needsRestart = true);
+          final restart = (await readDashboardHost(rest)).restartDashboard;
+          if (mounted) setState(() => _restart = restart);
         case PluginInstallFailed(:final message, :final findings):
           setState(() {
             _error = message;
@@ -193,17 +191,15 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
               ),
             ),
           ]),
-          if (_needsRestart) ...[
+          if (_restart case final restart?) ...[
             p(classes: 'hermuse-plugin-body', [
               .text(
                 'Restart the Hermes dashboard to finish installing Hermuse. '
-                'Under systemd run the command below; otherwise stop '
-                '`hermes dashboard` and start it again. Then check again.',
+                '${restart.note}',
               ),
             ]),
-            pre(classes: 'hermuse-plugin-cmd', [
-              .text('systemctl --user restart hermes-dashboard'),
-            ]),
+            if (restart.command case final command?)
+              pre(classes: 'hermuse-plugin-cmd', [.text(command)]),
           ],
           if (_error case final error?)
             p(classes: 'hermuse-route-error', [.text(error)]),
@@ -211,9 +207,15 @@ class _HermusePluginMissingState extends State<HermusePluginMissing> {
             pre(classes: 'hermuse-plugin-cmd', [
               .text([for (final f in _findings) '$f'].join('\n')),
             ]),
-          p(classes: 'hermuse-plugin-body', [.text('Or install it by hand:')]),
-          pre(classes: 'hermuse-plugin-cmd', [
-            .text(HermusePluginMissing.commands),
+          p(classes: 'hermuse-plugin-body', [
+            .text('To install it by hand instead, follow the '),
+            a(
+              href: hermusePluginByHandGuide,
+              target: .blank,
+              attributes: const {'rel': 'noopener noreferrer'},
+              [.text('server guide')],
+            ),
+            .text('.'),
           ]),
         ]),
       ]),

@@ -1,0 +1,113 @@
+# Continuous integration of pull requests and of the merge queue: the checks
+# and the unsigned packages of every platform (build.yml).
+#
+#   changes -> build (build.yml: checks, Linux, macOS and Windows packages, assembly) -> CI
+#
+# Triggers: a pull request opened, pushed to, reopened or marked ready for
+# review, and a merge group of the merge queue. A draft runs nothing: marking
+# it ready for review starts the run. A change of documentation only (docs/
+# and Markdown, except under hermes-plugin/ and the app's copy of it, whose
+# README and skill ship in the app) builds nothing. A new push cancels the run
+# it supersedes. No secret, no signing, no smoke leg: the installed-package
+# smoke tests run for a release (release.yml) and for a manual test run
+# (smoke.yml).
+#
+# Required check of main: `CI`, the last job. It runs whatever happened before
+# it and passes only when every job succeeded or was skipped, so a failure
+# upstream never passes as a skipped check. The web app has its own required
+# check, `Web` (web-pr.yml, web-queue.yml).
+#
+# Actions are pinned by commit (tag in the trailing comment).
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per pull request; every merge group has a ref of its own.
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Changes
+    # Draft skip: a draft pull request runs nothing; `ready_for_review` starts its run.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      code: ${{ steps.scope.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull request's merge commit and its first parent, the base it merges onto.
+          fetch-depth: 2
+
+      - name: Whether the change touches more than documentation
+        id: scope
+        env:
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          # A merge group is compared with its base commit, fetched; a pull
+          # request with the first parent of its merge commit.
+          if [ -n "$MERGE_GROUP_BASE" ]; then base=$MERGE_GROUP_BASE; else base=$(git rev-parse HEAD^1); fi
+          code=true
+          # A change set that cannot be computed builds everything.
+          if { [ -z "$MERGE_GROUP_BASE" ] || git fetch -q --no-tags --depth=1 origin "$base"; } &&
+            git diff --name-only "$base" HEAD >"$RUNNER_TEMP/changed"; then
+            echo "Changed against $base:"
+            cat "$RUNNER_TEMP/changed"
+            # Documentation only: docs/ and Markdown, except under hermes-plugin/
+            # and the app's copy of it, whose README and skill ship in the app.
+            if [ -s "$RUNNER_TEMP/changed" ]; then
+              code=false
+              while IFS= read -r file; do
+                case $file in
+                  hermes-plugin/* | apps/hermuse_app/assets/*) code=true ;;
+                  docs/* | *.md) ;;
+                  *) code=true ;;
+                esac
+              done <"$RUNNER_TEMP/changed"
+            fi
+          else
+            echo "::warning::no change set against '$base': everything is built"
+          fi
+          [ "$code" = true ] || echo "::notice::documentation only: nothing to build"
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: changes
+    # Documentation-only filter: a change of documentation only builds nothing.
+    if: needs.changes.outputs.code == 'true'
+    # Unsigned, every platform, no tag: the defaults of build.yml, without secrets.
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+
+  ci:
+    name: CI
+    needs: [changes, build]
+    # Gate: always runs, to fail when a job above failed or was cancelled.
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          if ! jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null; then
+            echo "::error::a job failed or was cancelled"
+            exit 1
+          fi

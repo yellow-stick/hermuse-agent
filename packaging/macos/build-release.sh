@@ -211,6 +211,7 @@ log "CLIProxyAPI $cliproxy_upstream_sha (upstream) → $cliproxy_sha (signed)"
 # --- build ---------------------------------------------------------------------
 log "flutter build macos --release"
 (cd "$src/apps/hermuse_app" && flutter build macos --release --no-pub \
+  --dart-define=HERMUSE_APP_VERSION="$pubspec_version" \
   --dart-define=HERMUSE_CLIPROXY_SHA256="$cliproxy_sha" \
   --dart-define=HERMUSE_CLIPROXY_PLATFORM="$platform")
 built="$src/apps/hermuse_app/build/macos/Build/Products/Release/$app_name.app"

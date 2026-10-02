@@ -15,7 +15,7 @@ HERMUSE_APP_ID="com.yellowstick.hermuse_app"
 HERMUSE_BINARY="hermuse_app"
 HERMUSE_DEB_PACKAGE="hermuse-agent"
 HERMUSE_MAINTAINER="Yellow Stick <contact@yellow-stick.com>"
-HERMUSE_ICON_SVG="$HERMUSE_REPO/apps/hermuse_web/web/icons/icon.svg"
+HERMUSE_ICON_SVG="$HERMUSE_REPO/packaging/icon/icon.svg"
 HERMUSE_ICON_SIZES="48 128 256 512"
 
 # Bundle slots copied after `flutter build linux`, never stripped/modified.
@@ -171,7 +171,7 @@ check_bundle() {
   verify_sha256 "$bundle/$HERMUSE_BUNDLE_HELPER" "$helper_sha" "bundle $HERMUSE_BUNDLE_HELPER"
 }
 
-# render_icons <out dir> — hicolor PNGs + scalable SVG from the web icon.
+# render_icons <out dir> — hicolor PNGs + scalable SVG from the app icon.
 render_icons() {
   local out="$1" size
   hermuse_require rsvg-convert

@@ -7,6 +7,7 @@
 library;
 
 export 'src/content.dart' show DemoChat, DemoInstance, DemoRow, demoInstances;
-export 'src/plugin_api.dart' show demoPluginClient;
+export 'src/computer_stream.dart' show demoComputerConnector;
+export 'src/plugin_api.dart' show DemoComputer, demoPluginClient;
 export 'src/setup.dart' show demoOverrides, seedDemo;
 export 'src/transport.dart' show DemoTransport, demoReadOnlyMessage;

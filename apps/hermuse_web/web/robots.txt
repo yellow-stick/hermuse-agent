@@ -1,0 +1,7 @@
+# Hermuse web app. Served by a user's own relay, it stays out of search
+# results through the page's robots meta (noindex). Crawling stays allowed, or
+# crawlers could not read that noindex and might list the bare URL. The
+# read-only demo (https://demo.hermuse.app) has no such meta and is indexable.
+# The product homepage is https://hermuse.app.
+User-agent: *
+Allow: /
