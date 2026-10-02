@@ -266,6 +266,21 @@ Install from Chrome/Edge (install icon in the address bar) or Safari (Share →
 Add to Home Screen). Service workers need HTTPS in production (localhost is
 exempt).
 
+### App icons
+
+`packaging/icon/icon.svg` is the native app icon: the Hermuse mark on a 512
+grid, a copy of `docs/assets/hermuse-logo/icon.svg` in
+yellow-stick/hermuse-website. `packaging/icon/render-app-icons.sh` renders
+every committed native icon from it (rsvg-convert and ImageMagick): Android
+legacy and adaptive icons (vector foreground and monochrome layer), iOS
+(opaque, full bleed), macOS (Apple's grid), Windows `app_icon.ico` and the
+Linux window icon. The `.deb` and AppImage render their hicolor icons from the
+same SVG when packaging. Run the script again after changing the icon:
+
+```bash
+packaging/icon/render-app-icons.sh
+```
+
 ### Version notes
 
 - `jaspr_builder` 0.23.5 requires `analyzer ^12`, which caps `build_runner` at

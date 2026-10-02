@@ -54,6 +54,19 @@ static void my_application_activate(GApplication* application) {
 
   gtk_window_set_default_size(window, 1280, 720);
 
+  // The Hermuse icon from the bundle's data/ (rendered by
+  // packaging/icon/render-app-icons.sh): X11 taskbars and window switchers
+  // read it from the window. Wayland shells and GNOME show the icon of the
+  // desktop entry named after APPLICATION_ID, installed by the .deb and the
+  // AppImage.
+  g_autofree gchar* executable = g_file_read_link("/proc/self/exe", nullptr);
+  if (executable != nullptr) {
+    g_autofree gchar* directory = g_path_get_dirname(executable);
+    g_autofree gchar* icon =
+        g_build_filename(directory, "data", "app_icon.png", nullptr);
+    gtk_window_set_icon_from_file(window, icon, nullptr);
+  }
+
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
