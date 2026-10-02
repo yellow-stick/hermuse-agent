@@ -166,8 +166,11 @@ every setup still proves health from the current server.
 
 ### Save the dashboard, then connect a model
 
-After verification, Hermuse opens the normal connection form with the
-generated **HTTPS URL**, user **`admin`** and **dashboard password** filled
+After verification, **Your Hermes is ready** shows the dashboard address and
+its account: user **`admin`** and the generated **dashboard password**, hidden
+until you choose **Show**, with **Copy**. Keep it: you need it to connect to
+this Hermes from another computer or from the web app. **Continue** opens the
+normal connection form with the **HTTPS URL**, user and password filled
 in. Give the instance a name and choose **Save and connect**. Hermuse verifies
 the login before storing these dashboard credentials in the operating system's
 secure credential store (the system keyring on Linux), not in the app database or a
@@ -180,6 +183,11 @@ hash, not a new plaintext recovery file. Keep the connection form open until
 saving succeeds. A retry that needs the dashboard credential handoff explicitly
 establishes a new password for this installer-managed account; previous sign-in
 details then stop working.
+
+Once saved, the account stays readable in the app: **Instances** shows the
+username and the hidden password, with **Show** and **Copy**, on the row of
+every password instance whose password this app holds. The web app keeps a
+password for the open tab only and shows it while it holds one.
 
 Next, **What's on <name>** lists the installed components. Choose
 **Continue** to set up a model provider; sign in to a provider or enter your

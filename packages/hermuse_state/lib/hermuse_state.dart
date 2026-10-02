@@ -11,4 +11,5 @@ export 'src/onboarding.dart';
 export 'src/product.dart';
 export 'src/providers.dart';
 export 'src/remote_setup.dart';
+export 'src/saved_sign_in.dart';
 export 'src/server_bridge.dart';

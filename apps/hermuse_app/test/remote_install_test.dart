@@ -444,6 +444,60 @@ void main() {
     );
 
     testWidgets(
+      'should show the generated dashboard account before handing it over',
+      (tester) async {
+        final installer = _Installer();
+        final outcomes = <RemoteInstallOutcome>[];
+        String? copied;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copied = (call.arguments as Map)['text'] as String;
+            }
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
+        );
+        await _pump(tester, installer, onDone: outcomes.add);
+        await _connect(tester);
+        await tester.tap(_button('Accept fingerprint'));
+        await tester.pumpAndSettle();
+        installer.attempts.single.add(const RemoteInstallCompleted(_outcome));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Your Hermes is ready'), findsOneWidget);
+        expect(find.text(_outcome.username), findsOneWidget);
+        expect(find.textContaining('find it again later'), findsOneWidget);
+        expect(find.text(_outcome.password), findsNothing);
+        expect(outcomes, isEmpty, reason: 'The user reads it first.');
+
+        await tester.tap(_button('Show'));
+        await tester.pumpAndSettle();
+        expect(find.text(_outcome.password), findsOneWidget);
+        await tester.tap(_button('Hide'));
+        await tester.pumpAndSettle();
+        expect(find.text(_outcome.password), findsNothing);
+
+        await tester.tap(_button('Copy'));
+        await tester.pump();
+        expect(copied, _outcome.password);
+        expect(_button('Copied'), findsOneWidget);
+        await tester.pump(const Duration(seconds: 2));
+
+        await tester.tap(_button('Continue'));
+        await tester.pumpAndSettle();
+        expect(outcomes.single, same(_outcome));
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+
+    testWidgets(
       'should rebuild partial retry readiness from fresh inspection, not the failed attempt',
       (tester) async {
         final installer = _Installer();

@@ -145,24 +145,28 @@ class HermuseInstances extends StatelessComponent {
           provider: connectionStateProvider(instance.id),
           builder: (context, state) => HermuseWatch(
             provider: connectionProvider(instance.id),
-            builder: (context, connection) => _InstanceRow(
-              instance: instance,
-              state: state,
-              // Refused credentials, on the first connection or on a later
-              // reconnect (the chat's sign-in banner reads the same).
-              authFailed:
-                  connection.error is HermesAuthFailed ||
-                  (state.value == ConnectionState.error &&
-                      connection.value?.transport.lastError
-                          is HermesAuthFailed),
-              isDefault: registry.value?.primary?.id == instance.id,
-              onOpen: () => onOpen(instance.id),
-              onRename: (name) => _rename(context, instance, name),
-              onMakeDefault: () => _setPrimary(context, instance),
-              onRemove: () => _remove(context, instance),
-              onSetup: () => onSetup(instance.id),
-              onComponents: () => onComponents(instance.id),
-              onConnections: () => onConnections(instance.id),
+            builder: (context, connection) => HermuseWatch(
+              provider: savedSignInProvider(instance.id),
+              builder: (context, saved) => _InstanceRow(
+                instance: instance,
+                state: state,
+                // Refused credentials, on the first connection or on a later
+                // reconnect (the chat's sign-in banner reads the same).
+                authFailed:
+                    connection.error is HermesAuthFailed ||
+                    (state.value == ConnectionState.error &&
+                        connection.value?.transport.lastError
+                            is HermesAuthFailed),
+                saved: saved.value,
+                isDefault: registry.value?.primary?.id == instance.id,
+                onOpen: () => onOpen(instance.id),
+                onRename: (name) => _rename(context, instance, name),
+                onMakeDefault: () => _setPrimary(context, instance),
+                onRemove: () => _remove(context, instance),
+                onSetup: () => onSetup(instance.id),
+                onComponents: () => onComponents(instance.id),
+                onConnections: () => onConnections(instance.id),
+              ),
             ),
           ),
         ),
@@ -361,6 +365,39 @@ class HermuseInstances extends StatelessComponent {
       fontSize: YsType.small.size.px,
       lineHeight: YsType.small.lineHeight.px,
     ),
+    // The saved dashboard account (desktop `SignInBox`).
+    css('.hermuse-signin-box').styles(
+      padding: .all(YsSpace.md.px),
+      radius: .circular(YsRadius.row.px),
+      display: .flex,
+      flexDirection: .column,
+      backgroundColor: .variable('--canvas'),
+    ),
+    css('.hermuse-signin-caption').styles(
+      color: .variable('--content-muted'),
+      fontSize: YsType.caption.size.px,
+      lineHeight: YsType.caption.lineHeight.px,
+    ),
+    css('.hermuse-signin-value + .hermuse-signin-caption')
+        .styles(margin: .only(top: YsSpace.sm.px)),
+    css('.hermuse-signin-value').styles(
+      color: .variable('--content'),
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
+      raw: {
+        'font-family': YsType.monoFamily,
+        'overflow-wrap': 'anywhere',
+        'min-width': '0',
+      },
+    ),
+    css('.hermuse-signin-password').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(YsSpace.sm.px),
+    ),
+    css('.hermuse-signin-password > .hermuse-signin-value')
+        .styles(flex: .grow(1)),
   ];
 }
 
@@ -369,6 +406,7 @@ class _InstanceRow extends StatefulComponent {
     required this.instance,
     required this.state,
     required this.authFailed,
+    required this.saved,
     required this.isDefault,
     required this.onOpen,
     required this.onRename,
@@ -384,6 +422,9 @@ class _InstanceRow extends StatefulComponent {
 
   /// True when the connection failed with auth (offer the sign-in).
   final bool authFailed;
+
+  /// The dashboard account this tab holds for the instance; null when none.
+  final SavedSignIn? saved;
 
   /// The instance Hermuse opens on start (the registry's primary).
   final bool isDefault;
@@ -470,6 +511,8 @@ class _InstanceRowState extends State<_InstanceRow> {
           span([.text(status)]),
         ]),
       ]),
+      if (component.saved case final saved? when !_signingIn)
+        _SignInBox(username: saved.username, password: saved.password),
       // The sign-in's line: an empty box while it runs, ticked with
       // sparks once signed in; it stays until another action starts.
       if (_signCheck case final check?)
@@ -759,4 +802,66 @@ class _InstanceRowState extends State<_InstanceRow> {
       ]),
     );
   }
+}
+
+/// A dashboard account to keep: its username, and its password hidden until
+/// "Show", with a Copy button (desktop `SignInBox`).
+class _SignInBox extends StatefulComponent {
+  const _SignInBox({required this.username, required this.password});
+
+  final String username;
+  final String password;
+
+  @override
+  State<_SignInBox> createState() => _SignInBoxState();
+}
+
+class _SignInBoxState extends State<_SignInBox> {
+  var _shown = false;
+  var _copied = false;
+  Timer? _reset;
+
+  @override
+  void dispose() {
+    _reset?.cancel();
+    super.dispose();
+  }
+
+  void _copy() {
+    if (kIsWeb) web.window.navigator.clipboard.writeText(component.password);
+    setState(() => _copied = true);
+    _reset?.cancel();
+    _reset = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Component build(BuildContext context) => div(classes: 'hermuse-signin-box', [
+    span(classes: 'hermuse-signin-caption', [.text('Username')]),
+    code(classes: 'hermuse-signin-value', [.text(component.username)]),
+    span(classes: 'hermuse-signin-caption', [.text('Password')]),
+    div(classes: 'hermuse-signin-password', [
+      if (_shown)
+        code(classes: 'hermuse-signin-value', [.text(component.password)])
+      else
+        // Fixed width: the hidden value does not tell its length.
+        span(
+          classes: 'hermuse-signin-value',
+          attributes: {'role': 'img', 'aria-label': 'Password hidden'},
+          [.text('••••••••••••')],
+        ),
+      YsButton.pill(
+        label: _shown ? 'Hide' : 'Show',
+        onPressed: () => setState(() => _shown = !_shown),
+        small: true,
+      ),
+      YsButton.pill(
+        icon: _copied ? YsIcon.check : YsIcon.copy,
+        label: _copied ? 'Copied' : 'Copy',
+        onPressed: _copy,
+        small: true,
+      ),
+    ]),
+  ]);
 }

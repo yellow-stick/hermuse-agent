@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import 'onboarding.dart' show setupChatTitle;
+import 'saved_sign_in.dart';
 
 part 'providers.g.dart';
 
@@ -108,7 +109,9 @@ final class InstanceAuth {
     final secrets = _ref.read(secretStoreProvider);
     await secrets.write(instanceId, SecretKeys.username, username);
     await secrets.write(instanceId, SecretKeys.password, password);
-    _ref.invalidate(connectionProvider(instanceId));
+    _ref
+      ..invalidate(savedSignInProvider(instanceId))
+      ..invalidate(connectionProvider(instanceId));
   }
 
   /// Registers [candidate] once [secrets] (keyed by [SecretKeys]: the
