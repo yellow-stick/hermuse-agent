@@ -12,7 +12,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermes_client/testing.dart';
 import 'package:hermuse_app/computer/browser_parts.dart' show FrameImage;
+import 'package:hermuse_app/panel/profile_panel.dart' show ProfilePanel;
 import 'package:hermuse_app/shell/app.dart';
+import 'package:hermuse_app/shell/agents.dart';
 import 'package:hermuse_app/shell/brand.dart';
 import 'package:hermuse_app/sidebar/side_chats.dart';
 import 'package:hermuse_app/thread/thread_view.dart';
@@ -72,6 +74,189 @@ Future<void> main() async {
     fileName: 'compact-500x900.png',
   );
 
+  group('agents', () {
+    for (final size in [const Size(1440, 900), const Size(390, 844)]) {
+      testWidgets('should create a real agent on one server at $size', (
+        tester,
+      ) async {
+        final harness = await _Harness.open();
+        addTearDown(harness.dispose);
+        final profiles = _ProfilesFixture(harness.fake);
+        await _pumpApp(tester, size, harness);
+        expect(harness.calls('profiles.create'), isEmpty);
+        await tester.tap(find.byType(AgentSwitcher));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Create agent…'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(YsDialog),
+            matching: find.byType(YsInputBox),
+          ),
+          'Research partner',
+        );
+        await tester.enterText(
+          find.descendant(
+            of: find.byType(YsDialog),
+            matching: find.byType(YsTextArea),
+          ),
+          'Research carefully. Cite original sources.',
+        );
+        await tester.tap(find.text('Save agent'));
+        await tester.pumpAndSettle();
+        expect(harness.calls('profiles.create'), hasLength(1));
+        final created = harness.calls('profiles.create').single;
+        expect(created['soul'], 'Research carefully. Cite original sources.');
+        expect(created['mirror_credentials'], isTrue);
+        expect(created['share_auth'], isTrue);
+        expect(profiles.prompts['default'], 'Original independent SOUL');
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(HermuseApp)),
+        );
+        expect(
+          container.read(activeThreadProvider).value?.profile,
+          created['name'],
+        );
+        tester.view.physicalSize = size.width > 600
+            ? const Size(390, 844)
+            : const Size(1440, 900);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byType(AgentSwitcher));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Hermuse').last);
+        await tester.pumpAndSettle();
+        expect(container.read(activeThreadProvider).value?.profile, 'default');
+        await tester.tap(find.byType(AgentSwitcher));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Research partner').last);
+        await tester.pumpAndSettle();
+        expect(
+          container.read(activeThreadProvider).value?.profile,
+          created['name'],
+        );
+        expect(
+          profiles.prompts[created['name']],
+          'Research carefully. Cite original sources.',
+        );
+      });
+    }
+
+    testWidgets(
+      'should open the avatar editor without overwriting the stored prompt',
+      (tester) async {
+        final harness = await _Harness.open();
+        addTearDown(harness.dispose);
+        final profiles = _ProfilesFixture(harness.fake);
+        await _pumpApp(tester, const Size(1440, 900), harness);
+        await tester.tap(_icon(YsIcon.pencil));
+        await tester.pumpAndSettle();
+        final prompt = find.descendant(
+          of: find.byType(YsDialog),
+          matching: find.byType(YsTextArea),
+        );
+        expect(
+          tester.widget<YsTextArea>(prompt).controller.text,
+          'Original independent SOUL',
+        );
+        expect(harness.calls('profiles.configure'), isEmpty);
+        await tester.enterText(prompt, 'Only the original agent changes.');
+        await tester.tap(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is YsPressable && widget.semanticLabel == 'Aya avatar',
+          ),
+        );
+        await tester.tap(find.text('Save agent'));
+        await tester.pumpAndSettle();
+        expect(profiles.prompts['default'], 'Only the original agent changes.');
+        expect(harness.calls('profiles.configure').single['name'], 'default');
+      },
+    );
+
+    testWidgets('should keep a partially created agent as the retry target', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final profiles = _ProfilesFixture(harness.fake)..failNextConfigure = true;
+      await _pumpApp(tester, const Size(1440, 900), harness);
+      await tester.tap(find.byType(AgentSwitcher));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create agent…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save agent'));
+      await tester.pumpAndSettle();
+      expect(harness.calls('profiles.create'), hasLength(1));
+      await tester.tap(find.text('Save agent'));
+      await tester.pumpAndSettle();
+      expect(harness.calls('profiles.create'), hasLength(1));
+      expect(profiles.prompts, hasLength(2));
+      expect(find.byType(YsDialog), findsNothing);
+    });
+
+    testWidgets(
+      'should honor reduced motion and animate only the original profile',
+      (tester) async {
+        late BuildContext context;
+        const chat = ChatState(
+          agentName: 'Hermuse',
+          threads: [],
+          activeThreadId: '',
+        );
+        Future<void> mount(bool reduced) => tester.pumpWidget(
+          MediaQuery(
+            data: MediaQueryData(disableAnimations: reduced),
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox();
+              },
+            ),
+          ),
+        );
+        await mount(false);
+        expect(
+          (agentImage(
+            context,
+            profile: 'default',
+            chat: chat,
+          ) as AssetImage).assetName,
+          'assets/images/agents/hermuse/connecting.webp',
+        );
+        expect(
+          (agentImage(
+            context,
+            profile: 'another',
+            chat: chat,
+          ) as AssetImage).assetName,
+          'assets/images/agents/hermuse.webp',
+        );
+        const aya = AgentProfile(
+          profile: 'aya',
+          displayName: 'Aya',
+          avatarId: 'aya',
+        );
+        expect(
+          (agentImage(
+            context,
+            profile: 'aya',
+            agent: aya,
+            chat: chat,
+          ) as AssetImage).assetName,
+          'assets/images/agents/aya.webp',
+        );
+        await mount(true);
+        expect(
+          (agentImage(
+            context,
+            profile: 'default',
+            chat: chat,
+          ) as AssetImage).assetName,
+          'assets/images/agents/hermuse.webp',
+        );
+      },
+    );
+  });
   group('interactions', () {
     testWidgets('Enter in composer sends and clears the field', (tester) async {
       final harness = await _Harness.open();
@@ -368,19 +553,24 @@ Future<void> main() async {
       await _pumpApp(tester, const Size(1938, 1062), harness);
       final controller = await harness.controller(tester);
 
+      // The chat's own tool rows carry the same names: look in the panel.
+      Finder inPanel(String text) => find.descendant(
+        of: find.byType(ProfilePanel),
+        matching: find.text(text),
+      );
       expect(find.text('Today'), findsOneWidget);
       expect(find.text('Yesterday'), findsOneWidget);
-      expect(find.text('Web search'), findsNWidgets(2));
-      expect(find.text('Browser navigate'), findsNWidgets(2));
+      expect(inPanel('Web search'), findsNWidgets(2));
+      expect(inPanel('Browser navigate'), findsNWidgets(2));
       await _capture(tester, 'proof-panel-activity.png');
 
       // Ran elsewhere (CLI, Telegram, …): shown, nothing to open. Rows are
       // newest first.
-      await tester.tap(find.text('Browser navigate').first);
+      await tester.tap(inPanel('Browser navigate').first);
       await tester.pumpAndSettle();
       expect(controller.state.activeThreadId, 'stored-1');
 
-      await tester.tap(find.text('Web search').first);
+      await tester.tap(inPanel('Web search').first);
       await tester.pumpAndSettle();
       expect(controller.state.activeThreadId, 'side-fjord');
     });
@@ -521,7 +711,6 @@ Future<void> main() async {
         find.text('Next: ${formatAutomationTime(nextAt(8))}'),
         findsOneWidget,
       );
-      expect(find.text('Hermuse'), findsNWidgets(4));
       expect(find.text('Paused'), findsOneWidget);
       expect(
         find.text('Provider returned 429: rate limit reached'),
@@ -1329,6 +1518,59 @@ Future<void> main() async {
   });
 }
 
+final class _ProfilesFixture {
+  _ProfilesFixture(FakeHermesTransport transport) {
+    transport
+      ..on('profiles.list', (_) => {'profiles': profiles.values.toList()})
+      ..on(
+        'profiles.describe',
+        (params) => {
+          'name': params['name'],
+          'soul': prompts[params['name']],
+          'model': <String, Object?>{},
+        },
+      )
+      ..on('profiles.create', (params) {
+        final name = params['name']! as String;
+        prompts[name] = params['soul']! as String;
+        profiles[name] = {'name': name, 'path': '/profiles/$name'};
+        return {
+          'ok': true,
+          'name': name,
+          'path': '/profiles/$name',
+          'soul_written': true,
+          'mirrored': <String, Object?>{},
+        };
+      })
+      ..on('profiles.configure', (params) {
+        if (failNextConfigure) {
+          failNextConfigure = false;
+          return {
+            'ok': false,
+            'applied': {'soul': false, 'ui_meta': false},
+          };
+        }
+        final name = params['name']! as String;
+        if (params['soul'] case final String soul) prompts[name] = soul;
+        profiles[name]!['ui_meta'] = params['ui_meta'];
+        return {
+          'ok': true,
+          'applied': {'soul': true, 'ui_meta': true},
+        };
+      });
+  }
+
+  bool failNextConfigure = false;
+  final prompts = <String, String>{'default': 'Original independent SOUL'};
+  final profiles = <String, Map<String, Object?>>{
+    'default': {
+      'name': 'default',
+      'path': '/profiles/default',
+      'is_default': true,
+    },
+  };
+}
+
 /// Test app wiring: one instance, memory DB/secrets, scripted transport.
 final class _Harness {
   static const goodPassword = 'new-password';
@@ -1448,6 +1690,7 @@ final class _Harness {
         bool archived = false,
       }) => SessionRow(
         instanceId: instanceId,
+        profile: 'default',
         sessionId: id,
         title: title,
         parentId: parentId,
@@ -1483,6 +1726,7 @@ final class _Harness {
         for (final m in _sideTranscripts['side-rail']!.$2)
           MessageRow(
             instanceId: instanceId,
+            profile: 'default',
             sessionId: 'side-rail',
             messageId: 'row-${m['row_id']}',
             author: m['role'] == 'user' ? 'user' : 'agent',
@@ -1492,8 +1736,28 @@ final class _Harness {
       ]);
     }
     final fake = FakeHermesTransport()
+      ..on(
+        'profiles.list',
+        (_) => {
+          'profiles': [
+            {
+              'name': 'default',
+              'path': '/profiles/default',
+              'is_default': true,
+            },
+          ],
+        },
+      )
       ..on('session.resume', (params) {
         final id = params['session_id']! as String;
+        if (id == 'stored-new') {
+          return {
+            'session_id': 'live-new',
+            'message_count': 0,
+            'messages': const [],
+            'info': const <String, Object?>{},
+          };
+        }
         if (_sideTranscripts[id] case (final title, final messages)) {
           return {
             'session_id': 'live-$id',
@@ -1672,6 +1936,11 @@ Future<void> _pumpApp(
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
+  // Motion selection has a focused test above. Keep interaction screenshots
+  // deterministic and allow pumpAndSettle with the looping avatar assets.
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
   await tester.pumpWidget(
     RepaintBoundary(
       key: _captureKey,

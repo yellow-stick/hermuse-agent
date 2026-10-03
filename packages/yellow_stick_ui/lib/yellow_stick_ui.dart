@@ -13,6 +13,7 @@ export 'src/ys_done_box.dart';
 export 'src/ys_entrance.dart';
 export 'src/ys_fields.dart';
 export 'src/ys_focus_ring.dart';
+export 'src/ys_glass.dart';
 export 'src/ys_hover.dart';
 export 'src/ys_icon_widget.dart';
 export 'src/ys_lift.dart';

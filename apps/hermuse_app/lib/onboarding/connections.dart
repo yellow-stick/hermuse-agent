@@ -500,13 +500,23 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          title,
-                          style: titleType.flutter.copyWith(
-                            color: palette.contentColor,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                title,
+                                style: titleType.flutter.copyWith(
+                                  color: palette.contentColor,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (card.isDefault) ...[
+                              const SizedBox(width: YsSpace.sm),
+                              const _DefaultTag(),
+                            ],
+                          ],
                         ),
                         if (subtitle.isNotEmpty && subtitle != title)
                           Text(
@@ -910,6 +920,34 @@ final class _ConnectionCardState extends ConsumerState<_ConnectionCard> {
       };
 }
 
+/// Marks the provider running the instance's main model.
+final class _DefaultTag extends StatelessWidget {
+  const _DefaultTag();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.primaryMutedColor,
+        borderRadius: BorderRadius.circular(YsRadius.pill),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: YsSpace.sm,
+          vertical: YsSpace.xxs,
+        ),
+        child: Text(
+          'Default',
+          style: YsType.caption.flutter.copyWith(
+            color: palette.primaryInkColor,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The row's tile: the provider's mark ([YsProviderLogo.forKey] of
 /// [logoKey]), or the initial of [name] when there is none.
 final class _Logo extends StatelessWidget {
@@ -1133,7 +1171,11 @@ final class _ModelSlotsState extends ConsumerState<_ModelSlots> {
           Align(
             alignment: Alignment.centerRight,
             child: YsButton.neutral(
-              label: _busy ? 'Working…' : 'Use as default',
+              label: _busy
+                  ? 'Working…'
+                  : widget.card.isDefault
+                  ? 'Update default'
+                  : 'Use as default',
               onPressed: _busy || current.large == null
                   ? null
                   : () => unawaited(_makeDefault()),

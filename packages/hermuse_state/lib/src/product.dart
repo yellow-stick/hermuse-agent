@@ -556,9 +556,15 @@ String hermesReason(HermesException e) => switch (e) {
 @riverpod
 class Feed extends _$Feed {
   @override
-  Future<List<FeedPost>> build(String instanceId, {int limit = 50}) async {
+  Future<List<FeedPost>> build(
+    String instanceId, {
+    int limit = 50,
+    String profile = 'default',
+  }) async {
     await _requirePlugin(ref, instanceId);
-    final rest = await ref.watch(restClientProvider(instanceId).future);
+    final rest = await ref.watch(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final body = await rest.getJson('$hermusePluginRoute/feed', {
       'limit': '$limit',
     });
@@ -570,7 +576,9 @@ class Feed extends _$Feed {
 
   /// Toggles a reaction; returns the updated post.
   Future<FeedPost> react(String postId, FeedReaction reaction) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final post = FeedPost.fromJson(
       await rest.postJson(
         '$hermusePluginRoute/feed/${Uri.encodeComponent(postId)}/react',
@@ -594,7 +602,9 @@ class Feed extends _$Feed {
     String topic = '',
     List<String> sources = const [],
   }) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final post = FeedPost.fromJson(
       await rest.postJson('$hermusePluginRoute/feed', {
         'title': title,
@@ -612,9 +622,15 @@ class Feed extends _$Feed {
 @riverpod
 class Ideas extends _$Ideas {
   @override
-  Future<List<Idea>> build(String instanceId, {int limit = 200}) async {
+  Future<List<Idea>> build(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  }) async {
     await _requirePlugin(ref, instanceId);
-    final rest = await ref.watch(restClientProvider(instanceId).future);
+    final rest = await ref.watch(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final body = await rest.getJson('$hermusePluginRoute/ideas', {
       'limit': '$limit',
     });
@@ -626,7 +642,9 @@ class Ideas extends _$Ideas {
 
   /// Appends user feedback to an idea; returns the updated idea.
   Future<Idea> feedback(String ideaId, String text) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final idea = Idea.fromJson(
       await rest.postJson(
         '$hermusePluginRoute/ideas/${Uri.encodeComponent(ideaId)}/feedback',
@@ -648,9 +666,15 @@ class Ideas extends _$Ideas {
 @riverpod
 class Goals extends _$Goals {
   @override
-  Future<List<Goal>> build(String instanceId, {int limit = 200}) async {
+  Future<List<Goal>> build(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  }) async {
     await _requirePlugin(ref, instanceId);
-    final rest = await ref.watch(restClientProvider(instanceId).future);
+    final rest = await ref.watch(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final body = await rest.getJson('$hermusePluginRoute/goals', {
       'limit': '$limit',
     });
@@ -668,7 +692,9 @@ class Goals extends _$Goals {
     required String why,
     String targetDate = '',
   }) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final goal = Goal.fromJson(
       await rest.postJson('$hermusePluginRoute/goals', {
         'title': title,
@@ -688,7 +714,9 @@ class Goals extends _$Goals {
     String progress = '',
     GoalStatus? status,
   }) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final goal = Goal.fromJson(
       await rest.postJson(
         '$hermusePluginRoute/goals/${Uri.encodeComponent(goalId)}/update',
@@ -716,9 +744,12 @@ Future<List<Artifact>> artifacts(
   Ref ref,
   String instanceId, {
   int limit = 200,
+  String profile = 'default',
 }) async {
   await _requirePlugin(ref, instanceId);
-  final rest = await ref.watch(restClientProvider(instanceId).future);
+  final rest = await ref.watch(
+    restClientProvider(instanceId, profile: profile).future,
+  );
   final body = await rest.getJson('$hermusePluginRoute/artifacts', {
     'limit': '$limit',
   });
@@ -734,9 +765,12 @@ Future<List<Reflection>> reflections(
   Ref ref,
   String instanceId, {
   int limit = 90,
+  String profile = 'default',
 }) async {
   await _requirePlugin(ref, instanceId);
-  final rest = await ref.watch(restClientProvider(instanceId).future);
+  final rest = await ref.watch(
+    restClientProvider(instanceId, profile: profile).future,
+  );
   final body = await rest.getJson('$hermusePluginRoute/reflections', {
     'limit': '$limit',
   });
@@ -754,16 +788,24 @@ const preferencesFileName = 'PREFERENCES.md';
 @Riverpod(name: 'systemFileProvider')
 class SystemFileState extends _$SystemFileState {
   @override
-  Future<SystemFile> build(String instanceId, String name) async {
+  Future<SystemFile> build(
+    String instanceId,
+    String name, {
+    String profile = 'default',
+  }) async {
     await _requirePlugin(ref, instanceId);
     _checkName(name);
-    final rest = await ref.watch(restClientProvider(instanceId).future);
+    final rest = await ref.watch(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     return SystemFile.fromJson(await rest.getJson(_route(name)));
   }
 
   /// Saves new Markdown content; returns the updated file.
   Future<SystemFile> save(String content) async {
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     await rest.putJson(_route(name), {'content': content});
     final file = SystemFile(name: name, content: content);
     state = AsyncData(file);

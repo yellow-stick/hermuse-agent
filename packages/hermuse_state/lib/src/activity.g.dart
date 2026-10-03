@@ -31,7 +31,7 @@ final class ActivityProvider
   /// device across launches.
   ActivityProvider._({
     required ActivityFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'activityProvider',
@@ -47,7 +47,7 @@ final class ActivityProvider
   String toString() {
     return r'activityProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -58,8 +58,8 @@ final class ActivityProvider
 
   @override
   Stream<List<ActivityItem>> create(Ref ref) {
-    final argument = this.argument as String;
-    return activity(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return activity(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -73,13 +73,17 @@ final class ActivityProvider
   }
 }
 
-String _$activityHash() => r'6def0a79352d25fef16b89fdfe660517952d7f28';
+String _$activityHash() => r'27bff9dd2782a3aff21591e74e9c9f3b9462fcc2';
 
 /// Tools the agent finished on [instanceId], newest first, as kept on this
 /// device across launches.
 
 final class ActivityFamily extends $Family
-    with $FunctionalFamilyOverride<Stream<List<ActivityItem>>, String> {
+    with
+        $FunctionalFamilyOverride<
+          Stream<List<ActivityItem>>,
+          (String, {String profile})
+        > {
   ActivityFamily._()
     : super(
         retry: null,
@@ -92,8 +96,8 @@ final class ActivityFamily extends $Family
   /// Tools the agent finished on [instanceId], newest first, as kept on this
   /// device across launches.
 
-  ActivityProvider call(String instanceId) =>
-      ActivityProvider._(argument: instanceId, from: this);
+  ActivityProvider call(String instanceId, {String profile = 'default'}) =>
+      ActivityProvider._(argument: (instanceId, profile: profile), from: this);
 
   @override
   String toString() => r'activityProvider';

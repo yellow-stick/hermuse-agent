@@ -120,7 +120,11 @@ final class AvailableModel {
 @Riverpod(name: 'modelSelectionProvider')
 class ModelSelectionState extends _$ModelSelectionState {
   @override
-  Future<ModelSelection> build(String instanceId, String providerId) async {
+  Future<ModelSelection> build(
+    String instanceId,
+    String providerId, {
+    String profile = 'default',
+  }) async {
     final db = ref.watch(hermuseDatabaseProvider);
     final cards = await ref.watch(connectionCardsProvider(instanceId).future);
     final card = cards.cards.where((c) => c.id == providerId).firstOrNull;
@@ -129,7 +133,7 @@ class ModelSelectionState extends _$ModelSelectionState {
       throw StateError('$providerId is not connected');
     }
     final models = await _discoverModels(card);
-    final saved = await db.readSetting(_key(instanceId, providerId));
+    final saved = await db.readSetting(_key(instanceId, providerId, profile));
     final stored = saved == null
         ? const <String, Object?>{}
         : jsonDecode(saved) as Map<String, Object?>;
@@ -158,8 +162,11 @@ class ModelSelectionState extends _$ModelSelectionState {
     return selection;
   }
 
-  static String _key(String instanceId, String providerId) =>
-      'model_selection:$instanceId:$providerId';
+  static String _key(String instanceId, String providerId, String profile) =>
+      profile == 'default'
+      ? 'model_selection:$instanceId:$providerId'
+      : 'model_selection:$instanceId:profile:'
+            '${Uri.encodeComponent(profile)}:$providerId';
 
   /// User override of one slot. [modelId] must belong to this
   /// provider's discovered list; null clears the slot.
@@ -187,7 +194,10 @@ class ModelSelectionState extends _$ModelSelectionState {
     state = AsyncData(next);
     await ref
         .read(hermuseDatabaseProvider)
-        .writeSetting(_key(instanceId, providerId), jsonEncode(next.toJson()));
+        .writeSetting(
+          _key(instanceId, providerId, profile),
+          jsonEncode(next.toJson()),
+        );
   }
 
   /// Clears one slot (it reverts to the newest discovered id on next load).
@@ -197,8 +207,10 @@ class ModelSelectionState extends _$ModelSelectionState {
   /// (`POST /api/model/set`, scope `main`), small → every auxiliary slot
   /// (scope `auxiliary`, empty task = all slots). For bridge cards the
   /// Hermes custom endpoint is first re-registered with exactly the ≤2
-  /// selected models, at the bridge serving the instance. Custom endpoints
-  /// are referenced by their Hermes slug ([hermesProviderId]).
+  /// selected models, at the bridge serving the instance. Custom endpoints,
+  /// bridges included, are referenced by their `providers.<key>` in Hermes:
+  /// [hermesProviderId] for a saved endpoint, the `id` the registration
+  /// answers for a bridge (its display name is no provider id).
   ///
   /// Hermes guards expensive and data-training models: it answers
   /// `confirm_required` and changes nothing. That throws
@@ -210,7 +222,9 @@ class ModelSelectionState extends _$ModelSelectionState {
     if (current == null) throw StateError('selection is still loading');
     final large = current.large;
     if (large == null) throw StateError('no large model selected');
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     Future<void> assign(Map<String, Object?> body) async {
       final response = await rest.postJson('/api/model/set', {
         ...body,
@@ -233,14 +247,14 @@ class ModelSelectionState extends _$ModelSelectionState {
     }
 
     final spec = bridgeSpecForCard(providerId);
-    final provider = spec == null
-        ? hermesProviderId(providerId)
-        : 'custom:${spec.label}';
+    final String provider;
     Uri? bridgeUrl;
     if (spec != null) {
-      final bridge = await _bridge(rest);
+      final bridge = await _bridge(
+        await ref.read(restClientProvider(instanceId).future),
+      );
       bridgeUrl = bridge.baseUrl.replace(path: '/v1');
-      await rest.postJson(
+      final registered = await rest.postJson(
         '/api/providers/custom-endpoints',
         hermesCustomEndpoint(
           cliproxyBaseUrl: bridge.baseUrl,
@@ -251,6 +265,13 @@ class ModelSelectionState extends _$ModelSelectionState {
           chatCompletionsPath: true,
         ),
       );
+      final key = registered['id'];
+      if (key is! String || key.isEmpty) {
+        throw ConnectionRejected(
+          'Hermes saved ${spec.label} without saying how to name it.',
+        );
+      }
+      provider = key;
       await assign({
         'scope': 'main',
         'provider': provider,
@@ -259,6 +280,7 @@ class ModelSelectionState extends _$ModelSelectionState {
         'api_key': bridge.apiKey,
       });
     } else {
+      provider = hermesProviderId(providerId);
       await assign({'scope': 'main', 'provider': provider, 'model': large});
     }
     final small = current.small;
@@ -270,12 +292,13 @@ class ModelSelectionState extends _$ModelSelectionState {
         if (bridgeUrl != null) 'base_url': bridgeUrl.toString(),
       });
     }
-    unawaited(
-      ref
-          .read(onboardingProvider(instanceId).notifier)
-          .refresh()
-          .then((_) {}, onError: (_) {}),
-    );
+    // The cards mark the provider now running the main model.
+    for (final refresh in [
+      ref.read(connectionCardsProvider(instanceId).notifier).refresh,
+      ref.read(onboardingProvider(instanceId).notifier).refresh,
+    ]) {
+      unawaited(refresh().then((_) {}, onError: (_) {}));
+    }
   }
 
   /// Whether the instance's bridge cards use the bridge on its server.
@@ -325,7 +348,9 @@ class ModelSelectionState extends _$ModelSelectionState {
             model.id,
       }.toList();
     }
-    final connection = await ref.read(connectionProvider(instanceId).future);
+    final connection = await ref.read(
+      connectionProvider(instanceId, profile: profile).future,
+    );
     final options = await connection.transport.call(
       HermesMethods.modelOptions,
       const ModelOptionsParams(),
@@ -355,7 +380,11 @@ class ModelSelectionState extends _$ModelSelectionState {
 /// fails to load (disconnected mid-flight, empty discovery) are skipped, so
 /// one broken provider never empties the picker.
 @riverpod
-Future<List<AvailableModel>> availableModels(Ref ref, String instanceId) async {
+Future<List<AvailableModel>> availableModels(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) async {
   final cards = await ref.watch(connectionCardsProvider(instanceId).future);
   final models = <AvailableModel>[];
   for (final card in cards.cards) {
@@ -373,7 +402,7 @@ Future<List<AvailableModel>> availableModels(Ref ref, String instanceId) async {
     }
     try {
       final selection = await ref.watch(
-        modelSelectionProvider(instanceId, card.id).future,
+        modelSelectionProvider(instanceId, card.id, profile: profile).future,
       );
       for (final id in selection.selected) {
         models.add(

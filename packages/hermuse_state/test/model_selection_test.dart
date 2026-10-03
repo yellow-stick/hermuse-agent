@@ -320,6 +320,14 @@ void main() {
               baseUrl: Uri.parse('https://vps.example'),
             ),
           ),
+          for (final profile in ['aya', 'noah'])
+            restClientProvider('vps', profile: profile).overrideWith(
+              (ref) => HermesRestClient(
+                mock,
+                baseUrl: Uri.parse('https://vps.example'),
+                profile: profile,
+              ),
+            ),
         ],
       );
       final registry = await container.read(registryProvider.future);
@@ -394,6 +402,51 @@ void main() {
       expect(reloaded.small, 'glm-5.3-flash');
     });
 
+    test(
+      'selections and default writes are independent for two profiles',
+      () async {
+        final aya = modelSelectionProvider('vps', 'zai', profile: 'aya');
+        final noah = modelSelectionProvider('vps', 'zai', profile: 'noah');
+        final ayaSub = container.listen(aya, (_, _) {});
+        final noahSub = container.listen(noah, (_, _) {});
+        addTearDown(ayaSub.close);
+        addTearDown(noahSub.close);
+        await Future.wait([
+          container.read(aya.future),
+          container.read(noah.future),
+        ]);
+        await container.read(aya.notifier).select(ModelTier.large, 'glm-5.1');
+        await container.read(noah.notifier).select(ModelTier.large, 'glm-5.2');
+        expect(container.read(aya).requireValue.large, 'glm-5.1');
+        expect(container.read(noah).requireValue.large, 'glm-5.2');
+        expect(
+          await db.readSetting('model_selection:vps:profile:aya:zai'),
+          contains('glm-5.1'),
+        );
+        expect(
+          await db.readSetting('model_selection:vps:profile:noah:zai'),
+          contains('glm-5.2'),
+        );
+        expect(await db.readSetting('model_selection:vps:zai'), isNull);
+        container.invalidate(aya);
+        expect((await container.read(aya.future)).large, 'glm-5.1');
+        routes['POST /api/model/set'] = (request) {
+          expect(request.url.queryParameters['profile'], 'aya');
+          return json({'ok': true});
+        };
+        await container.read(aya.notifier).makeDefault();
+        final writes = [
+          for (final call in calls)
+            if (call.method == 'POST' && call.path == '/api/model/set')
+              call.body as Map<String, Object?>,
+        ];
+        expect(writes, hasLength(2));
+        expect(writes.map((body) => body['profile']), everyElement('aya'));
+        expect(writes.first['model'], 'glm-5.1');
+        expect(container.read(noah).requireValue.large, 'glm-5.2');
+      },
+    );
+
     test('makeDefault assigns main + every auxiliary slot', () async {
       routes['POST /api/model/set'] = (_) => json({'ok': true});
       await container.read(modelSelectionProvider('vps', 'zai').future);
@@ -465,8 +518,9 @@ void main() {
           model('gpt-5.5', 'openai'),
         ],
       });
+      // Hermes keys the entry `providers.claude-bridge`: the slots name it so.
       routes['POST /api/providers/custom-endpoints'] = (_) =>
-          json({'ok': true});
+          json({'ok': true, 'id': 'claude-bridge'});
       routes['POST /api/model/set'] = (_) => json({'ok': true});
       final desktop = ProviderContainer(
         overrides: [
@@ -510,14 +564,14 @@ void main() {
           },
           {
             'scope': 'main',
-            'provider': 'custom:$label',
+            'provider': 'claude-bridge',
             'model': 'claude-opus-4-6',
             'base_url': endpoint,
             'api_key': 'server-key',
           },
           {
             'scope': 'auxiliary',
-            'provider': 'custom:$label',
+            'provider': 'claude-bridge',
             'model': 'claude-sonnet-4-6',
             'base_url': endpoint,
           },

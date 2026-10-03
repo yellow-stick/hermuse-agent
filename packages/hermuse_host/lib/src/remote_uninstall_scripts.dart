@@ -98,7 +98,8 @@ WEB_LABEL = ("org.hermuse.remote-installer", "web-v1")
 WEB_IMAGE = r"ghcr\.io/yellow-stick/hermuse-web:[a-zA-Z0-9_.-]+"
 RUNTIME_PATHS = [HOME + "/.local/bin/hermes", HOME + "/.local/bin/hermes-agent", HOME + "/.local/bin/hermes-acp",
                  HOME + "/.local/bin/node", HOME + "/.local/bin/npm", HOME + "/.local/bin/npx", PLUGIN, CHECKOUT,
-                 HERMES + "/bin", HERMES + "/node", HERMES + "/runtime", HOME + "/.local/share/uv"]
+                 HERMES + "/bin", HERMES + "/node", HERMES + "/runtime", HOME + "/.local/share/uv",
+                 ROOT + "/dashboard.env"]
 CACHE_PATHS = [HOME + "/.cache/uv", HOME + "/.cache/pip", HOME + "/.cache/npm",
                HOME + "/.cache/ms-playwright", HOME + "/.npm"]
 PATH_KINDS = {**{path: "runtime" for path in RUNTIME_PATHS},
@@ -415,6 +416,26 @@ def capture():
     if error:
         raise RuntimeError(error)
     if previous:
+        # New canonical resources get a baseline before their first mutation;
+        # an already-present unrecorded token is never silently claimed.
+        added = False
+        if previous.pop("connectionOnly", False):
+            # Connection grants only a credential. Establish other baselines
+            # now, at the first actual provisioning attempt, never retroactively.
+            previous["firewallBefore"] = firewall()
+            previous["dockerBefore"] = docker()
+            previous["packagesBefore"] = installed_packages()
+            previous["assetsBefore"] = list(installer_assets())
+            previous["assetsCreated"] = {}
+            previous["configBeforeAbsent"] = info(HERMES + "/config.yaml") is None
+            previous["caddy"] = {"importBefore": import_count(), "siteBefore": info(SITE, digest=True)}
+            added = True
+        for path, kind in PATH_KINDS.items():
+            if path not in previous["paths"]:
+                previous["paths"][path] = {"created": info(path) is None, "kind": kind, "identity": None}
+                added = True
+        if added:
+            save(previous)
         return previous
     ensure_root()
     user = account()
@@ -663,7 +684,7 @@ def path_owned(path, value):
     approved = value.get("legacyRemovablePaths", {}).get(path)
     if approved and same_identity(approved, item):
         return True
-    if entry:
+    if entry or value.get("connectionOnly"):
         return False
     if path == PLUGIN or path in plugin_assets():
         marker = info(path + "/.hermuse-remote-managed")
@@ -737,7 +758,9 @@ def service_owned():
     if not root_file(SERVICE):
         return False
     try:
-        if text(SERVICE) != REQUEST["dashboardService"]:
+        expected = REQUEST["dashboardService"]
+        previous = expected.replace("EnvironmentFile=-/var/lib/hermuse-provision/dashboard.env\n", "")
+        if text(SERVICE).rstrip("\n") not in (expected.rstrip("\n"), previous.rstrip("\n")):
             return False
         if shutil.which("systemctl"):
             result = command(["systemctl", "show", "hermuse-dashboard.service", "--property=DropInPaths", "--value"], required=False)
@@ -757,20 +780,39 @@ def service_usage():
     result = command(["systemctl", "list-unit-files", "--type=service", "--no-legend", "--no-pager"], required=False)
     if result.returncode:
         return {"account": True, "runtime": True, "reason": "Effective systemd dependencies could not be completely inspected."}
+    loaded = command(["systemctl", "list-units", "--all", "--type=service", "--plain", "--no-legend", "--no-pager"], required=False)
+    if loaded.returncode:
+        return {"account": True, "runtime": True, "reason": "Loaded systemd dependencies could not be completely inspected."}
     user = account()
     used_account = False
     used_runtime = False
-    for line in result.stdout.splitlines():
+    identities = {"hermes", str(user["uid"]), str(user["gid"])} if user else {"hermes"}
+    names = set()
+    for line in (result.stdout + "\n" + loaded.stdout).splitlines():
+        if not line.strip():
+            continue
         name = line.split()[0] if line.split() else ""
         if not re.fullmatch(r"[a-zA-Z0-9_.@:-]+\.service", name):
             return {"account": True, "runtime": True, "reason": "Systemd returned an ambiguous unit inventory."}
+        names.add(name)
+    for name in sorted(names):
         if name == "hermuse-dashboard.service" and service_owned():
+            continue
+        if name.endswith("@.service"):
+            # Bare templates cannot be queried with `show`. Read all fragments
+            # and drop-ins conservatively; instantiated units are checked below
+            # with systemd's effective, expanded properties.
+            template = command(["systemctl", "cat", name], required=False)
+            if template.returncode:
+                return {"account": True, "runtime": True, "reason": "A systemd template dependency could not be inspected."}
+            if any(re.search(r"(?<![A-Za-z0-9_])" + re.escape(identity) + r"(?![A-Za-z0-9_])", template.stdout) for identity in identities):
+                used_account = True
+                used_runtime = True
             continue
         effective = command(["systemctl", "show", name, "--property=User,Group,ExecStart,Environment,WorkingDirectory"], required=False)
         if effective.returncode:
             return {"account": True, "runtime": True, "reason": "A stopped systemd dependency could not be inspected."}
         fields = dict(line.split("=", 1) for line in effective.stdout.splitlines() if "=" in line)
-        identities = {"hermes", str(user["uid"]), str(user["gid"])} if user else {"hermes"}
         if fields.get("User") in identities or fields.get("Group") in identities:
             used_account = True
         if any(path in effective.stdout for path in (CHECKOUT, HOME + "/.local/bin/hermes", HERMES + "/node")):
@@ -924,7 +966,7 @@ def inventory(own_lock=False):
             matching = [job for job in jobs if isinstance(job, dict) and isinstance(job.get("origin"), dict)
                         and job["origin"].get("source") == "hermuse"]
             if matching:
-                resources.append(resource("jobs", "Hermuse background jobs", "jobs", owned_user() and not problem,
+                resources.append(resource("jobs", "Hermuse background jobs", "jobs", owned_user() and not problem and not value.get("connectionOnly"),
                     "Remove only jobs whose origin.source is hermuse; unrelated jobs remain."))
         except (OSError, UnsafePath, ValueError, KeyError, TypeError):
             resources.append(resource("jobs", jobs_path, "jobs", False, "Cron store is invalid or unsafe; no job records will be changed."))

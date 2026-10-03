@@ -1,3 +1,5 @@
+import 'tools.dart';
+
 /// Who wrote a message.
 enum Author { agent, user }
 
@@ -54,6 +56,11 @@ final class ToolCallBlock extends Block {
     required this.toolId,
     required this.name,
     this.summary = '',
+    this.detail = '',
+    this.output = '',
+    this.error = '',
+    this.duration,
+    this.outcomeKnown = true,
     this.running = true,
   });
 
@@ -62,14 +69,71 @@ final class ToolCallBlock extends Block {
   /// Tool name, e.g. `terminal`, `web_search`.
   final String name;
 
-  /// Preview while running, result summary once done.
+  /// Hermes' one line: its preview while running, the result once done.
   final String summary;
+
+  /// What the call works on: the full command, the query, the address
+  /// (`toolDetail`).
+  final String detail;
+
+  /// The command's printed output (terminal tools).
+  final String output;
+
+  /// Why it failed, one line; '' when it succeeded or still runs.
+  final String error;
+
+  /// How long it ran, when Hermes timed it.
+  final Duration? duration;
+
+  /// Whether [output] and [error] are known: a reloaded transcript omits
+  /// most tool results, so its rows cannot tell success from failure.
+  final bool outcomeKnown;
   final bool running;
 
-  ToolCallBlock done(String summary) => ToolCallBlock(
+  bool get failed => error.isNotEmpty;
+
+  // How the row reads, the same in both apps.
+
+  ToolKind get kind => toolKindOf(name);
+
+  String get title => toolTitle(name);
+
+  /// Commands and code show in monospace.
+  bool get monospace => kind == ToolKind.terminal || kind == ToolKind.code;
+
+  /// What the row says: [detail], else Hermes' line.
+  String get line => detail.isNotEmpty ? detail : summary;
+
+  /// The first line of [line], on the closed row.
+  String get headline => line.split('\n').first;
+
+  /// Hermes' result line when it adds to [line] (`Did 5 searches in 1.9s`
+  /// under a query); a command's preview only repeats the command.
+  String get resultLine =>
+      !monospace && summary.isNotEmpty && summary != line ? summary : '';
+
+  /// Whether opening the row shows more than its closed line.
+  bool get expandable =>
+      output.isNotEmpty ||
+      failed ||
+      line.contains('\n') ||
+      headline.length > 60 ||
+      resultLine.isNotEmpty;
+
+  ToolCallBlock done({
+    required String summary,
+    String? detail,
+    String output = '',
+    String error = '',
+    Duration? duration,
+  }) => ToolCallBlock(
     toolId: toolId,
     name: name,
     summary: summary,
+    detail: detail == null || detail.isEmpty ? this.detail : detail,
+    output: output,
+    error: error,
+    duration: duration,
     running: false,
   );
 }
@@ -316,9 +380,6 @@ enum ChatConnection {
   error,
 }
 
-/// Icon shown beside an activity entry.
-enum ActivityKind { webSearch, completed }
-
 /// A tool the agent finished in a chat: one row of the profile panel's
 /// Activity tab, kept on the device (`ChatObserver.toolCompleted`).
 final class ActivityItem {
@@ -332,7 +393,8 @@ final class ActivityItem {
   /// Hermes' tool name (`web_search`, `browser_navigate`, …).
   final String tool;
 
-  /// Hermes' one-line result, '' when it sent none.
+  /// What it worked on (the command, the query) or else Hermes' one-line
+  /// result; '' when neither is known.
   final String summary;
 
   /// When the tool finished.
@@ -341,17 +403,10 @@ final class ActivityItem {
   /// Session of the chat it ran in ('' for a chat not created yet).
   final String sessionId;
 
-  /// Web tools (`web_search`, `web_extract`) get the web search icon; a
-  /// `tool_search` or `session_search` is not the web.
-  ActivityKind get kind =>
-      tool.startsWith('web_') ? ActivityKind.webSearch : ActivityKind.completed;
+  ToolKind get kind => toolKindOf(tool);
 
   /// The tool name in words: `browser_navigate` → "Browser navigate".
-  String get title {
-    final words = tool.replaceAll(RegExp(r'[_\-.]+'), ' ').trim();
-    if (words.isEmpty) return 'Tool';
-    return '${words[0].toUpperCase()}${words.substring(1)}';
-  }
+  String get title => toolTitle(tool);
 }
 
 /// An approval request of the agent nobody answered yet.

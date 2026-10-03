@@ -8,6 +8,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../shell/agents.dart' show nativeAgentProfileProvider;
 import 'plugin_gate.dart';
 import 'route.dart';
 import 'widgets.dart';
@@ -62,7 +63,11 @@ final class _FeedState extends ConsumerState<_Feed> {
     try {
       await ref
           .read(
-            systemFileProvider(widget.instance.id, 'FEED_PROMPT.md').notifier,
+            systemFileProvider(
+              widget.instance.id,
+              'FEED_PROMPT.md',
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
           )
           .save(_prompt.text);
       if (mounted) setState(() => _editing = false);
@@ -76,9 +81,18 @@ final class _FeedState extends ConsumerState<_Feed> {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final prompt = ref.watch(
-      systemFileProvider(widget.instance.id, 'FEED_PROMPT.md'),
+      systemFileProvider(
+        widget.instance.id,
+        'FEED_PROMPT.md',
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
     );
-    final feed = ref.watch(feedProvider(widget.instance.id));
+    final feed = ref.watch(
+      feedProvider(
+        widget.instance.id,
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
+    );
     final posts = feed.value ?? const <FeedPost>[];
     final promptFile = prompt.value;
     return HermuseRoute(
@@ -186,7 +200,12 @@ final class _PostCardState extends ConsumerState<_PostCard> {
     var ok = true;
     try {
       await ref
-          .read(feedProvider(widget.instanceId).notifier)
+          .read(
+            feedProvider(
+              widget.instanceId,
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
+          )
           .react(widget.post.id, reaction);
     } on Object catch (e) {
       ok = false;

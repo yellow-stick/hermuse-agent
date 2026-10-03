@@ -376,14 +376,16 @@ final class InstancesProvider
 
 String _$instancesHash() => r'27bad291a19f093439948cf74be988ac7792fab0';
 
-/// The shared connection of one instance, opened lazily and closed
-/// [connectionLinger] after its last listener goes away.
+/// A profile's separate connection, opened lazily and closed
+/// [connectionLinger] after its last listener goes away. Credentials remain
+/// keyed by the real registered instance id.
 
 @ProviderFor(connection)
 final connectionProvider = ConnectionFamily._();
 
-/// The shared connection of one instance, opened lazily and closed
-/// [connectionLinger] after its last listener goes away.
+/// A profile's separate connection, opened lazily and closed
+/// [connectionLinger] after its last listener goes away. Credentials remain
+/// keyed by the real registered instance id.
 
 final class ConnectionProvider
     extends
@@ -393,11 +395,12 @@ final class ConnectionProvider
           FutureOr<HermesConnection>
         >
     with $FutureModifier<HermesConnection>, $FutureProvider<HermesConnection> {
-  /// The shared connection of one instance, opened lazily and closed
-  /// [connectionLinger] after its last listener goes away.
+  /// A profile's separate connection, opened lazily and closed
+  /// [connectionLinger] after its last listener goes away. Credentials remain
+  /// keyed by the real registered instance id.
   ConnectionProvider._({
     required ConnectionFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: _noRetry,
          name: r'connectionProvider',
@@ -413,7 +416,7 @@ final class ConnectionProvider
   String toString() {
     return r'connectionProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -424,8 +427,8 @@ final class ConnectionProvider
 
   @override
   FutureOr<HermesConnection> create(Ref ref) {
-    final argument = this.argument as String;
-    return connection(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return connection(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -439,13 +442,18 @@ final class ConnectionProvider
   }
 }
 
-String _$connectionHash() => r'ad7a9d7a338d257bfe42993e02de731e6a895c7c';
+String _$connectionHash() => r'78d0db21300eccf3c1f78181289861a27442a661';
 
-/// The shared connection of one instance, opened lazily and closed
-/// [connectionLinger] after its last listener goes away.
+/// A profile's separate connection, opened lazily and closed
+/// [connectionLinger] after its last listener goes away. Credentials remain
+/// keyed by the real registered instance id.
 
 final class ConnectionFamily extends $Family
-    with $FunctionalFamilyOverride<FutureOr<HermesConnection>, String> {
+    with
+        $FunctionalFamilyOverride<
+          FutureOr<HermesConnection>,
+          (String, {String profile})
+        > {
   ConnectionFamily._()
     : super(
         retry: _noRetry,
@@ -455,11 +463,15 @@ final class ConnectionFamily extends $Family
         isAutoDispose: true,
       );
 
-  /// The shared connection of one instance, opened lazily and closed
-  /// [connectionLinger] after its last listener goes away.
+  /// A profile's separate connection, opened lazily and closed
+  /// [connectionLinger] after its last listener goes away. Credentials remain
+  /// keyed by the real registered instance id.
 
-  ConnectionProvider call(String instanceId) =>
-      ConnectionProvider._(argument: instanceId, from: this);
+  ConnectionProvider call(String instanceId, {String profile = 'default'}) =>
+      ConnectionProvider._(
+        argument: (instanceId, profile: profile),
+        from: this,
+      );
 
   @override
   String toString() => r'connectionProvider';
@@ -483,7 +495,7 @@ final class ConnectionStateProvider
   /// Live [ConnectionState] of an instance (drives status badges).
   ConnectionStateProvider._({
     required ConnectionStateFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'connectionStateProvider',
@@ -499,7 +511,7 @@ final class ConnectionStateProvider
   String toString() {
     return r'connectionStateProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -510,8 +522,8 @@ final class ConnectionStateProvider
 
   @override
   Stream<ConnectionState> create(Ref ref) {
-    final argument = this.argument as String;
-    return connectionState(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return connectionState(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -525,12 +537,16 @@ final class ConnectionStateProvider
   }
 }
 
-String _$connectionStateHash() => r'52dd9ffdc5a973a833ab9aaed73bd929b3234dad';
+String _$connectionStateHash() => r'90d7661145ca30dbb081aceae450679f194f989b';
 
 /// Live [ConnectionState] of an instance (drives status badges).
 
 final class ConnectionStateFamily extends $Family
-    with $FunctionalFamilyOverride<Stream<ConnectionState>, String> {
+    with
+        $FunctionalFamilyOverride<
+          Stream<ConnectionState>,
+          (String, {String profile})
+        > {
   ConnectionStateFamily._()
     : super(
         retry: null,
@@ -542,37 +558,30 @@ final class ConnectionStateFamily extends $Family
 
   /// Live [ConnectionState] of an instance (drives status badges).
 
-  ConnectionStateProvider call(String instanceId) =>
-      ConnectionStateProvider._(argument: instanceId, from: this);
+  ConnectionStateProvider call(
+    String instanceId, {
+    String profile = 'default',
+  }) => ConnectionStateProvider._(
+    argument: (instanceId, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'connectionStateProvider';
 }
 
-/// The main chat on screen: `ThreadRef(instance, mainSessionId)`, one main
-/// chat per instance (every other thread is a side chat of it). Persisted across launches (settings table).
-///
-/// A main chat not created yet is `ThreadRef(instanceId, '')`; once its
-/// session exists the stored id is persisted for the next launch while the
-/// open chat keeps its provider key.
+/// The selected agent's main chat, persisted across launches. An uncreated
+/// main chat keeps its draft provider key while its stored id is saved.
 
 @ProviderFor(ActiveThread)
 final activeThreadProvider = ActiveThreadProvider._();
 
-/// The main chat on screen: `ThreadRef(instance, mainSessionId)`, one main
-/// chat per instance (every other thread is a side chat of it). Persisted across launches (settings table).
-///
-/// A main chat not created yet is `ThreadRef(instanceId, '')`; once its
-/// session exists the stored id is persisted for the next launch while the
-/// open chat keeps its provider key.
+/// The selected agent's main chat, persisted across launches. An uncreated
+/// main chat keeps its draft provider key while its stored id is saved.
 final class ActiveThreadProvider
     extends $AsyncNotifierProvider<ActiveThread, ThreadRef?> {
-  /// The main chat on screen: `ThreadRef(instance, mainSessionId)`, one main
-  /// chat per instance (every other thread is a side chat of it). Persisted across launches (settings table).
-  ///
-  /// A main chat not created yet is `ThreadRef(instanceId, '')`; once its
-  /// session exists the stored id is persisted for the next launch while the
-  /// open chat keeps its provider key.
+  /// The selected agent's main chat, persisted across launches. An uncreated
+  /// main chat keeps its draft provider key while its stored id is saved.
   ActiveThreadProvider._()
     : super(
         from: null,
@@ -592,14 +601,10 @@ final class ActiveThreadProvider
   ActiveThread create() => ActiveThread();
 }
 
-String _$activeThreadHash() => r'ed926ad3b32294fe1bd17fe356ec09f30f111d41';
+String _$activeThreadHash() => r'5ef6c12e8c37c1d8ba0b6ea176161b4199255e27';
 
-/// The main chat on screen: `ThreadRef(instance, mainSessionId)`, one main
-/// chat per instance (every other thread is a side chat of it). Persisted across launches (settings table).
-///
-/// A main chat not created yet is `ThreadRef(instanceId, '')`; once its
-/// session exists the stored id is persisted for the next launch while the
-/// open chat keeps its provider key.
+/// The selected agent's main chat, persisted across launches. An uncreated
+/// main chat keeps its draft provider key while its stored id is saved.
 
 abstract class _$ActiveThread extends $AsyncNotifier<ThreadRef?> {
   FutureOr<ThreadRef?> build();
@@ -644,7 +649,7 @@ final class ChatSessionProvider
   }) : super(
          retry: null,
          name: r'chatSessionProvider',
-         isAutoDispose: true,
+         isAutoDispose: false,
          dependencies: null,
          $allTransitiveDependencies: null,
        );
@@ -682,7 +687,7 @@ final class ChatSessionProvider
   }
 }
 
-String _$chatSessionHash() => r'f3cf3e3a20b0928bb4ee1c86b4431b9f660bed92';
+String _$chatSessionHash() => r'1903709ad3c48dda97dcc6252917676533cd005a';
 
 /// The chat of the main session [thread] (main chat + its side chats),
 /// opened on the thread that was on screen last time.
@@ -695,7 +700,7 @@ final class ChatSessionFamily extends $Family
         name: r'chatSessionProvider',
         dependencies: null,
         $allTransitiveDependencies: null,
-        isAutoDispose: true,
+        isAutoDispose: false,
       );
 
   /// The chat of the main session [thread] (main chat + its side chats),
@@ -771,7 +776,7 @@ final class SideChatsProvider
   }
 }
 
-String _$sideChatsHash() => r'2e530dae1f120361d84fafa7a6c10c9cd1cd427a';
+String _$sideChatsHash() => r'882a662e2c8887f5fa265bfc40cdd946d484943c';
 
 /// Side chats of the main chat [main] as stored locally (pin and activity
 /// order); empty until the main chat exists. [archived] lists the archive.
@@ -856,7 +861,7 @@ final class MainChatUpdatedAtProvider
   }
 }
 
-String _$mainChatUpdatedAtHash() => r'c5269c56f4cf53ce28174e136772e93f0ad15223';
+String _$mainChatUpdatedAtHash() => r'd4329d66507889dfe591de02d43f18b0afb51ac8';
 
 /// Last activity of the main chat [main] (null until it exists).
 

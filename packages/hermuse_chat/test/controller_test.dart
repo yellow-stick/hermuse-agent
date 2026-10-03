@@ -8,7 +8,21 @@ final class _Connections implements HermesConnections {
   final HermesConnection connection;
 
   @override
-  Future<HermesConnection> connectionFor(String instanceId) async => connection;
+  Future<HermesConnection> connectionFor(
+    String instanceId, {
+    String profile = 'default',
+  }) async => connection;
+}
+
+final class _ProfileConnections implements HermesConnections {
+  _ProfileConnections(this.connections);
+  final Map<String, HermesConnection> connections;
+
+  @override
+  Future<HermesConnection> connectionFor(
+    String instanceId, {
+    String profile = 'default',
+  }) async => connections[profile]!;
 }
 
 final class _Failing implements HermesConnections {
@@ -16,8 +30,10 @@ final class _Failing implements HermesConnections {
   final Object error;
 
   @override
-  Future<HermesConnection> connectionFor(String instanceId) async =>
-      throw error;
+  Future<HermesConnection> connectionFor(
+    String instanceId, {
+    String profile = 'default',
+  }) async => throw error;
 }
 
 final class _Observer implements ChatObserver {
@@ -204,9 +220,69 @@ void main() {
     expect(blocks.whereType<TextBlock>().single.text, 'Booked: PNR X1');
     expect(chat.state.busy, isFalse);
     expect(observer.activity.map((a) => (a.tool, a.summary, a.kind)), [
-      ('book', 'PNR X1', ActivityKind.completed),
+      ('book', 'PNR X1', ToolKind.other),
     ]);
     expect(observer.settled, isNotEmpty);
+  });
+
+  test('a terminal call keeps its command, output, failure and time', () async {
+    final chat = await open();
+    await chat.send('run it');
+    fake
+      ..emitEvent('message.start', sessionId: 'live-1')
+      ..emitEvent(
+        'tool.start',
+        sessionId: 'live-1',
+        payload: {
+          'tool_id': 't1',
+          'name': 'terminal',
+          'context': 'make test',
+          'args': {'command': 'make test\nmake lint'},
+        },
+      );
+    ToolCallBlock tool() => chat.state.activeThread.messages.last.blocks
+        .whereType<ToolCallBlock>()
+        .single;
+    expect((tool().running, tool().detail), (true, 'make test\nmake lint'));
+
+    fake.emitEvent(
+      'tool.complete',
+      sessionId: 'live-1',
+      payload: {
+        'tool_id': 't1',
+        'name': 'terminal',
+        'args': {'command': 'make test\nmake lint'},
+        'duration_s': 1.25,
+        'result': {'output': 'FAIL: 2 tests\n', 'exit_code': 2, 'error': null},
+      },
+    );
+    expect(
+      (
+        tool().running,
+        tool().output,
+        tool().error,
+        tool().duration,
+        tool().failed,
+      ),
+      (
+        false,
+        'FAIL: 2 tests',
+        'Exit code 2',
+        const Duration(milliseconds: 1250),
+        true,
+      ),
+    );
+    // Activity names the command, not Hermes' generic line.
+    expect(observer.activity.single.summary, 'make test\nmake lint');
+  });
+
+  test('a denied command reads as the reason, not the instructions', () {
+    const denied =
+        '{"output": "", "exit_code": -1, "error": "BLOCKED: Command denied '
+        'by user. The user has NOT consented to this action. Do NOT retry."}';
+    expect(toolOutcome(denied).error, 'Command denied by user');
+    expect(toolOutcome('{"output": "ok", "exit_code": 0}').error, '');
+    expect(toolOutcome('plain text result').output, '');
   });
 
   test(
@@ -829,6 +905,229 @@ void main() {
     },
   );
 
+  test(
+    'subscribed side chat approvals update while main chat is open',
+    () async {
+      fake.on('session.resume', (params) {
+        final side = params['session_id'] == 'side-1';
+        return {
+          'session_id': side ? 'live-side' : 'live-main',
+          'message_count': 0,
+          'messages': const [],
+          'info': const <String, Object?>{},
+          if (side)
+            'open_requests': [
+              {
+                'id': 'srq-side',
+                'method': 'approval',
+                'params': {
+                  'session_id': 'live-side',
+                  'request_id': 'side-request',
+                  'command': 'rm -rf build',
+                  'choices': ['once', 'deny'],
+                },
+              },
+            ],
+        };
+      });
+      final chat = ChatController(
+        connections: _Connections(HermesConnection('vps', fake)),
+        ref: const ThreadRef(instanceId: 'vps', sessionId: 'stored-1'),
+        sideThreads: [
+          const Thread(
+            id: 'side-1',
+            title: 'Build',
+            startedAt: '',
+            messages: [],
+          ),
+        ],
+      );
+      addTearDown(chat.dispose);
+      await chat.ready;
+      chat.openThread('side-1');
+      await pumpEventQueue();
+      chat.openThread('stored-1');
+      expect(chat.state.activeThreadId, 'stored-1');
+      expect(chat.state.approvals.single.threadId, 'side-1');
+      expect(
+        fake.replies,
+        isEmpty,
+        reason: 'consent always waits for the user',
+      );
+
+      var notifications = 0;
+      chat.addListener(() => notifications++);
+      fake.emitRequest('srq-live-side', 'approval', {
+        'session_id': 'live-side',
+        'request_id': 'next-side-request',
+        'command': 'rm -rf cache',
+      });
+      expect(notifications, greaterThan(0));
+      expect(chat.state.approvals, hasLength(2));
+      chat.choose('request-srq-side', 'Deny');
+      await pumpEventQueue();
+      expect(fake.replies['srq-side']?['result'], {'choice': 'deny'});
+      expect(chat.state.approvals.single.messageId, 'request-srq-live-side');
+      fake.emitEvent(
+        'request.cancel',
+        sessionId: 'live-side',
+        payload: {
+          'id': 'srq-live-side',
+          'method': 'approval',
+          'reason': 'resolved',
+        },
+      );
+      await pumpEventQueue();
+      expect(chat.state.approvals, isEmpty);
+      expect(chat.state.activeThreadId, 'stored-1');
+    },
+  );
+
+  test('reconnect restores only approvals still open on the server', () async {
+    final chat = await open();
+    addTearDown(chat.dispose);
+    for (final id in ['still-open', 'expired']) {
+      fake.emitRequest(id, 'approval', {
+        'session_id': 'live-1',
+        'request_id': id,
+        'command': 'rm -rf $id',
+      });
+    }
+    expect(chat.state.approvals, hasLength(2));
+    fake.setState(ConnectionState.reconnecting);
+    expect(chat.state.approvals, isEmpty);
+    chat.choose('request-still-open', 'Allow once');
+    await pumpEventQueue();
+    expect(fake.replies, isEmpty);
+    fake.on(
+      'session.resume',
+      (_) => {
+        'session_id': 'live-2',
+        'message_count': 0,
+        'messages': const [],
+        'info': const <String, Object?>{},
+        'open_requests': [
+          {
+            'id': 'still-open',
+            'method': 'approval',
+            'params': {
+              'session_id': 'live-2',
+              'request_id': 'still-open',
+              'command': 'rm -rf still-open',
+            },
+          },
+        ],
+      },
+    );
+    fake.setState(ConnectionState.ready);
+    await pumpEventQueue();
+    expect(chat.state.approvals.single.messageId, 'request-still-open');
+    expect(chat.state.activeThread.messages, hasLength(1));
+    expect(fake.replies, isEmpty);
+    chat.choose('request-still-open', 'Allow once');
+    await pumpEventQueue();
+    expect(fake.replies['still-open']?['result'], {'choice': 'once'});
+    expect(fake.replies.containsKey('expired'), isFalse);
+    expect(chat.state.approvals, isEmpty);
+  });
+
+  test(
+    'a detached chat leaves approval available to its replacement',
+    () async {
+      final connection = _Connections(HermesConnection('vps', fake));
+      const request = {
+        'session_id': 'live-1',
+        'request_id': 'r1',
+        'command': 'rm -rf build',
+      };
+      fake.on(
+        'session.resume',
+        (_) => {
+          'session_id': 'live-1',
+          'message_count': 0,
+          'messages': const [],
+          'info': const <String, Object?>{},
+          'open_requests': [
+            {'id': 'srq-1', 'method': 'approval', 'params': request},
+          ],
+        },
+      );
+      ChatController makeChat() => ChatController(
+        connections: connection,
+        ref: const ThreadRef(instanceId: 'vps', sessionId: 'stored-1'),
+      );
+      final first = makeChat();
+      await first.ready;
+      expect(first.state.approvals, hasLength(1));
+      await first.dispose();
+      first.choose('request-srq-1', 'Allow once');
+      final replacement = makeChat();
+      addTearDown(replacement.dispose);
+      await replacement.ready;
+      expect(replacement.state.approvals, hasLength(1));
+      expect(fake.replies, isEmpty);
+      replacement.choose('request-srq-1', 'Deny');
+      await pumpEventQueue();
+      expect(fake.replies['srq-1']?['result'], {'choice': 'deny'});
+      expect(replacement.state.approvals, isEmpty);
+    },
+  );
+
+  test(
+    'approval delivery and decisions stay on their profile transport',
+    () async {
+      final other = FakeHermesTransport();
+      addTearDown(other.close);
+      for (final transport in [fake, other]) {
+        transport.on(
+          'session.resume',
+          (_) => {
+            'session_id': 'same-live-id',
+            'message_count': 0,
+            'messages': const [],
+            'info': const <String, Object?>{},
+          },
+        );
+      }
+      final connections = _ProfileConnections({
+        'aya': HermesConnection('vps', fake),
+        'noah': HermesConnection('vps', other),
+      });
+      ChatController makeChat(String profile) => ChatController(
+        connections: connections,
+        ref: ThreadRef(
+          instanceId: 'vps',
+          profile: profile,
+          sessionId: 'same-stored-id',
+        ),
+      );
+      final aya = makeChat('aya');
+      final noah = makeChat('noah');
+      addTearDown(aya.dispose);
+      addTearDown(noah.dispose);
+      await Future.wait([aya.ready, noah.ready]);
+      const params = {
+        'session_id': 'same-live-id',
+        'request_id': 'same-request-id',
+        'command': 'rm -rf build',
+      };
+      fake.emitRequest('srq-1', 'approval', params);
+      expect(aya.state.approvals, hasLength(1));
+      expect(noah.state.approvals, isEmpty);
+      other.emitRequest('srq-1', 'approval', params);
+      noah.choose('request-srq-1', 'Deny');
+      await pumpEventQueue();
+      expect(other.replies['srq-1']?['result'], {'choice': 'deny'});
+      expect(noah.state.approvals, isEmpty);
+      expect(aya.state.approvals, hasLength(1));
+      expect(fake.replies, isEmpty);
+      aya.choose('request-srq-1', 'Allow once');
+      await pumpEventQueue();
+      expect(fake.replies['srq-1']?['result'], {'choice': 'once'});
+      expect(aya.state.approvals, isEmpty);
+    },
+  );
+
   test('an approval Hermes cancels leaves the pending list', () async {
     final chat = await open();
     fake.emitRequest('srq-7', 'approval', {
@@ -1154,7 +1453,7 @@ void main() {
     expect(const Money(519.5, 'USD').toString(), r'$519.50');
   });
 
-  test('only web tools read as web activity; names read as words', () {
+  test('tools read by kind; names read as words', () {
     ActivityItem item(String tool) =>
         ActivityItem(tool: tool, summary: '', at: DateTime(2026, 10, 2));
     expect(
@@ -1165,15 +1464,21 @@ void main() {
           'tool_search',
           'session_search',
           'terminal',
+          'browser_navigate',
+          'read_file',
+          'execute_code',
         ])
           item(tool).kind,
       ],
       [
-        ActivityKind.webSearch,
-        ActivityKind.webSearch,
-        ActivityKind.completed,
-        ActivityKind.completed,
-        ActivityKind.completed,
+        ToolKind.web,
+        ToolKind.web,
+        ToolKind.other,
+        ToolKind.other,
+        ToolKind.terminal,
+        ToolKind.browser,
+        ToolKind.file,
+        ToolKind.code,
       ],
     );
     expect(item('browser_navigate').title, 'Browser navigate');

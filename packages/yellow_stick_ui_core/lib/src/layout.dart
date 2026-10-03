@@ -64,6 +64,9 @@ abstract final class YsLayout {
   /// Height of floating pills (Chats, Invite).
   static const pillHeight = 36.0;
 
+  /// Height of the phone top bar (chats, agent title, profile avatar).
+  static const topBarHeight = 56.0;
+
   /// Height of the phone bottom navigation bar.
   static const bottomNavHeight = 52.0;
 
@@ -91,6 +94,21 @@ abstract final class YsLayout {
 
   /// Tallest a technical log box grows before it scrolls.
   static const logMaxHeight = 160.0;
+
+  /// Generous reading width for install and removal operations.
+  static const operationMaxWidth = 800.0;
+
+  /// Above this height operation cards use their full outer spacing.
+  static const operationComfortHeight = 600.0;
+
+  /// Maximum share of a short operation card reserved for its header.
+  static const operationHeaderFraction = 0.25;
+
+  /// Maximum share reserved for independently scrollable operation actions.
+  static const operationFooterFraction = 0.4;
+
+  /// Distance from the log tail that still counts as following live output.
+  static const logTailTolerance = 24.0;
 
   /// Icon beside a line of label text (a disclosure's chevron), or leading
   /// the text of an input box.

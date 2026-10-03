@@ -9,8 +9,8 @@ const demoReadOnlyMessage =
     'This demo is read-only: its conversations are fictional.';
 
 /// A [HermesTransport] answering from [DemoInstance] instead of a socket:
-/// `session.resume` returns the fictional transcripts, every other method is
-/// refused with [demoReadOnlyMessage].
+/// Session and profile reads use fictional data; mutations are refused
+/// with [demoReadOnlyMessage].
 final class DemoTransport implements HermesTransport {
   DemoTransport(this.instance, {DateTime? now}) : _now = now ?? DateTime.now();
 
@@ -38,6 +38,31 @@ final class DemoTransport implements HermesTransport {
     HermesMethod<P, R> method,
     P params,
   ) async {
+    if (method.name == HermesMethods.profilesList.name) {
+      return ProfilesListResult(
+        profiles: [
+          ProfileRow(
+            name: 'default',
+            path: '/demo',
+            isDefault: true,
+            displayName: instance.label,
+            uiMeta: {
+              'hermuse': {
+                'display_name': instance.label,
+                'avatar_id': 'hermuse',
+              },
+            },
+          ),
+        ],
+      ) as R;
+    }
+    if (method.name == HermesMethods.profilesDescribe.name) {
+      return const ProfilesDescribeResult(
+        name: 'default',
+        soul: 'This is a fictional, read-only demonstration agent.',
+        model: ProfileModelPin(),
+      ) as R;
+    }
     if (params is SessionResumeParams) {
       final chat = instance.chats
           .where((c) => c.id == params.sessionId)

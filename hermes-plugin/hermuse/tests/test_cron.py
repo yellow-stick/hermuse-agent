@@ -7,6 +7,8 @@ records the real scheduler reads).
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import cron_specs
@@ -91,3 +93,49 @@ def test_spec_schedules_are_valid_cron_expressions():
         parsed = cron_jobs.parse_schedule(spec.schedule)
         assert parsed["kind"] == "cron"
         assert parsed["expr"] == spec.schedule
+
+
+def test_conversational_cron_tool_persists_requested_feed_job_in_profile(
+        cron_home, monkeypatch):
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from tools import cronjob_tools
+    from tools.registry import registry
+
+    monkeypatch.setenv("HERMES_INTERACTIVE", "1")
+    assert cronjob_tools.check_cronjob_requirements()
+    entry = registry.get_entry("cronjob_manage")
+    assert entry is not None and entry.toolset == "cronjob"
+    profile = cron_home / "profiles" / "research"
+    profile.mkdir(parents=True)
+    token = set_hermes_home_override(profile)
+    try:
+        with cron_jobs.use_cron_store(profile):
+            result = json.loads(entry.handler({
+                "action": "create",
+                "name": "Requested research briefing",
+                "schedule": "0 8 * * 1",
+                "prompt": cron_specs.spec_by_key("feed").prompt,
+                "skills": [cron_specs.SKILL_REF],
+                "deliver": "local",
+            }))
+            assert result["success"], result
+            job = cron_jobs.get_job(result["job_id"])
+            assert job is not None
+            assert cron_jobs.is_job_runnable(job)
+            assert job["schedule"]["expr"] == "0 8 * * 1"
+            assert job["skills"] == [cron_specs.SKILL_REF]
+            assert job["deliver"] == "local"
+            assert job["next_run_at"] == result["next_run_at"]
+            listed = json.loads(entry.handler({"action": "list"}))
+            assert listed["success"] and listed["count"] == 1
+            updated = json.loads(entry.handler({
+                "action": "update",
+                "job_id": job["id"],
+                "schedule": "0 9 * * 1",
+            }))
+            assert updated["success"], updated
+            assert cron_jobs.get_job(job["id"])["schedule"]["expr"] == "0 9 * * 1"
+            assert len(cron_jobs.load_jobs()) == 1
+    finally:
+        reset_hermes_home_override(token)
+    assert cron_jobs.load_jobs() == []

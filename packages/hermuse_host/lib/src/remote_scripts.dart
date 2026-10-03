@@ -16,6 +16,28 @@ const remoteCheckout = '$remoteHermesHome/hermes-agent';
 const remoteHermes = '$remoteHome/.local/bin/hermes';
 const remotePython = '$remoteCheckout/venv/bin/python';
 const provisionRoot = '/var/lib/hermuse-provision';
+const dashboardTokenFile = '$provisionRoot/dashboard.env';
+
+/// Detects an existing owned instance, not an empty failed-install directory.
+const canonicalInstancePresentScript = r'''
+service=/etc/systemd/system/hermuse-dashboard.service
+marker=/var/lib/hermuse-provision/owns-hermes
+trusted_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] &&
+  [ "$(stat -c %u "$1")" = 0 ] &&
+  [ $((8#$(stat -c %a "$1") & 0022)) = 0 ]
+}
+if id hermes >/dev/null 2>&1 &&
+   [ "$(id -u hermes)" -ne 0 ] &&
+   [ "$(getent passwd hermes | cut -d: -f6)" = /home/hermes ] &&
+   { { trusted_file "$service" &&
+       grep -q '^# Managed by Hermuse remote installer$' "$service"; } ||
+     { trusted_file "$marker" && [ -f /home/hermes/.hermes/config.yaml ]; }; }; then
+  printf 'HERMUSE_CANONICAL_PRESENT_V1\n'
+else
+  printf 'HERMUSE_CANONICAL_ABSENT_V1\n'
+fi
+''';
 
 const prerequisitePackages = [
   'ca-certificates',
@@ -78,6 +100,9 @@ if [ ! -x $remotePython ]; then
 else
   ${_health(asHermes('''
 [ "\$(git -C $remoteCheckout rev-parse HEAD 2>/dev/null)" = $hermesReleaseCommit ] &&
+# The dashboard builds its web assets with Node; upstream bootstrap can
+# otherwise report completion after an optional Node download failed.
+node --version >/dev/null 2>&1 && npm --version >/dev/null 2>&1 || exit 1
 PYTHONDONTWRITEBYTECODE=1 $remotePython -I -S -B -c ${shellQuote('''
 import json, os, subprocess, sys
 from pathlib import Path
@@ -115,8 +140,9 @@ fi
 ''';
 
 /// Refuses foreign paths before any package/user/plugin/configuration mutation.
-const managedPathsPreflightScript = r'''
-for path in /var/lib/hermuse-provision /var/lib/hermuse-provision/owns-hermes; do
+String managedPathsPreflight({bool local = false}) =>
+    r'''
+for path in /var/lib/hermuse-provision /var/lib/hermuse-provision/owns-hermes /var/lib/hermuse-provision/dashboard.env; do
   [ ! -L "$path" ] || { echo 'Installer ownership paths must not be symlinks.' >&2; exit 1; }
   if [ -e "$path" ]; then
     [ "$(stat -c %u "$path")" = 0 ] &&
@@ -127,19 +153,26 @@ for path in /var/lib/hermuse-provision /var/lib/hermuse-provision/owns-hermes; d
 done
 for path in /home/hermes /home/hermes/.hermes /home/hermes/.hermes/hermes-agent \
   /home/hermes/.hermes/plugins /home/hermes/.hermes/plugins/hermuse \
-  /etc/systemd/system/hermuse-dashboard.service /etc/caddy/Caddyfile \
-  /etc/caddy/hermuse-remote.caddy; do
+  /etc/systemd/system/hermuse-dashboard.service ''' +
+    (local ? '' : '/etc/caddy/Caddyfile /etc/caddy/hermuse-remote.caddy') +
+    r'''; do
   [ ! -L "$path" ] || { echo "Refusing a symlink at managed path: $path" >&2; exit 1; }
 done
 plugin=/home/hermes/.hermes/plugins/hermuse
 if [ -e "$plugin" ] && [ ! -f "$plugin/.hermuse-remote-managed" ]; then
   echo 'An unrelated plugin occupies the Hermuse plugin directory.' >&2; exit 1
 fi
+''' +
+    (local
+        ? ''
+        : r'''
 if [ -e /etc/caddy/hermuse-remote.caddy ] &&
    ! grep -q '^# Managed by Hermuse remote installer$' /etc/caddy/hermuse-remote.caddy; then
   echo 'The Hermuse Caddy site path holds unrelated configuration.' >&2; exit 1
 fi
-''';
+''');
+
+final managedPathsPreflightScript = managedPathsPreflight();
 
 String pluginHealthScript(Map<String, String> hashes) =>
     '''
@@ -306,11 +339,15 @@ except (OSError, ValueError, TypeError, KeyError, AttributeError):
 ''')}')}
 ''');
 
-final preflightScript =
+final preflightScript = provisioningPreflightScript();
+
+String provisioningPreflightScript({bool local = false}) =>
+    (local ? 'HERMUSE_LOCAL=1\n' : 'HERMUSE_LOCAL=0\n') +
     r'''
 [ "$(uname -s)" = Linux ] || { echo 'A Linux server is required.' >&2; exit 1; }
 . /etc/os-release
 case "$ID:$VERSION_ID" in
+  ubuntu:22.04) [ "$HERMUSE_LOCAL" = 1 ] || { echo 'Ubuntu 22.04 is supported for local desktop installation only.' >&2; exit 1; } ;;
   ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) ;;
   *) echo 'Supported servers: Ubuntu 24.04/26.04 or Debian 12/13.' >&2; exit 1 ;;
 esac
@@ -324,6 +361,7 @@ mem=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
 [ "$mem" -ge 3700000 ] || { echo 'At least 4 GB RAM is required.' >&2; exit 1; }
 free=$(df -Pk /home | awk 'END {print $4}')
 [ "$free" -ge 10485760 ] || { echo 'At least 10 GiB free disk under /home is required.' >&2; exit 1; }
+if [ "$HERMUSE_LOCAL" != 1 ]; then
 if systemctl is-active --quiet firewalld || systemctl is-active --quiet nftables; then
   echo 'An existing firewalld/nftables service is active. Configure SSH/80/443 manually instead of replacing it.' >&2
   exit 1
@@ -331,6 +369,7 @@ fi
 if ! command -v ufw >/dev/null &&
    { [ -e /etc/ufw ] || [ -e /etc/default/ufw ]; }; then
   echo 'A removed UFW package left existing configuration. Restore that firewall manually before provisioning.' >&2; exit 1
+fi
 fi
 if id hermes >/dev/null 2>&1; then
   [ -f /var/lib/hermuse-provision/owns-hermes ] || {
@@ -351,7 +390,7 @@ if [ -e /etc/systemd/system/hermuse-dashboard.service ] &&
   echo 'An unrelated hermuse-dashboard.service exists; it will not be overwritten.' >&2; exit 1
 fi
 ''' +
-    managedPathsPreflightScript +
+    managedPathsPreflight(local: local) +
     r'''
 printf 'HERMUSE_PREFLIGHT_OK\n'
 ''';
@@ -643,6 +682,54 @@ ensure_basic_auth_plugin_enabled_in_config(cfg)
 save_config(cfg)
 ''';
 
+/// Creates the stable root-only loopback credential without changing login.
+const ensureDashboardTokenScript = r'''
+python3 -I -B -c '
+import os, re, secrets, stat
+path = "/var/lib/hermuse-provision/dashboard.env"
+try:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+except FileExistsError:
+    fd = None
+if fd is not None:
+    with os.fdopen(fd, "w") as stream:
+        stream.write("HERMES_DASHBOARD_SESSION_TOKEN=" + secrets.token_urlsafe(48) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+with os.fdopen(fd) as stream:
+    info = os.fstat(stream.fileno())
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+        raise SystemExit("The dashboard credential must be a private root-owned regular file.")
+    value = stream.read(256)
+match = re.fullmatch(r"HERMES_DASHBOARD_SESSION_TOKEN=([A-Za-z0-9_-]{64})\n", value)
+if not match:
+    raise SystemExit("The dashboard credential has an invalid format.")
+print(match[1])
+'
+''';
+
+/// Proves the shared service and token API without changing public settings.
+final localDashboardHealthScript = _health('''
+cmp -s /etc/systemd/system/hermuse-dashboard.service <(printf '%s' ${shellQuote('$dashboardService\n')}) &&
+systemctl is-active --quiet hermuse-dashboard.service &&
+systemctl is-enabled --quiet hermuse-dashboard.service &&
+python3 -I -B -c ${shellQuote(r'''
+import json, sys, urllib.request
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
+token = sys.stdin.read()
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request("http://127.0.0.1:9119/api/plugins/hermuse/files",
+                                 headers={"x-hermes-session-token": token})
+with opener.open(request, timeout=5) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+    json.load(response)
+''')}
+''');
+
 const dashboardService = '''# Managed by Hermuse remote installer
 [Unit]
 Description=Hermuse Hermes dashboard
@@ -658,6 +745,7 @@ WorkingDirectory=/home/hermes/.hermes
 Environment=HOME=/home/hermes
 Environment=HERMES_HOME=/home/hermes/.hermes
 Environment=PATH=/home/hermes/.local/bin:/home/hermes/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/var/lib/hermuse-provision/dashboard.env
 ExecStart=/home/hermes/.local/bin/hermes dashboard --port 9119 --host 127.0.0.1 --no-open
 Restart=on-failure
 RestartSec=5
@@ -665,6 +753,263 @@ UMask=0077
 
 [Install]
 WantedBy=multi-user.target
+''';
+
+/// Reads only the public loopback status, never credentials or login settings.
+String get inspectDashboardAuthenticationScript =>
+    'python3 -I -B -c ${shellQuote(r'''
+import json, urllib.request
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
+try:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open("http://127.0.0.1:9119/api/status", timeout=3) as response:
+        body = response.read(1048577)
+        if response.status != 200 or len(body) > 1048576:
+            raise ValueError()
+        status = json.loads(body)
+        required = status.get("auth_required")
+        if not isinstance(status.get("version"), str) or not isinstance(required, bool):
+            raise ValueError()
+        print("HERMUSE_DASHBOARD_LOGIN_V1" if required else "HERMUSE_DASHBOARD_TOKEN_V1")
+except Exception:
+    print("HERMUSE_DASHBOARD_UNKNOWN_V1")
+''')}';
+
+/// Grants desktop access only after proving an exact, active canonical unit.
+///
+/// This recipe has no installer ownership checks or provisioning commands. Its
+/// ownership-journal delta covers only the new credential and exact unit update;
+/// it never adopts the account, runtime, plugin, Docker or public configuration.
+String get connectDashboardScript => _connectDashboardRecipe('connect');
+
+/// Rechecks authenticated read-only readiness without redirects or proxies.
+String get verifyConnectedDashboardScript => _connectDashboardRecipe('verify');
+
+String _connectDashboardRecipe(String action) =>
+    'python3 -I -B -c ${shellQuote(_connectDashboardProgram)} '
+    '${shellQuote(action)} ${shellQuote('$dashboardService\n')}';
+
+const _connectDashboardProgram = r'''
+import hashlib, json, os, pwd, re, secrets, stat, subprocess, sys, time, urllib.error, urllib.request
+
+ROOT = "/var/lib/hermuse-provision"
+UNIT = "/etc/systemd/system/hermuse-dashboard.service"
+TOKEN = ROOT + "/dashboard.env"
+JOURNAL = ROOT + "/ownership.json"
+NAME = "hermuse-dashboard.service"
+EXPECTED = sys.argv[2]
+LEGACY = EXPECTED.replace("EnvironmentFile=-/var/lib/hermuse-provision/dashboard.env\n", "")
+
+def normalized(value):
+    return value.rstrip("\n") + "\n"
+
+def refuse():
+    raise RuntimeError("HERMUSE_CONNECT_REFUSED_V1")
+
+def trusted_directory(path):
+    current = "/"
+    for part in path.strip("/").split("/"):
+        current = os.path.join(current, part)
+        info = os.lstat(current)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            refuse()
+
+def private_read(path, limit, private=False):
+    trusted_directory(os.path.dirname(path))
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "r") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o022:
+            refuse()
+        if private and stat.S_IMODE(info.st_mode) != 0o600:
+            refuse()
+        value = stream.read(limit + 1)
+        if len(value) > limit:
+            refuse()
+        return value
+
+def systemctl(*args):
+    result = subprocess.run(["systemctl", *args], text=True, capture_output=True, timeout=30)
+    if result.returncode:
+        refuse()
+    return result.stdout
+
+def prove():
+    body = private_read(UNIT, 8192)
+    if normalized(body) not in (normalized(EXPECTED), normalized(LEGACY)):
+        refuse()
+    properties = {}
+    for line in systemctl("show", NAME, "--no-pager",
+            "--property=FragmentPath,DropInPaths,LoadState,ActiveState,SubState,NeedDaemonReload,Transient,User,Group,WorkingDirectory,MainPID").splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key in properties:
+            refuse()
+        properties[key] = value
+    required = {
+        "FragmentPath": UNIT, "DropInPaths": "", "LoadState": "loaded",
+        "ActiveState": "active", "SubState": "running", "NeedDaemonReload": "no",
+        "Transient": "no", "User": "hermes", "Group": "hermes",
+        "WorkingDirectory": "/home/hermes/.hermes",
+    }
+    if any(properties.get(key) != value for key, value in required.items()):
+        refuse()
+    user = pwd.getpwnam("hermes")
+    if user.pw_uid <= 0 or user.pw_dir != "/home/hermes":
+        refuse()
+    trusted_directory("/home")
+    for path in ("/home/hermes", "/home/hermes/.hermes"):
+        info = os.lstat(path)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != user.pw_uid or info.st_mode & 0o022:
+            refuse()
+    pid = properties.get("MainPID", "")
+    if not re.fullmatch(r"[1-9][0-9]*", pid) or os.stat("/proc/" + pid).st_uid != user.pw_uid:
+        refuse()
+    return body
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
+
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+def api(path, token=None):
+    headers = {} if token is None else {"x-hermes-session-token": token}
+    request = urllib.request.Request("http://127.0.0.1:9119" + path, headers=headers)
+    with opener.open(request, timeout=3) as response:
+        if response.status != 200:
+            refuse()
+        value = response.read(1048577)
+        if len(value) > 1048576:
+            refuse()
+        return json.loads(value)
+
+def ready(token):
+    try:
+        status = api("/api/status")
+        if not isinstance(status, dict) or not isinstance(status.get("version"), str) or status.get("auth_required") is not False:
+            return False
+        try:
+            api("/api/plugins/hermuse/files")
+            return False
+        except urllib.error.HTTPError as error:
+            if error.code not in (401, 403):
+                return False
+        return isinstance(api("/api/plugins/hermuse/files", token), dict)
+    except Exception:
+        return False
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+def atomic_write(path, value, mode):
+    temporary = path + ".connect-" + secrets.token_hex(12)
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(os.path.dirname(path), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+def main():
+    body = prove()
+    status = api("/api/status")
+    # A public password/OAuth gate deliberately takes precedence over tokens.
+    # The desktop must use its ordinary login flow, never weaken that gate.
+    if not isinstance(status, dict) or status.get("auth_required") is not False:
+        refuse()
+    if sys.argv[1] == "verify":
+        token = sys.stdin.read(256)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{64}", token) or not ready(token):
+            refuse()
+        return
+    # The operation lock already established this root-owned directory.
+    trusted_directory(ROOT)
+    created = False
+    try:
+        credential = private_read(TOKEN, 256, private=True)
+    except FileNotFoundError:
+        created = True
+        credential = "HERMES_DASHBOARD_SESSION_TOKEN=" + secrets.token_urlsafe(48) + "\n"
+    match = re.fullmatch(r"HERMES_DASHBOARD_SESSION_TOKEN=([A-Za-z0-9_-]{64})\n", credential)
+    if not match:
+        refuse()
+    token = match[1]
+    upgrade = normalized(body) == normalized(LEGACY)
+    if not created and not upgrade:
+        if not ready(token):
+            refuse()
+        print(token)
+        return
+    # Share the existing removal journal, but capture no unrelated resources.
+    # Only a credential created here acquires a removable path identity.
+    try:
+        journal = json.loads(private_read(JOURNAL, 1048576, private=True))
+        if journal.get("schemaVersion") != 1 or not isinstance(journal.get("paths"), dict):
+            refuse()
+    except FileNotFoundError:
+        journal = {
+            "schemaVersion": 1, "legacy": False, "connectionOnly": True,
+            "user": {"created": False, "identity": None, "defaults": {}},
+            "paths": {}, "caddy": {},
+        }
+    change = {
+        "credentialCreated": created, "credentialSha256": digest(credential),
+        "unitBeforeSha256": digest(body), "unitAfterSha256": digest(EXPECTED),
+        "unitUpdated": upgrade, "state": "pending",
+    }
+    journal["desktopConnection"] = change
+    if created:
+        journal["paths"][TOKEN] = {"created": True, "kind": "runtime", "identity": None}
+    atomic_write(JOURNAL, json.dumps(journal), 0o600)
+    # Reprove immediately before changing only these two fixed paths.
+    if prove() != body:
+        refuse()
+    if created:
+        fd = os.open(TOKEN, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(credential)
+            stream.flush()
+            os.fsync(stream.fileno())
+        info = os.lstat(TOKEN)
+        journal["paths"][TOKEN]["identity"] = {
+            "dev": info.st_dev, "ino": info.st_ino, "uid": info.st_uid,
+            "gid": info.st_gid, "mode": info.st_mode, "size": info.st_size,
+            "mtime": info.st_mtime_ns, "sha256": digest(credential),
+        }
+        journal["paths"][TOKEN]["removed"] = False
+        atomic_write(JOURNAL, json.dumps(journal), 0o600)
+    if upgrade:
+        atomic_write(UNIT, EXPECTED, 0o644)
+        systemctl("daemon-reload")
+    systemctl("restart", NAME)
+    deadline = time.monotonic() + 45
+    while not ready(token):
+        if time.monotonic() >= deadline:
+            refuse()
+        time.sleep(1)
+    if normalized(prove()) != normalized(EXPECTED):
+        refuse()
+    change["state"] = "complete"
+    atomic_write(JOURNAL, json.dumps(journal), 0o600)
+    print(token)
+
+try:
+    main()
+except Exception:
+    # Fixed diagnostics only; neither API bodies nor credentials reach stderr.
+    print("HERMUSE_CONNECT_REFUSED_V1", file=sys.stderr)
+    sys.exit(1)
 ''';
 
 String configureDashboardScript() =>

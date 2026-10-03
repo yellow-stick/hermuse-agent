@@ -8,9 +8,13 @@ part 'activity.g.dart';
 /// Tools the agent finished on [instanceId], newest first, as kept on this
 /// device across launches.
 @riverpod
-Stream<List<ActivityItem>> activity(Ref ref, String instanceId) => ref
+Stream<List<ActivityItem>> activity(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) => ref
     .watch(hermuseDatabaseProvider)
-    .watchActivity(instanceId)
+    .watchActivity(instanceId, profile: profile)
     .map(
       (rows) => [
         for (final row in rows)

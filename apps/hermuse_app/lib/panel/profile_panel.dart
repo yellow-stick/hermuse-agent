@@ -9,7 +9,9 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../shell/brand.dart';
+import '../shell/agents.dart';
 import '../shell/screens.dart' show YsDialogError;
+import '../thread/tool_icon.dart';
 
 /// Profile panel: avatar, name, status, then the Activity, Approvals,
 /// Automations and Connectors tabs.
@@ -22,12 +24,16 @@ final class ProfilePanel extends ConsumerStatefulWidget {
     required this.onOpenThread,
     required this.onOpenComputer,
     required this.onClose,
+    this.profile = 'default',
+    this.avatar = hermuseAvatar,
     super.key,
   });
 
   /// Hermes instance of the chat: its activity and automations show.
   final String instanceId;
   final String agentName;
+  final String profile;
+  final ImageProvider avatar;
 
   /// Approval requests Hermes still waits on, in the current chat.
   final List<ApprovalRequest> approvals;
@@ -59,7 +65,9 @@ final class ProfilePanelState extends ConsumerState<ProfilePanel> {
   void _select(PanelTab tab) {
     // Opening Automations always shows Hermes' current jobs.
     if (tab == PanelTab.automations && tab != _tab) {
-      ref.invalidate(automationsProvider(widget.instanceId));
+      ref.invalidate(
+        automationsProvider(widget.instanceId, profile: widget.profile),
+      );
     }
     setState(() => _tab = tab);
   }
@@ -87,13 +95,17 @@ final class ProfilePanelState extends ConsumerState<ProfilePanel> {
             ),
           ),
           const SizedBox(height: 18),
-          YsAvatar(
-            hermuseAvatar,
-            size: 100,
-            semanticLabel: 'Hermuse avatar',
-            badgeIcon: YsIcon.pencil,
-            onBadgePressed: () {},
-            badgeSemanticLabel: 'Edit avatar and name',
+          AgentEditorAnchor(
+            instanceId: widget.instanceId,
+            profile: widget.profile,
+            builder: (context, edit) => YsAvatar(
+              widget.avatar,
+              size: 100,
+              semanticLabel: '${widget.agentName} avatar',
+              badgeIcon: YsIcon.pencil,
+              onBadgePressed: edit,
+              badgeSemanticLabel: 'Edit avatar and name',
+            ),
           ),
           const SizedBox(height: 8),
           Text(
@@ -149,6 +161,7 @@ final class ProfilePanelState extends ConsumerState<ProfilePanel> {
   Widget _tabBody() => switch (_tab) {
     PanelTab.activity => _ActivityTab(
       instanceId: widget.instanceId,
+      profile: widget.profile,
       threadIds: widget.threadIds,
       onOpenThread: widget.onOpenThread,
     ),
@@ -159,7 +172,10 @@ final class ProfilePanelState extends ConsumerState<ProfilePanel> {
               approvals: widget.approvals,
               onOpen: (request) => widget.onOpenThread(request.threadId),
             ),
-    PanelTab.automations => _AutomationsTab(instanceId: widget.instanceId),
+    PanelTab.automations => _AutomationsTab(
+      instanceId: widget.instanceId,
+      profile: widget.profile,
+    ),
     PanelTab.connectors => const _TabEmptyState(tab: PanelTab.connectors),
   };
 }
@@ -259,18 +275,21 @@ final class _PanelRow extends StatelessWidget {
 final class _ActivityTab extends ConsumerWidget {
   const _ActivityTab({
     required this.instanceId,
+    required this.profile,
     required this.threadIds,
     required this.onOpenThread,
   });
 
   final String instanceId;
+  final String profile;
   final Set<String> threadIds;
   final ValueChanged<String> onOpenThread;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final items =
-        ref.watch(activityProvider(instanceId)).value ?? const <ActivityItem>[];
+        ref.watch(activityProvider(instanceId, profile: profile)).value ??
+        const <ActivityItem>[];
     // Nothing happened yet: the tab's empty state, not a lone heading.
     if (items.isEmpty) return const _TabEmptyState(tab: PanelTab.activity);
     return ListView(
@@ -303,9 +322,7 @@ final class _ActivityRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     return _PanelRow(
-      icon: item.kind == ActivityKind.webSearch
-          ? YsIcon.webSearch
-          : YsIcon.checkCircle,
+      icon: toolIcon(item.kind),
       onPressed: onOpen,
       semanticLabel: item.title,
       body: Column(
@@ -319,9 +336,17 @@ final class _ActivityRow extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               item.summary,
-              style: YsType.small.flutter.copyWith(
-                color: palette.contentMutedColor,
-              ),
+              style:
+                  item.kind == ToolKind.terminal || item.kind == ToolKind.code
+                  ? YsType.code.flutter.copyWith(
+                      fontFamily: YsType.monoFamily,
+                      color: palette.contentMutedColor,
+                    )
+                  : YsType.small.flutter.copyWith(
+                      color: palette.contentMutedColor,
+                    ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
           const SizedBox(height: 2),
@@ -389,9 +414,10 @@ final class _ApprovalsList extends StatelessWidget {
 // ------------------------------------------------------------- automations
 
 final class _AutomationsTab extends ConsumerStatefulWidget {
-  const _AutomationsTab({required this.instanceId});
+  const _AutomationsTab({required this.instanceId, required this.profile});
 
   final String instanceId;
+  final String profile;
 
   @override
   ConsumerState<_AutomationsTab> createState() => _AutomationsTabState();
@@ -404,7 +430,12 @@ final class _AutomationsTabState extends ConsumerState<_AutomationsTab> {
 
   void _perform(Automation automation, AutomationAction action) => unawaited(
     ref
-        .read(automationsProvider(widget.instanceId).notifier)
+        .read(
+          automationsProvider(
+            widget.instanceId,
+            profile: widget.profile,
+          ).notifier,
+        )
         .perform(automation, action),
   );
 
@@ -426,7 +457,9 @@ final class _AutomationsTabState extends ConsumerState<_AutomationsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final board = ref.watch(automationsProvider(widget.instanceId));
+    final board = ref.watch(
+      automationsProvider(widget.instanceId, profile: widget.profile),
+    );
     return OverlayPortal(
       controller: _deleteDialog,
       overlayChildBuilder: _deleteConfirmation,
@@ -452,8 +485,9 @@ final class _AutomationsTabState extends ConsumerState<_AutomationsTab> {
         alignment: Alignment.centerLeft,
         child: YsButton.neutral(
           label: 'Retry',
-          onPressed: () =>
-              ref.invalidate(automationsProvider(widget.instanceId)),
+          onPressed: () => ref.invalidate(
+            automationsProvider(widget.instanceId, profile: widget.profile),
+          ),
         ),
       ),
     ],
@@ -630,23 +664,11 @@ final class _AutomationRow extends StatelessWidget {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  a.name,
-                  style: YsType.label.flutter.copyWith(
-                    color: palette.contentColor,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (a.owner == AutomationOwner.hermuse) ...[
-                const SizedBox(width: YsSpace.xs),
-                const _OwnerTag(),
-              ],
-            ],
+          Text(
+            a.name,
+            style: YsType.label.flutter.copyWith(color: palette.contentColor),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
           const SizedBox(height: 2),
           Text(
@@ -708,34 +730,6 @@ final class _AutomationRow extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// "Hermuse" beside an automation the Hermuse plugin scheduled.
-final class _OwnerTag extends StatelessWidget {
-  const _OwnerTag();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = YsTheme.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(YsRadius.pill),
-        border: Border.all(color: palette.lineColor, width: ysHairline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: YsSpace.sm,
-          vertical: YsSpace.xxs,
-        ),
-        child: Text(
-          'Hermuse',
-          style: YsType.caption.flutter.copyWith(
-            color: palette.contentMutedColor,
-          ),
-        ),
       ),
     );
   }

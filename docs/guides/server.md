@@ -108,6 +108,23 @@ account.
 
 ### What Hermuse installs
 
+SSH setup and Linux **Install on this computer** use the same account,
+`/home/hermes/.hermes`, system service, provisioning engine and ownership journal.
+There is no separate desktop-owned Linux backend. Local setup keeps the service
+private; SSH setup adds the authenticated public access described below.
+Installing locally after SSH setup preserves the existing public configuration.
+Closing a desktop client never stops this system-managed service.
+
+If the SSH login account has a legacy per-user Hermes installation and no
+canonical instance exists, setup requests explicit migration approval before
+provisioning it. The reviewed inventory must still match when migration starts.
+A verified private data backup and the original home are retained; executable
+trees are rebuilt from pinned sources. Existing canonical data is never merged:
+when both homes exist, setup reuses the canonical instance and preserves the
+legacy home. Unsafe paths, active legacy processes and existing computer-volume
+references require manual resolution; see
+[legacy migration](desktop.md#existing-per-user-installations).
+
 **Setting up your server** shows the current step, completed steps and
 technical output under **Show details**:
 
@@ -140,8 +157,9 @@ Hermes inspection verifies the pinned entrypoint, exact installer-generated
 launcher and Python target, then imports only the pinned lightweight version
 module in isolated Python with bytecode writes disabled. It deliberately does
 not run `hermes --version` or load CLI/config/banner startup paths, which can
-self-repair or write update caches. Full dashboard readiness is still exercised
-after repairs.
+self-repair or write update caches. Node and npm must also execute successfully:
+an upstream bootstrap completion marker does not excuse missing dashboard build
+tools. Full dashboard readiness is still exercised after repairs.
 
 SSH trust/authentication, administrator and ownership guards always run for the
 current session. A firewall change still requires a fresh pinned-key SSH login.

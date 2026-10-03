@@ -196,6 +196,7 @@ void main() {
     await db.upsertSession(
       SessionRow(
         instanceId: ava.id,
+        profile: 'default',
         sessionId: 'stale',
         title: 'Removed chat',
         parentId: ava.main.id,

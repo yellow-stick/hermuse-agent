@@ -3,14 +3,20 @@ import 'dart:async';
 import 'package:hermes_client/hermes_client.dart';
 
 import 'models.dart';
+import 'tools.dart';
 
-/// Identifies a conversation: a Hermes instance and a stored session id
-/// (empty until the first message creates the session).
+/// Identifies a profile's conversation on a registered Hermes instance.
+/// The session id is empty until the first message creates the session.
 final class ThreadRef {
-  const ThreadRef({required this.instanceId, required this.sessionId});
+  const ThreadRef({
+    required this.instanceId,
+    required this.sessionId,
+    this.profile = 'default',
+  });
 
   final String instanceId;
   final String sessionId;
+  final String profile;
 
   bool get isNew => sessionId.isEmpty;
 
@@ -18,13 +24,14 @@ final class ThreadRef {
   bool operator ==(Object other) =>
       other is ThreadRef &&
       other.instanceId == instanceId &&
+      other.profile == profile &&
       other.sessionId == sessionId;
 
   @override
-  int get hashCode => Object.hash(instanceId, sessionId);
+  int get hashCode => Object.hash(instanceId, profile, sessionId);
 
   @override
-  String toString() => 'ThreadRef($instanceId, $sessionId)';
+  String toString() => 'ThreadRef($instanceId, $profile, $sessionId)';
 }
 
 /// Persistence hooks of a [ChatController] (session index, transcript cache).
@@ -195,6 +202,7 @@ final class ChatController {
     String Function()? clock,
     DateTime Function()? now,
   }) : _instanceId = ref.instanceId,
+       _profile = ref.profile,
        _clock = clock ?? _wallClock,
        _now = now ?? DateTime.now {
     final mainId = ref.isNew ? _draftId() : ref.sessionId;
@@ -223,6 +231,7 @@ final class ChatController {
 
   final HermesConnections _connections;
   final String _instanceId;
+  final String _profile;
   final ChatObserver? _observer;
   final String Function() _clock;
   final DateTime Function() _now;
@@ -275,13 +284,28 @@ final class ChatController {
   /// Instance this chat talks to.
   String get instanceId => _instanceId;
 
+  /// Hermes profile whose sessions and approvals this controller owns.
+  String get profile => _profile;
+
+  /// The current stored main session (empty while it remains a draft).
+  ThreadRef get ref =>
+      _refOf(_isDraft(_state.mainThread.id) ? '' : _state.mainThread.id);
+
+  /// Updates display metadata without rebuilding an in-flight conversation.
+  void setAgentName(String name) {
+    if (_state.agentName != name) _emit(_state.copyWith(agentName: name));
+  }
+
   ChatState get state => _state;
 
   void addListener(void Function() listener) => _listeners.add(listener);
   void removeListener(void Function() listener) => _listeners.remove(listener);
 
-  ThreadRef _refOf(String threadId) =>
-      ThreadRef(instanceId: _instanceId, sessionId: threadId);
+  ThreadRef _refOf(String threadId) => ThreadRef(
+    instanceId: _instanceId,
+    profile: _profile,
+    sessionId: threadId,
+  );
 
   bool _isDraft(String threadId) => threadId.startsWith('draft-');
   String _draftId() => 'draft-${_seq++}';
@@ -306,7 +330,10 @@ final class ChatController {
     );
     final HermesConnection connection;
     try {
-      connection = await _connections.connectionFor(_instanceId);
+      connection = await _connections.connectionFor(
+        _instanceId,
+        profile: _profile,
+      );
     } on Object catch (e) {
       _emit(
         _state.copyWith(
@@ -332,6 +359,9 @@ final class ChatController {
     if (_state.connection != ChatConnection.error) return;
     await _eventsSub?.cancel();
     await _stateSub?.cancel();
+    for (final live in _live.values) {
+      _connection?.unregister(live, _handler);
+    }
     _connection = null;
     _live.clear();
     _threadOfLive.clear();
@@ -349,6 +379,7 @@ final class ChatController {
       ConnectionState.error => ChatConnection.error,
     };
     final wasDown = _state.connection == ChatConnection.reconnecting;
+    if (mapped != ChatConnection.ready) _detachRequests();
     _emit(
       _state.copyWith(
         connection: mapped,
@@ -363,6 +394,9 @@ final class ChatController {
     if (mapped == ChatConnection.ready && wasDown) {
       // Live session ids do not survive a new socket: resume what was open.
       final loaded = _loaded.toList();
+      for (final live in _live.values) {
+        _connection?.unregister(live, _handler);
+      }
       _live.clear();
       _threadOfLive.clear();
       _loaded.clear();
@@ -522,10 +556,17 @@ final class ChatController {
             );
           }
         case 'tool':
+          // The transcript keeps tool results only for file edits.
+          final result = m.text ?? m.content;
+          final outcome = toolOutcome(result);
           final block = ToolCallBlock(
             toolId: m.toolCallId ?? id,
             name: m.name ?? 'tool',
             summary: m.context ?? '',
+            detail: toolDetail(m.args),
+            output: outcome.output,
+            error: outcome.error,
+            outcomeKnown: result != null,
             running: false,
           );
           // Tool rows attach to the assistant turn that called them.
@@ -586,11 +627,18 @@ final class ChatController {
               toolId: payload.toolId,
               name: payload.name,
               summary: payload.preview ?? payload.context ?? '',
+              detail: toolDetail(payload.args),
             ),
           ],
         );
       case ToolCompleteEvent(:final payload):
         final summary = payload.summary ?? '';
+        final detail = toolDetail(payload.args);
+        final outcome = toolOutcome(payload.result);
+        final seconds = payload.durationS;
+        final duration = seconds == null
+            ? null
+            : Duration(milliseconds: (seconds * 1000).round());
         _updateTurn(
           threadId,
           (blocks) => [
@@ -598,16 +646,25 @@ final class ChatController {
               if (b is BrowserBlock && isBrowserTool(payload.name))
                 b.copyWith(lastToolId: payload.toolId)
               else if (b is ToolCallBlock && b.toolId == payload.toolId)
-                b.done(summary.isEmpty ? b.summary : summary)
+                b.done(
+                  summary: summary.isEmpty ? b.summary : summary,
+                  detail: detail,
+                  output: outcome.output,
+                  error: outcome.error,
+                  duration: duration,
+                )
               else
                 b,
           ],
         );
+        final activity = detail.isNotEmpty ? detail : summary;
         _observer?.toolCompleted(
           _refOf(threadId),
           ActivityItem(
             tool: payload.name,
-            summary: summary,
+            summary: activity.length > 300
+                ? '${activity.substring(0, 299)}…'
+                : activity,
             at: _now(),
             sessionId: _isDraft(threadId) ? '' : threadId,
           ),
@@ -757,7 +814,10 @@ final class ChatController {
       }
       return [
         for (final b in next)
-          if (b is ToolCallBlock && b.running) b.done(b.summary) else b,
+          if (b is ToolCallBlock && b.running)
+            b.done(summary: b.summary)
+          else
+            b,
       ];
     });
     _endTurn(threadId);
@@ -884,6 +944,7 @@ final class ChatController {
   // ------------------------------------------------------ server requests
 
   Future<JsonObject> _onRequest(HermesServerRequest<JsonObject> request) {
+    if (_disposed) throw const HermesRequestDetached();
     final threadId = _threadOfLive[request.sessionId];
     if (threadId == null) {
       throw UnsupportedError('no thread for ${request.sessionId}');
@@ -958,8 +1019,35 @@ final class ChatController {
     return pending.completer.future;
   }
 
+  /// Drops local prompts without making a decision on the server. Only the
+  /// next resume's open_requests snapshot can restore actionable prompts.
+  void _detachRequests() {
+    if (_pending.isEmpty) return;
+    final messageIds = _pending.keys.toSet();
+    for (final pending in _pending.values) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(const HermesRequestDetached());
+      }
+    }
+    _pending.clear();
+    _emit(
+      _state.copyWith(
+        pendingApprovalIds: {..._state.pendingApprovalIds}
+          ..removeAll(messageIds),
+        threads: [
+          for (final thread in _state.threads)
+            thread.withMessages([
+              for (final message in thread.messages)
+                if (!messageIds.contains(message.id)) message,
+            ]),
+        ],
+      ),
+    );
+  }
+
   /// Answers the choice at [blockIndex] of [messageId] (approval or clarify).
   void choose(String messageId, String answer, {int blockIndex = 0}) {
+    if (_disposed || _state.connection != ChatConnection.ready) return;
     final trimmed = answer.trim();
     final pending = _pending[messageId];
     if (trimmed.isEmpty || pending == null) return;
@@ -1702,6 +1790,7 @@ final class ChatController {
   Future<void> dispose() async {
     _disposed = true;
     _listeners.clear();
+    _detachRequests();
     for (final live in _live.values) {
       _connection?.unregister(live, _handler);
     }

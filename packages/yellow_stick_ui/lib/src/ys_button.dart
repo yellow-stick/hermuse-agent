@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import 'ys_focus_ring.dart';
+import 'ys_glass.dart';
 import 'ys_icon_widget.dart';
 import 'ys_pressable.dart';
 import 'ys_theme.dart';
@@ -27,10 +28,10 @@ final class YsButton extends StatelessWidget {
     this.iconColor,
     this.background,
     this.hoverBackground,
-    this.raised = false,
+    this.glass = false,
   });
 
-  /// Floating pill (Chats, Invite, New side chat): paperClear bg, h36.
+  /// Floating pill (Chats, side chat title): liquid glass ([YsGlass]), h36.
   const YsButton.pill({
     required String label,
     required YsIcon icon,
@@ -58,9 +59,9 @@ final class YsButton extends StatelessWidget {
          iconSize: 18,
        );
 
-  /// Circular icon button; [size] 27/32/36 with a muted icon. [raised]
-  /// gives a [background] paper disc floating on the canvas the resting
-  /// elevation ([YsFlutterPalette.raisedShadows]).
+  /// Circular icon button; [size] 27/32/36 with a muted icon. [glass]
+  /// floats it on the canvas as a liquid glass disc ([YsGlass]) instead of
+  /// a [background] fill.
   const YsButton.icon({
     required YsIcon icon,
     required VoidCallback? onPressed,
@@ -74,7 +75,7 @@ final class YsButton extends StatelessWidget {
     Color? iconColor,
     Color? background,
     Color? hoverBackground,
-    bool raised = false,
+    bool glass = false,
   }) : this._(
          key: key,
          kind: YsButtonKind.icon,
@@ -89,7 +90,7 @@ final class YsButton extends StatelessWidget {
          iconColor: iconColor,
          background: background,
          hoverBackground: hoverBackground,
-         raised: raised,
+         glass: glass,
        );
 
   /// Accent button: primary bg, primaryContent fg, hover primary2.
@@ -184,7 +185,7 @@ final class YsButton extends StatelessWidget {
   final Color? iconColor;
   final Color? background;
   final Color? hoverBackground;
-  final bool raised;
+  final bool glass;
 
   @override
   Widget build(BuildContext context) {
@@ -238,30 +239,49 @@ final class YsButton extends StatelessWidget {
     YsPressableState state,
   ) {
     return switch (kind) {
-      YsButtonKind.pill => _PillShell(
-        height: YsLayout.pillHeight,
-        padding: padding,
-        background: state.hovered || state.pressed
-            ? palette.neutralFilmColor
-            : palette.paperClearColor,
-        shadows: palette.raisedShadows,
-        // Floating pills hug their label, even under a max width.
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            YsIconWidget(icon!, size: 18, color: palette.contentColor),
-            const SizedBox(width: 8),
-            // Long labels (side chat titles) ellipsize within the pill.
-            Flexible(
-              child: Text(
-                label!,
-                style: textStyle.flutter.copyWith(color: palette.contentColor),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
+      YsButtonKind.pill => YsGlass(
+        highlighted: state.hovered || state.pressed,
+        child: SizedBox(
+          height: YsLayout.pillHeight,
+          child: Padding(
+            padding: padding,
+            // Floating pills hug their label, even under a max width.
+            child: Center(
+              widthFactor: 1,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  YsIconWidget(icon!, size: 18, color: palette.contentColor),
+                  const SizedBox(width: 8),
+                  // Long labels (side chat titles) ellipsize within the pill.
+                  Flexible(
+                    child: Text(
+                      label!,
+                      style: textStyle.flutter.copyWith(
+                        color: palette.contentColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
+        ),
+      ),
+      YsButtonKind.icon when glass => YsGlass(
+        highlighted: state.hovered || state.pressed,
+        child: SizedBox.square(
+          dimension: size,
+          child: Center(
+            child: YsIconWidget(
+              icon!,
+              size: iconSize,
+              color: iconColor ?? palette.contentMutedColor,
+            ),
+          ),
         ),
       ),
       YsButtonKind.icon => _CircleShell(
@@ -269,7 +289,6 @@ final class YsButton extends StatelessWidget {
         background: state.hovered || state.pressed
             ? (hoverBackground ?? palette.neutralFilmColor)
             : (background ?? const Color(0x00000000)),
-        shadows: raised ? palette.raisedShadows : const [],
         child: YsIconWidget(
           icon!,
           size: iconSize,
@@ -352,13 +371,11 @@ final class _PillShell extends StatelessWidget {
     required this.padding,
     required this.background,
     required this.child,
-    this.shadows = const [],
   });
 
   final double height;
   final EdgeInsetsGeometry padding;
   final Color background;
-  final List<BoxShadow> shadows;
   final Widget child;
 
   @override
@@ -369,7 +386,6 @@ final class _PillShell extends StatelessWidget {
     decoration: BoxDecoration(
       color: background,
       borderRadius: BorderRadius.circular(YsRadius.pill),
-      boxShadow: shadows,
     ),
     child: Center(widthFactor: 1, child: child),
   );
@@ -380,12 +396,10 @@ final class _CircleShell extends StatelessWidget {
     required this.size,
     required this.background,
     required this.child,
-    this.shadows = const [],
   });
 
   final double size;
   final Color background;
-  final List<BoxShadow> shadows;
   final Widget child;
 
   @override
@@ -393,11 +407,7 @@ final class _CircleShell extends StatelessWidget {
     duration: const Duration(milliseconds: YsMotion.fast),
     width: size,
     height: size,
-    decoration: BoxDecoration(
-      color: background,
-      shape: BoxShape.circle,
-      boxShadow: shadows,
-    ),
+    decoration: BoxDecoration(color: background, shape: BoxShape.circle),
     child: Center(child: child),
   );
 }

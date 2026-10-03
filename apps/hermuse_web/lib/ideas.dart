@@ -18,11 +18,13 @@ import 'screens.dart';
 class HermuseIdeas extends StatelessComponent {
   const HermuseIdeas({
     required this.instance,
+    required this.profile,
     required this.onStartInChat,
     super.key,
   });
 
   final HermesInstance instance;
+  final String profile;
   final void Function(String seed) onStartInChat;
 
   @override
@@ -30,7 +32,7 @@ class HermuseIdeas extends StatelessComponent {
     instance: instance,
     title: 'Ideas',
     child: HermuseWatch(
-      provider: ideasProvider(instance.id),
+      provider: ideasProvider(instance.id, profile: profile),
       builder: (context, ideas) => _body(context, ideas),
     ),
   );
@@ -79,6 +81,7 @@ class HermuseIdeas extends StatelessComponent {
                 _IdeaCard(
                   key: ValueKey(idea.id),
                   instanceId: instance.id,
+                  profile: profile,
                   idea: idea,
                   onStartInChat: onStartInChat,
                 ),
@@ -184,12 +187,14 @@ class HermuseIdeas extends StatelessComponent {
 class _IdeaCard extends StatefulComponent {
   const _IdeaCard({
     required this.instanceId,
+    required this.profile,
     required this.idea,
     required this.onStartInChat,
     super.key,
   });
 
   final String instanceId;
+  final String profile;
   final Idea idea;
   final void Function(String seed) onStartInChat;
 
@@ -299,7 +304,12 @@ class _IdeaCardState extends State<_IdeaCard> {
     });
     try {
       await context.container
-          .read(ideasProvider(component.instanceId).notifier)
+          .read(
+            ideasProvider(
+              component.instanceId,
+              profile: component.profile,
+            ).notifier,
+          )
           .feedback(component.idea.id, text);
       if (mounted) {
         setState(() {

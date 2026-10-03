@@ -3,7 +3,7 @@ import 'package:hermes_client/hermes_client.dart';
 
 part 'database.g.dart';
 
-/// A cached transcript message of `(instanceId, sessionId)`.
+/// A cached transcript message of `(instanceId, profile, sessionId)`.
 typedef CachedMessage = MessageRow;
 
 @DriftDatabase(include: {'tables.drift'})
@@ -11,7 +11,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
   HermuseDatabase(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -26,6 +26,91 @@ final class HermuseDatabase extends _$HermuseDatabase {
         // The profile panel's Activity.
         await m.createTable(activity);
         await m.createIndex(activityByTime);
+      }
+      if (from < 4) {
+        // Rebuild composite keys before copying rows. A legacy registered
+        // profile owns its existing cache; otherwise it belongs to default.
+        await customStatement(
+          'CREATE TEMP TABLE old_sessions AS SELECT * FROM sessions',
+        );
+        await customStatement(
+          'CREATE TEMP TABLE old_messages AS SELECT * FROM messages',
+        );
+        for (final trigger in [
+          messagesFtsInsert,
+          messagesFtsDelete,
+          messagesFtsUpdate,
+        ]) {
+          await customStatement('DROP TRIGGER ${trigger.entityName}');
+        }
+        await customStatement('DROP TABLE messages_fts');
+        await customStatement('DROP TABLE messages');
+        await customStatement('DROP TABLE sessions');
+        await m.createTable(sessions);
+        await m.createTable(messages);
+        await m.createTable(messagesFts);
+        await m.createTrigger(messagesFtsInsert);
+        await m.createTrigger(messagesFtsDelete);
+        await m.createTrigger(messagesFtsUpdate);
+        const legacyProfile = "COALESCE(NULLIF(i.profile, ''), 'default')";
+        await customStatement(
+          'INSERT INTO sessions '
+          '(instance_id, profile, session_id, title, parent_id, updated_at, '
+          'archived, pinned_at) '
+          'SELECT s.instance_id, $legacyProfile, s.session_id, s.title, '
+          's.parent_id, s.updated_at, s.archived, s.pinned_at '
+          'FROM old_sessions s JOIN instances i ON i.id = s.instance_id',
+        );
+        await customStatement(
+          'INSERT INTO messages '
+          '(instance_id, profile, session_id, message_id, author, body_text, '
+          'created_at) '
+          'SELECT m.instance_id, $legacyProfile, m.session_id, m.message_id, '
+          'm.author, m.body_text, m.created_at '
+          'FROM old_messages m JOIN instances i ON i.id = m.instance_id',
+        );
+        await customStatement('DROP TABLE old_messages');
+        await customStatement('DROP TABLE old_sessions');
+        if (from >= 3) await m.addColumn(activity, activity.profile);
+        await customStatement(
+          'UPDATE activity SET profile = '
+          "(SELECT COALESCE(NULLIF(profile, ''), 'default') FROM instances "
+          'WHERE instances.id = activity.instance_id)',
+        );
+        await customStatement('DROP INDEX activity_by_time');
+        await m.createIndex(activityByTime);
+        final namedInstances = await customSelect(
+          "SELECT id, profile FROM instances "
+          "WHERE profile IS NOT NULL AND profile NOT IN ('', 'default')",
+        ).get();
+        for (final instance in namedInstances) {
+          final id = instance.read<String>('id');
+          final profile = Uri.encodeComponent(instance.read<String>('profile'));
+          final settingsRows = await select(settings).get();
+          for (final setting in settingsRows) {
+            final key = setting.key;
+            final modelPrefix = 'model_selection:$id:';
+            final String? scopedKey;
+            if (key == 'main_session:$id' || key == 'open_thread:$id') {
+              scopedKey = '$key:profile:$profile';
+            } else if (key.startsWith(modelPrefix) &&
+                !key.substring(modelPrefix.length).startsWith('profile:')) {
+              scopedKey =
+                  '${modelPrefix}profile:$profile:'
+                  '${key.substring(modelPrefix.length)}';
+            } else {
+              scopedKey = null;
+            }
+            if (scopedKey == null) continue;
+            await customStatement(
+              'INSERT OR IGNORE INTO settings ("key", value) VALUES (?, ?)',
+              [scopedKey, setting.value],
+            );
+            await customStatement('DELETE FROM settings WHERE "key" = ?', [
+              key,
+            ]);
+          }
+        }
       }
     },
     beforeOpen: (details) async {
@@ -90,7 +175,8 @@ final class HermuseDatabase extends _$HermuseDatabase {
     String instanceId,
     String parentId, {
     bool archived = false,
-  }) => _sideChats(instanceId, parentId, archived).watch();
+    String profile = 'default',
+  }) => _sideChats(instanceId, parentId, archived, profile).watch();
 
   /// One-shot variant of [watchSideChats] (same order). Use it for single
   /// reads: `.first` on a watch stream pauses/cancels the subscription and
@@ -99,16 +185,19 @@ final class HermuseDatabase extends _$HermuseDatabase {
     String instanceId,
     String parentId, {
     bool archived = false,
-  }) => _sideChats(instanceId, parentId, archived).get();
+    String profile = 'default',
+  }) => _sideChats(instanceId, parentId, archived, profile).get();
 
   SimpleSelectStatement<Sessions, SessionRow> _sideChats(
     String instanceId,
     String parentId,
     bool archived,
+    String profile,
   ) => select(sessions)
     ..where(
       (t) =>
           t.instanceId.equals(instanceId) &
+          t.profile.equals(profile) &
           t.parentId.equals(parentId) &
           t.archived.equals(archived),
     )
@@ -119,18 +208,28 @@ final class HermuseDatabase extends _$HermuseDatabase {
     ]);
 
   /// One cached session (the main chat's last activity), null if unknown.
-  Stream<SessionRow?> watchSession(String instanceId, String sessionId) =>
-      _session(instanceId, sessionId).watchSingleOrNull();
+  Stream<SessionRow?> watchSession(
+    String instanceId,
+    String sessionId, {
+    String profile = 'default',
+  }) => _session(instanceId, sessionId, profile).watchSingleOrNull();
 
-  Future<SessionRow?> loadSession(String instanceId, String sessionId) =>
-      _session(instanceId, sessionId).getSingleOrNull();
+  Future<SessionRow?> loadSession(
+    String instanceId,
+    String sessionId, {
+    String profile = 'default',
+  }) => _session(instanceId, sessionId, profile).getSingleOrNull();
 
   SimpleSelectStatement<Sessions, SessionRow> _session(
     String instanceId,
     String sessionId,
+    String profile,
   ) => select(sessions)
     ..where(
-      (t) => t.instanceId.equals(instanceId) & t.sessionId.equals(sessionId),
+      (t) =>
+          t.instanceId.equals(instanceId) &
+          t.profile.equals(profile) &
+          t.sessionId.equals(sessionId),
     );
 
   Future<void> upsertSession(SessionRow row) =>
@@ -139,26 +238,34 @@ final class HermuseDatabase extends _$HermuseDatabase {
   Future<void> renameSession(
     String instanceId,
     String sessionId,
-    String title,
-  ) => _updateSession(
+    String title, {
+    String profile = 'default',
+  }) => _updateSession(
     instanceId,
     sessionId,
     SessionsCompanion(title: Value(title)),
+    profile: profile,
   );
 
   /// Records activity on a session (orders the side chat list).
-  Future<void> touchSession(String instanceId, String sessionId, int at) =>
-      _updateSession(
-        instanceId,
-        sessionId,
-        SessionsCompanion(updatedAt: Value(at)),
-      );
+  Future<void> touchSession(
+    String instanceId,
+    String sessionId,
+    int at, {
+    String profile = 'default',
+  }) => _updateSession(
+    instanceId,
+    sessionId,
+    SessionsCompanion(updatedAt: Value(at)),
+    profile: profile,
+  );
 
   /// Archiving also unpins.
   Future<void> setSessionArchived(
     String instanceId,
     String sessionId, {
     required bool archived,
+    String profile = 'default',
   }) => _updateSession(
     instanceId,
     sessionId,
@@ -166,32 +273,47 @@ final class HermuseDatabase extends _$HermuseDatabase {
       archived: Value(archived),
       pinnedAt: archived ? const Value(null) : const Value.absent(),
     ),
+    profile: profile,
   );
 
   /// Pins at [at] (ms since epoch), or unpins when null.
-  Future<void> setSessionPinned(String instanceId, String sessionId, int? at) =>
-      _updateSession(
-        instanceId,
-        sessionId,
-        SessionsCompanion(pinnedAt: Value(at)),
-      );
+  Future<void> setSessionPinned(
+    String instanceId,
+    String sessionId,
+    int? at, {
+    String profile = 'default',
+  }) => _updateSession(
+    instanceId,
+    sessionId,
+    SessionsCompanion(pinnedAt: Value(at)),
+    profile: profile,
+  );
 
   /// Drops a session and (by cascade) its cached transcript.
-  Future<void> deleteSession(String instanceId, String sessionId) =>
+  Future<void> deleteSession(
+    String instanceId,
+    String sessionId, {
+    String profile = 'default',
+  }) =>
       (delete(sessions)..where(
             (t) =>
-                t.instanceId.equals(instanceId) & t.sessionId.equals(sessionId),
+                t.instanceId.equals(instanceId) &
+                t.profile.equals(profile) &
+                t.sessionId.equals(sessionId),
           ))
           .go();
 
   Future<void> _updateSession(
     String instanceId,
     String sessionId,
-    SessionsCompanion changes,
-  ) =>
+    SessionsCompanion changes, {
+    String profile = 'default',
+  }) =>
       (update(sessions)..where(
             (t) =>
-                t.instanceId.equals(instanceId) & t.sessionId.equals(sessionId),
+                t.instanceId.equals(instanceId) &
+                t.profile.equals(profile) &
+                t.sessionId.equals(sessionId),
           ))
           .write(changes);
 
@@ -199,12 +321,14 @@ final class HermuseDatabase extends _$HermuseDatabase {
 
   Future<List<CachedMessage>> loadMessages(
     String instanceId,
-    String sessionId,
-  ) =>
+    String sessionId, {
+    String profile = 'default',
+  }) =>
       (select(messages)
             ..where(
               (t) =>
                   t.instanceId.equals(instanceId) &
+                  t.profile.equals(profile) &
                   t.sessionId.equals(sessionId),
             )
             ..orderBy([(t) => OrderingTerm(expression: t.createdAt)]))
@@ -219,12 +343,14 @@ final class HermuseDatabase extends _$HermuseDatabase {
   Future<void> cacheTranscript(
     String instanceId,
     String sessionId,
-    List<CachedMessage> rows,
-  ) => batch((b) {
+    List<CachedMessage> rows, {
+    String profile = 'default',
+  }) => batch((b) {
     b.insert(
       sessions,
       SessionsCompanion.insert(
         instanceId: instanceId,
+        profile: Value(profile),
         sessionId: sessionId,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ),
@@ -241,6 +367,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
     required String instanceId,
     required Iterable<String> sessionIds,
     int limit = 50,
+    String profile = 'default',
   }) async {
     final terms = text
         .split(RegExp(r'\s+'))
@@ -251,6 +378,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
     final rows = await searchMessages(
       terms.join(' '),
       instanceId,
+      profile,
       ids,
       limit,
     ).get();
@@ -266,6 +394,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
   /// [activityKept].
   Future<void> addActivity({
     required String instanceId,
+    String profile = 'default',
     required String sessionId,
     required String tool,
     required String summary,
@@ -274,6 +403,7 @@ final class HermuseDatabase extends _$HermuseDatabase {
     await into(activity).insert(
       ActivityCompanion.insert(
         instanceId: instanceId,
+        profile: Value(profile),
         sessionId: sessionId,
         tool: tool,
         summary: Value(summary),
@@ -281,10 +411,10 @@ final class HermuseDatabase extends _$HermuseDatabase {
       ),
     );
     await customStatement(
-      'DELETE FROM activity WHERE instance_id = ? AND id NOT IN '
-      '(SELECT id FROM activity WHERE instance_id = ? '
+      'DELETE FROM activity WHERE instance_id = ? AND profile = ? AND id NOT IN '
+      '(SELECT id FROM activity WHERE instance_id = ? AND profile = ? '
       'ORDER BY at DESC, id DESC LIMIT ?)',
-      [instanceId, instanceId, activityKept],
+      [instanceId, profile, instanceId, profile, activityKept],
     );
   });
 
@@ -292,9 +422,13 @@ final class HermuseDatabase extends _$HermuseDatabase {
   Stream<List<ActivityRow>> watchActivity(
     String instanceId, {
     int limit = 200,
+    String profile = 'default',
   }) =>
       (select(activity)
-            ..where((t) => t.instanceId.equals(instanceId))
+            ..where(
+              (t) =>
+                  t.instanceId.equals(instanceId) & t.profile.equals(profile),
+            )
             ..orderBy([
               (t) => OrderingTerm.desc(t.at),
               (t) => OrderingTerm.desc(t.id),
@@ -310,6 +444,28 @@ final class HermuseDatabase extends _$HermuseDatabase {
 
   Future<void> writeSetting(String key, String value) =>
       into(settings).insertOnConflictUpdate(SettingRow(key: key, value: value));
+
+  /// Atomically saves related preferences in one statement.
+  ///
+  /// Drift's IndexedDB backend flushes standalone writes, but can defer an
+  /// explicit transaction's commit until a later write. Keep selections
+  /// durable before publishing them, including when a page closes next.
+  Future<void> writeSettings(Map<String, String> values) async {
+    if (values.isEmpty) return;
+    final variables = <Variable<String>>[];
+    values.forEach((key, value) {
+      variables
+        ..add(Variable.withString(key))
+        ..add(Variable.withString(value));
+    });
+    await customInsert(
+      'INSERT INTO settings ("key", value) VALUES '
+      '${List.filled(values.length, '(?, ?)').join(', ')} '
+      'ON CONFLICT ("key") DO UPDATE SET value = excluded.value',
+      variables: variables,
+      updates: {settings},
+    );
+  }
 }
 
 /// [InstanceStore] backed by [HermuseDatabase].

@@ -238,3 +238,43 @@ def test_dashboard_restart_refused_where_it_cannot_restart_in_place(
 ])
 def test_dashboard_launches_that_restart_in_place(argv):
     assert dashboard_restart.command_line(argv, environ={}) == argv
+
+
+def test_profile_feeds_are_isolated_under_concurrent_requests(client, hermes_home):
+    from concurrent.futures import ThreadPoolExecutor
+
+    for name in ("noah", "aya"):
+        home = hermes_home / "profiles" / name
+        home.mkdir(parents=True)
+        (home / "SOUL.md").write_text(f"You are {name}.")
+
+    def create(name):
+        response = client.post(
+            f"/api/plugins/hermuse/feed?profile={name}",
+            json={"title": name, "body": f"Only for {name}."},
+        )
+        assert response.status_code == 201, response.text
+        return name, response.json()["id"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        created = list(pool.map(create, ["noah", "aya"]))
+    for name in ("noah", "aya"):
+        posts = client.get(f"/api/plugins/hermuse/feed?profile={name}").json()["posts"]
+        assert {post["id"] for post in posts} == {
+            post_id for owner, post_id in created if owner == name
+        }
+        assert all(post["title"] == name for post in posts)
+    other_id = next(post_id for name, post_id in created if name == "aya")
+    assert client.get(
+        f"/api/plugins/hermuse/feed/{other_id}?profile=noah"
+    ).status_code == 404
+    assert client.get("/api/plugins/hermuse/feed").json()["posts"] == []
+
+
+def test_profile_routes_reject_unknown_and_traversal(client, hermes_home):
+    for name in ("../outside", "/tmp/outside", "a/b", ""):
+        response = client.get("/api/plugins/hermuse/feed", params={"profile": name})
+        assert response.status_code == 400
+    response = client.get("/api/plugins/hermuse/feed?profile=missing")
+    assert response.status_code == 404
+    assert not (hermes_home / "profiles" / "missing").exists()

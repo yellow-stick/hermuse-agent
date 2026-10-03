@@ -8,6 +8,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../platform/plugin_bundle.dart';
 import '../shell/screens.dart';
+import 'linux_setup_gate.dart' show migrationNotice;
 import 'setup_view.dart';
 
 /// Desktop-only SSH setup and removal. Credentials live only in this attempt;
@@ -43,6 +44,7 @@ enum _Phase {
   consent,
   loading,
   hostKey,
+  migration,
   installing,
   failed,
   removalReview,
@@ -73,6 +75,8 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   Future<void>? _stopping;
   Completer<bool>? _hostKeyDecision;
   RemoteHostKey? _hostKey;
+  Completer<bool>? _migrationDecision;
+  LegacyHermesMigration? _migration;
   _Phase _phase = _Phase.form;
   RemoteInstallStep? _running;
   final _finished = <RemoteInstallStep>{};
@@ -98,6 +102,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
     final decision = _hostKeyDecision;
     _hostKeyDecision = null;
     if (decision != null && !decision.isCompleted) decision.complete(false);
+    final migration = _migrationDecision;
+    _migrationDecision = null;
+    if (migration != null && !migration.isCompleted) migration.complete(false);
     _inspectionPassword = null;
     _inventory = null;
     _stopping = _removing ? _uninstaller.cancel() : _installer.cancel();
@@ -203,6 +210,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
             pluginBundle: plugin,
             webApp: _webApp ?? false,
             onHostKey: (key) => _verifyHostKey(key, attempt),
+            onMigration: (inventory) => _reviewMigration(inventory, attempt),
           )
           .listen(
             (event) => _progress(event, attempt),
@@ -253,6 +261,35 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
     decision.complete(true);
   }
 
+  Future<bool> _reviewMigration(LegacyHermesMigration inventory, int attempt) {
+    if (!_current(attempt)) return Future.value(false);
+    final decision = Completer<bool>();
+    _migrationDecision = decision;
+    setState(() {
+      _migration = inventory;
+      _phase = _Phase.migration;
+    });
+    return decision.future;
+  }
+
+  Widget _migrationReview() => YsDialogCard(
+    children: [
+      const YsDialogTitle('Review legacy migration'),
+      YsDialogBody(migrationNotice(_migration!).text),
+      YsButton.primary(
+        label: 'Approve backed-up migration',
+        onPressed: () {
+          final decision = _migrationDecision;
+          if (decision == null || decision.isCompleted) return;
+          _migrationDecision = null;
+          setState(() => _phase = _Phase.installing);
+          decision.complete(true);
+        },
+      ),
+      YsButton.neutral(label: 'Cancel', onPressed: _cancel),
+    ],
+  );
+
   void _declineHostKey() {
     _fail(
       'SSH host key declined. No SSH credentials were sent and no server changes were made.',
@@ -269,7 +306,9 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
           _previouslyCompleted.remove(step);
           _checkingExisting = false;
           // A queued connect event must not hide an unanswered trust prompt.
-          if (_hostKeyDecision == null) _phase = _Phase.installing;
+          if (_hostKeyDecision == null && _migrationDecision == null) {
+            _phase = _Phase.installing;
+          }
         });
       case RemoteInstallStepFinished(:final step, :final previouslyCompleted):
         setState(() {
@@ -418,21 +457,24 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
 
   @override
   Widget build(BuildContext context) => YsEntrance(
-    child: Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(YsSpace.xl),
-        child: switch (_phase) {
-          _Phase.form => _form(),
-          _Phase.consent => _consent(),
-          _Phase.hostKey => _fingerprint(_hostKey!),
-          _Phase.removalReview => _removalReview(),
-          _Phase.removalFinished => _removalResult(),
-          _Phase.installed => _installed(_outcome!),
-          _Phase.loading ||
-          _Phase.installing ||
-          _Phase.failed => _removing ? _removalProgressCard() : _progressCard(),
-        },
-      ),
+    child: switch (_phase) {
+      _Phase.loading ||
+      _Phase.installing ||
+      _Phase.failed => _removing ? _removalProgressCard() : _progressCard(),
+      _Phase.removalReview => _removalReview(),
+      _Phase.removalFinished => _removalResult(),
+      _Phase.form => _formSurface(_form()),
+      _Phase.consent => _formSurface(_consent()),
+      _Phase.hostKey => _formSurface(_fingerprint(_hostKey!)),
+      _Phase.migration => _formSurface(_migrationReview()),
+      _Phase.installed => _formSurface(_installed(_outcome!)),
+    },
+  );
+
+  Widget _formSurface(Widget child) => Center(
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(YsSpace.xl),
+      child: child,
     ),
   );
 
@@ -663,34 +705,47 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
 
   Widget _removalReview() {
     final inventory = _inventory!;
-    return YsDialogCard(
-      children: [
-        const YsDialogTitle('Review server removal'),
-        YsDialogBody('Server: ${_host.text.trim()}'),
-        const YsDialogBody(
+    return SetupCard(
+      title: 'Review server removal',
+      status: 'Server: ${_host.text.trim()}',
+      notices: [
+        const SetupNotice(
           'Uninstall stops and removes the inspected installation’s services, code and owned network configuration. Keep data to retain its settings, conversations and caches for later use.',
         ),
-        const YsDialogBody(
+        const SetupNotice(
           'Purge also permanently deletes the inspected, installer-owned data, configuration and caches, including its dedicated account when safe. This cannot be undone. Shared packages, unrelated users and unrelated sites are preserved.',
+          alert: true,
+        ),
+        const SetupNotice(
+          'Saved instances and dashboard credentials in this app are not deleted by server removal.',
         ),
         if (inventory.resources.isEmpty)
-          const YsDialogBody('No installer-owned resources were found.'),
+          const SetupNotice('No installer-owned resources were found.'),
+        if (inventory.transactionActive)
+          const SetupNotice(
+            'Another server setup or rollback is active. Wait for it to finish, then inspect again. No removal is allowed now.',
+            alert: true,
+          ),
+      ],
+      items: [
         for (final resource in inventory.resources)
-          YsDialogBody(
-            '${resource.label}: ${!resource.removable
+          YsChecklistItem(
+            id: resource,
+            icon: YsIcon.package,
+            title: resource.label,
+            state: resource.removable
+                ? YsStepState.pending
+                : YsStepState.skipped,
+            status: !resource.removable
                 ? 'Preserved'
                 : resource.purgeOnly
                 ? 'Removed only with purge'
-                : 'Removed with either option'}. ${resource.reason}',
+                : 'Removed with either option',
+            notes: [YsChecklistNote(resource.reason)],
           ),
-        const YsDialogBody(
-          'Saved instances and dashboard credentials in this app are not deleted by server removal.',
-        ),
-        if (inventory.transactionActive)
-          const YsDialogError(
-            'Another server setup or rollback is active. Wait for it to finish, then inspect again. No removal is allowed now.',
-          )
-        else ...[
+      ],
+      actions: [
+        if (!inventory.transactionActive) ...[
           YsButton.primary(
             label: 'Uninstall and keep data',
             onPressed: () => _remove(purge: false),
@@ -778,32 +833,48 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
 
   Widget _removalResult() {
     final outcome = _removalOutcome!;
-    return YsDialogCard(
-      children: [
-        YsDialogTitle(
-          outcome.complete
-              ? outcome.purged
-                    ? 'Server installation purged'
-                    : 'Server installation removed'
-              : 'Some server resources were kept',
-        ),
-        YsDialogBody('Server: ${_host.text.trim()}'),
+    return SetupCard(
+      title: outcome.complete
+          ? outcome.purged
+                ? 'Server installation purged'
+                : 'Server installation removed'
+          : 'Some server resources were kept',
+      status: 'Server: ${_host.text.trim()}',
+      notices: [
         if (!outcome.complete)
-          const YsDialogError(
+          const SetupNotice(
             'Removal could not safely finish for every managed resource. Review what was preserved below before taking further action.',
+            alert: true,
           ),
         if (outcome.removed.isEmpty)
-          const YsDialogBody(
-            'No removable installer-owned resources remained.',
-          ),
-        for (final removed in outcome.removed)
-          YsDialogBody('Removed: $removed'),
-        for (final resource in outcome.preserved)
-          YsDialogBody('Kept ${resource.label}: ${resource.reason}'),
-        for (final warning in outcome.warnings) YsDialogError(warning),
-        const YsDialogBody(
+          const SetupNotice('No removable installer-owned resources remained.'),
+        for (final warning in outcome.warnings)
+          SetupNotice(warning, alert: true),
+        const SetupNotice(
           'Your saved instance and its dashboard credentials remain in this app. You can delete that saved connection separately from Hermes instances.',
         ),
+      ],
+      items: [
+        for (final removed in outcome.removed)
+          YsChecklistItem(
+            id: removed,
+            icon: YsIcon.check,
+            title: removed,
+            state: YsStepState.done,
+            status: 'Removed',
+          ),
+        for (final resource in outcome.preserved)
+          YsChecklistItem(
+            id: resource,
+            icon: YsIcon.package,
+            title: resource.label,
+            state: YsStepState.skipped,
+            status: 'Kept',
+            notes: [YsChecklistNote(resource.reason)],
+          ),
+      ],
+      log: _log,
+      actions: [
         if (!outcome.complete)
           YsButton.neutral(
             label: 'Inspect remaining resources',

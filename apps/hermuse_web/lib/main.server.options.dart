@@ -6,6 +6,7 @@
 
 import 'package:jaspr/server.dart';
 import 'package:hermuse_web/add_instance.dart' as _add_instance;
+import 'package:hermuse_web/agents.dart' as _agents;
 import 'package:hermuse_web/app.dart' as _app;
 import 'package:hermuse_web/browser_card.dart' as _browser_card;
 import 'package:hermuse_web/chat_root.dart' as _chat_root;
@@ -26,6 +27,7 @@ import 'package:hermuse_web/rail.dart' as _rail;
 import 'package:hermuse_web/route.dart' as _route;
 import 'package:hermuse_web/scope.dart' as _scope;
 import 'package:hermuse_web/screens.dart' as _screens;
+import 'package:hermuse_web/settings.dart' as _settings;
 import 'package:hermuse_web/sidebar.dart' as _sidebar;
 import 'package:hermuse_web/thread.dart' as _thread;
 import 'package:yellow_stick_ui_web/src/art.dart' as _art;
@@ -80,6 +82,8 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._motion.ysMotionStyles,
     ..._theme.ysThemeStyles,
     ..._add_instance.HermuseAddInstance.styles,
+    ..._agents.HermuseAgentEditor.styles,
+    ..._agents.HermuseAgentPicker.styles,
     ..._app.App.styles,
     ..._browser_card.HermuseBrowserCard.styles,
     ..._components.HermuseComponents.styles,
@@ -104,6 +108,8 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._route.HermuseRouteSkeleton.styles,
     ..._scope.HermuseScope.styles,
     ..._screens.HermuseRelayRequired.styles,
+    ..._settings.HermuseSettings.styles,
+    ..._settings.HermuseSettingsMenu.styles,
     ..._sidebar.HermuseSidebar.styles,
     ..._thread.HermuseThread.styles,
     ..._thread.HermuseThreadHeader.styles,

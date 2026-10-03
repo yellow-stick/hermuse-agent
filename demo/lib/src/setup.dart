@@ -109,6 +109,7 @@ Future<void> seedDemo(HermuseDatabase db, {DateTime? now}) async {
       await db.upsertSession(
         SessionRow(
           instanceId: instance.id,
+          profile: 'default',
           sessionId: chat.id,
           title: chat.title,
           parentId: identical(chat, instance.main) ? null : instance.main.id,
@@ -138,6 +139,7 @@ List<CachedMessage> _searchRows(DemoInstance instance, DemoChat chat) {
   final out = <CachedMessage>[];
   CachedMessage row(int index, String author, String text) => CachedMessage(
     instanceId: instance.id,
+    profile: 'default',
     sessionId: chat.id,
     messageId: 'row-${base + index}',
     author: author,

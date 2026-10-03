@@ -11,7 +11,7 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'add_instance.dart';
-import 'brand.dart';
+import 'agents.dart';
 import 'components.dart';
 import 'computer_viewer.dart';
 import 'connections.dart';
@@ -26,6 +26,7 @@ import 'rail.dart';
 import 'scope.dart';
 import 'screens.dart';
 import 'sidebar.dart';
+import 'settings.dart';
 import 'thread.dart';
 
 /// The chat root: routes relay/instances/chat screens and owns the shell.
@@ -46,6 +47,7 @@ enum _Overlay {
   none,
   addInstance,
   instances,
+  settings,
   onboarding,
   connections,
   components,
@@ -81,10 +83,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
   /// opened from, else the chat.
   var _addReturn = _Overlay.none;
   String? _onboardingInstanceId;
+  String? _agentEditorInstanceId;
+  AgentProfile? _editingAgent;
   String? _copiedId;
   Timer? _copiedTimer;
   StreamSubscription<web.Event>? _keySub;
   StreamSubscription<web.Event>? _resizeSub;
+  web.HTMLElement? _settingsOpener;
 
   /// The chat on screen. Switching instances keeps it (rail, panel, thread
   /// DOM all stay) until the next chat's transcript is loaded, then only the
@@ -105,6 +110,24 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       _sidebarOverride ?? (pinned && _shellKind == YsShell.wide);
 
   bool get _splitFits => (_width ?? 0) >= _splitMinViewport;
+
+  void _openSettings() {
+    if (kIsWeb) {
+      _settingsOpener = web.document.activeElement as web.HTMLElement?;
+    }
+    setState(() => _overlay = _Overlay.settings);
+  }
+
+  void _closeSettings() {
+    setState(() => _overlay = _Overlay.none);
+    if (kIsWeb) {
+      context.binding.addPostFrameCallback(() {
+        if (mounted && (_settingsOpener?.isConnected ?? false)) {
+          _settingsOpener?.focus();
+        }
+      });
+    }
+  }
 
   @override
   void initState() {
@@ -127,6 +150,10 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           .forTarget(web.window)
           .listen((event) {
             if (event.key == 'Escape') {
+              if (_overlay == _Overlay.settings) {
+                _closeSettings();
+                return;
+              }
               setState(() {
                 if (_overlay != _Overlay.none) {
                   _overlay = _Overlay.none;
@@ -180,6 +207,11 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
 
   Future<void> _openSetup(ThreadRef setup) =>
       context.readProvider(activeThreadProvider.notifier).openSetup(setup);
+
+  void _editAgent(String instanceId, [AgentProfile? agent]) => setState(() {
+    _agentEditorInstanceId = instanceId;
+    _editingAgent = agent;
+  });
 
   /// "Add a Hermes"; cancelling it goes back to [from].
   void _addInstance([_Overlay from = _Overlay.none]) => setState(() {
@@ -255,20 +287,25 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     if (!kIsWeb) return _loadingShell();
     return HermuseScope(
       loading: _loadingShell(),
-      child: Builder(
-        // The demo answers every call in the browser: no relay to find.
-        builder: (context) => hermuseDemo
-            ? _instancesRoute()
-            : HermuseWatch(
-                provider: relayProvider,
-                builder: (context, detected) {
-                  if (!detected.hasValue) return _loadingShell();
-                  if (detected.value == null) {
-                    return _loadingShell(child: HermuseRelayRequired());
-                  }
-                  return _instancesRoute();
-                },
-              ),
+      child: HermuseWatch(
+        provider: appThemeProvider,
+        builder: (context, theme) {
+          final mode = theme.value ?? YsThemeMode.dark;
+          web.document.documentElement?.setAttribute('data-theme', mode.name);
+          // The demo answers every call in the browser: no relay to find.
+          return hermuseDemo
+              ? _instancesRoute()
+              : HermuseWatch(
+                  provider: relayProvider,
+                  builder: (context, detected) {
+                    if (!detected.hasValue) return _loadingShell();
+                    if (detected.value == null) {
+                      return _loadingShell(child: HermuseRelayRequired());
+                    }
+                    return _instancesRoute();
+                  },
+                );
+        },
       ),
     );
   }
@@ -277,7 +314,16 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     provider: instancesProvider,
     builder: (context, instances) => HermuseWatch(
       provider: activeThreadProvider,
-      builder: (context, active) => _route(context, instances, active),
+      builder: (context, active) => .fragment([
+        div(
+          styles: Styles(
+            display: _overlay == _Overlay.settings ? .none : .contents,
+          ),
+          [_route(context, instances, active)],
+        ),
+        if (_overlay == _Overlay.settings)
+          _loadingShell(child: HermuseSettings(onBack: _closeSettings)),
+      ]),
     ),
   );
 
@@ -405,6 +451,8 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           if (!identical(previous, next)) {
             _shown = next;
             _shownInstance = instance;
+            _draft = '';
+            _customAnswer = '';
             _scrollToBottom();
           }
         } else if (next != null && !identical(_awaited, next)) {
@@ -420,13 +468,19 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
         syncChatListener(controller);
         return HermuseWatch(
           provider: chatPanelPinnedProvider,
-          builder: (context, pinned) => _chatShell(
-            context,
-            instances: instances,
-            instance: _shownInstance ?? instance,
-            controller: controller,
-            switching: !identical(controller, next),
-            pinned: pinned,
+          builder: (context, pinned) => HermuseWatch(
+            provider: agentProfilesProvider(controller.instanceId),
+            builder: (context, agents) => _chatShell(
+              context,
+              instances: instances,
+              instance: _shownInstance ?? instance,
+              controller: controller,
+              agent: agents.value
+                  ?.where((agent) => agent.profile == controller.profile)
+                  .firstOrNull,
+              switching: !identical(controller, next),
+              pinned: pinned,
+            ),
           ),
         );
       },
@@ -458,6 +512,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     required ChatController controller,
     required bool switching,
     required bool pinned,
+    required AgentProfile? agent,
   }) {
     final state = controller.state;
     final activeThread = state.activeThread;
@@ -468,17 +523,34 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     final chatsOpen = _chatsOpen(pinned: pinned) && (onChat || split);
     // Side by side, the route keeps the rest: no profile panel.
     final profileOpen = _panelOpen && !split;
-    final side = activeThread.id != state.mainThread.id;
+    final agentName = agent?.displayName ?? state.agentName;
+    final avatarId = agent?.avatarId ?? 'hermuse';
     _followThread(state);
+
+    Component agentPicker({String? subtitle}) => HermuseAgentPicker(
+      key: ValueKey('agent:${instance.id}:${controller.profile}'),
+      instanceId: instance.id,
+      profile: controller.profile,
+      chat: state,
+      subtitle: subtitle,
+      disabled: switching,
+      readOnly: hermuseDemo,
+      onCreate: () => _editAgent(instance.id),
+      onEdit: (agent) => _editAgent(instance.id, agent),
+    );
+    // Phone top bar: a side chat on screen gets back to the main chat.
+    final sideChat = onChat && activeThread.id != state.mainThread.id;
 
     Component header() => HermuseThreadHeader(
       state: state,
       panelOpen: chatsOpen,
       onOpenPanel: () => setState(() => _sidebarOverride = true),
       onBackToMain: () => controller.openThread(state.mainThread.id),
+      agentPicker: agentPicker(),
     );
 
     Component thread() => HermuseThread(
+      key: ValueKey('thread:${instance.id}:${controller.profile}'),
       readOnly: hermuseDemo,
       switching: switching,
       thread: activeThread,
@@ -517,6 +589,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             activeInstanceId: instance.id,
             onSelectInstance: (id) => unawaited(_openInstance(id)),
             onAddInstance: hermuseDemo ? null : _addInstance,
+            onOpenSettings: _openSettings,
             onOpenInstances: hermuseDemo
                 ? null
                 : () => setState(() => _overlay = _Overlay.instances),
@@ -533,14 +606,22 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       HermuseDestination.chat => null,
       HermuseDestination.feed => HermuseFeed(
         instance: instance,
+        profile: controller.profile,
         onDiscuss: (seed) => _discussSeed(controller, seed),
       ),
       HermuseDestination.ideas => HermuseIdeas(
         instance: instance,
+        profile: controller.profile,
         onStartInChat: (seed) => _discussSeed(controller, seed),
       ),
-      HermuseDestination.goals => HermuseGoals(instance: instance),
-      HermuseDestination.library => HermuseLibrary(instance: instance),
+      HermuseDestination.goals => HermuseGoals(
+        instance: instance,
+        profile: controller.profile,
+      ),
+      HermuseDestination.library => HermuseLibrary(
+        instance: instance,
+        profile: controller.profile,
+      ),
     };
 
     // The agent's computer takes everything right of the rail.
@@ -549,10 +630,18 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
         div(classes: 'hermuse-nojs-note', [.text('Loading interactive chat…')]),
         rail(),
         HermuseComputerViewer(
-          key: ValueKey('computer:${instance.id}'),
+          key: ValueKey('computer:${instance.id}:${controller.profile}'),
           controller: controller,
           instanceId: instance.id,
         ),
+        div(classes: 'hermuse-computer-settings-menu', [
+          HermuseSettingsMenu(
+            onSettings: _openSettings,
+            onInstances: hermuseDemo
+                ? null
+                : () => setState(() => _overlay = _Overlay.instances),
+          ),
+        ]),
       ]);
     }
 
@@ -563,7 +652,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       rail(),
       if (chatsOpen)
         HermuseSidebar(
-          key: const ValueKey('chats-panel'),
+          key: ValueKey('chats-panel:${instance.id}:${controller.profile}'),
           controller: controller,
           readOnly: hermuseDemo,
           onOpenThread: (id) => _pickThread(controller, id, pinned: pinned),
@@ -584,9 +673,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       div(key: const ValueKey('thread-slot'), classes: 'hermuse-thread-slot', [
         if (product != null)
           // A product page enters with the page motion, once per destination.
-          div(key: ValueKey(_destination), classes: 'hermuse-page ys-enter', [
-            product,
-          ])
+          div(
+            key: ValueKey(
+              '${_destination.name}:${instance.id}:${controller.profile}',
+            ),
+            classes: 'hermuse-page ys-enter',
+            [product],
+          )
         else ...[
           header(),
           thread(),
@@ -609,65 +702,84 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
               onPressed: () => setState(() => _panelOverride = true),
               label: 'Open profile panel',
               classes: 'hermuse-avatar-btn',
-              builder: (context, press) =>
-                  const YsAvatar(src: hermuseAvatarUrl, size: 36),
+              builder: (context, press) => HermuseAgentAvatar(
+                profile: controller.profile,
+                avatarId: avatarId,
+                chat: state,
+                size: 36,
+              ),
             ),
         ]),
         div(classes: 'hermuse-topbar', [
-          YsButton.icon(
-            icon: YsIcon.menu,
-            label: 'Open chats',
-            onPressed: () => setState(() => _sidebarOverride = true),
-          ),
-          span(classes: 'hermuse-topbar-title', [
-            .text(
-              onChat && side
-                  ? sideChatTitle(activeThread.title)
-                  : state.agentName,
+          div(classes: 'hermuse-topbar-lead', [
+            if (sideChat)
+              YsButton.icon(
+                icon: YsIcon.arrowLeft,
+                label: 'Back to main chat',
+                onPressed: () => controller.openThread(state.mainThread.id),
+              ),
+            YsButton.icon(
+              icon: YsIcon.menu,
+              label: 'Open chats',
+              onPressed: () => setState(() => _sidebarOverride = true),
             ),
           ]),
-          YsPressable(
-            onPressed: () => setState(() => _panelOverride = true),
-            label: 'Open profile panel',
-            classes: 'hermuse-avatar-btn hermuse-avatar-btn-sm',
-            builder: (context, press) =>
-                const YsAvatar(src: hermuseAvatarUrl, size: 32),
-          ),
+          div(classes: 'hermuse-topbar-title', [
+            agentPicker(
+              subtitle: !onChat
+                  ? _destination.label
+                  : sideChat
+                  ? sideChatTitle(activeThread.title)
+                  : 'Main chat',
+            ),
+          ]),
+          div(classes: 'hermuse-topbar-trail', [
+            YsPressable(
+              onPressed: () => setState(() => _panelOverride = true),
+              label: 'Open profile panel',
+              classes: 'hermuse-avatar-btn hermuse-avatar-btn-sm',
+              builder: (context, press) => HermuseAgentAvatar(
+                profile: controller.profile,
+                avatarId: avatarId,
+                chat: state,
+                size: 32,
+              ),
+            ),
+          ]),
         ]),
         nav(
           classes: 'hermuse-bottomnav',
           attributes: {'aria-label': 'Primary'},
           [
-            for (final (icon, label, target) in const [
-              (YsIcon.chat, 'Chat', HermuseDestination.chat),
-              (YsIcon.feed, 'Feed', HermuseDestination.feed),
-              (YsIcon.ideas, 'Ideas', HermuseDestination.ideas),
-              (YsIcon.goals, 'Goals', HermuseDestination.goals),
-              (YsIcon.library, 'Library', HermuseDestination.library),
-            ])
+            for (final target in HermuseDestination.values)
               YsPressable(
                 onPressed: target == _destination
                     ? () {}
                     : () => setState(() => _destination = target),
-                label: label,
+                label: target.label,
                 classes: 'hermuse-bottomnav-item',
                 builder: (context, press) =>
-                    YsIconView(icon, size: YsLayout.bottomNavIconSize),
+                    YsIconView(target.icon, size: YsLayout.bottomNavIconSize),
               ),
-            if (!hermuseDemo)
-              YsPressable(
-                onPressed: () => setState(() => _overlay = _Overlay.instances),
-                label: 'More',
-                classes: 'hermuse-bottomnav-item',
-                builder: (context, press) =>
-                    YsIconView(YsIcon.more, size: YsLayout.bottomNavIconSize),
-              ),
+            HermuseSettingsMenu(
+              compact: true,
+              onSettings: _openSettings,
+              onInstances: hermuseDemo
+                  ? null
+                  : () => setState(() => _overlay = _Overlay.instances),
+            ),
           ],
         ),
       ]),
       if (profileOpen)
         HermusePanel(
-          agentName: state.agentName,
+          agentName: agentName,
+          profile: controller.profile,
+          avatarId: avatarId,
+          chat: state,
+          onEditAgent: hermuseDemo || agent == null
+              ? null
+              : () => _editAgent(instance.id, agent),
           instanceId: controller.instanceId,
           threadIds: {for (final t in state.threads) t.id},
           approvals: state.approvals,
@@ -695,6 +807,16 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           classes: 'hermuse-sidebar-scrim',
           events: {'click': (_) => setState(() => _sidebarOverride = false)},
           [],
+        ),
+      if (_agentEditorInstanceId case final editorInstanceId?)
+        HermuseAgentEditor(
+          key: ValueKey('editor:$editorInstanceId:${_editingAgent?.profile}'),
+          instanceId: editorInstanceId,
+          agent: _editingAgent,
+          onClose: () => setState(() {
+            _agentEditorInstanceId = null;
+            _editingAgent = null;
+          }),
         ),
     ]);
   }
@@ -793,25 +915,37 @@ List<StyleRule> get hermuseShellStyles => [
     css(
       '.hermuse-shell .hermuse-floating-left, .hermuse-shell .hermuse-floating-right',
     ).styles(display: .none),
+    // Title centered on the bar whatever sits left (Back + Chats in a side
+    // chat): equal flexible side columns.
     css('.hermuse-shell .hermuse-topbar').styles(
-      height: 52.px,
-      display: .flex,
-      flexDirection: .row,
+      height: YsLayout.topBarHeight.px,
+      display: .grid,
       alignItems: .center,
-      gap: .all(8.px),
-      padding: .symmetric(horizontal: 8.px),
+      gap: .all(YsSpace.sm.px),
+      padding: .symmetric(horizontal: YsSpace.sm.px),
       backgroundColor: .variable('--canvas'),
       border: .only(
         bottom: .solid(color: .variable('--line'), width: 1.2.px),
       ),
-      raw: {'flex-shrink': '0', 'z-index': '10'},
+      raw: {
+        'grid-template-columns': '1fr minmax(0, auto) 1fr',
+        'flex-shrink': '0',
+        'z-index': '10',
+      },
+    ),
+    css('.hermuse-shell .hermuse-topbar-lead')
+        .styles(display: .flex, alignItems: .center),
+    css('.hermuse-shell .hermuse-topbar-trail').styles(
+      display: .flex,
+      justifyContent: .end,
+      alignItems: .center,
+      padding: .only(right: YsSpace.xs.px),
     ),
     css('.hermuse-shell .hermuse-topbar-title').styles(
-      flex: .grow(1),
+      display: .flex,
+      minWidth: 0.px,
+      justifyContent: .center,
       textAlign: .center,
-      fontSize: 16.px,
-      lineHeight: 22.px,
-      fontWeight: .w500,
     ),
     css('.hermuse-shell .hermuse-bottomnav').styles(
       height: YsLayout.bottomNavHeight.px,

@@ -7,6 +7,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../shell/agents.dart' show nativeAgentProfileProvider;
 import 'plugin_gate.dart';
 import 'route.dart';
 import 'widgets.dart';
@@ -29,7 +30,12 @@ final class IdeasScreen extends ConsumerWidget {
     title: 'Ideas',
     child: Consumer(
       builder: (context, ref, _) {
-        final ideas = ref.watch(ideasProvider(instance.id));
+        final ideas = ref.watch(
+          ideasProvider(
+            instance.id,
+            profile: ref.watch(nativeAgentProfileProvider),
+          ),
+        );
         final all = ideas.value ?? const <Idea>[];
         final groups = <String, List<Idea>>{};
         for (final idea in all) {
@@ -147,7 +153,12 @@ final class _IdeaCardState extends ConsumerState<_IdeaCard>
     });
     try {
       await ref
-          .read(ideasProvider(widget.instanceId).notifier)
+          .read(
+            ideasProvider(
+              widget.instanceId,
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
+          )
           .feedback(widget.idea.id, text);
       if (mounted) {
         setState(() {

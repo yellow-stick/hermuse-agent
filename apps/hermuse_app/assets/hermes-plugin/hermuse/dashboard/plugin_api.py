@@ -21,9 +21,10 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -34,10 +35,40 @@ from computer import runtime as computer_runtime  # noqa: E402
 from computer import setup as computer_setup  # noqa: E402
 from computer import state as computer_state  # noqa: E402
 from hermes_cli.web_server_chat import _ws_request_is_allowed  # noqa: E402
-from hermes_constants import get_hermes_home  # noqa: E402
+from hermes_constants import (  # noqa: E402
+    get_hermes_home, reset_hermes_home_override, set_hermes_home_override,
+)
 
 log = logging.getLogger(__name__)
-router = APIRouter()
+_initialized_homes = {get_hermes_home().resolve()}
+
+
+async def _profile_context(connection: HTTPConnection):
+    """Scope both HTTP workers and WebSockets without changing process env."""
+    profile = connection.query_params.get("profile")
+    if profile is None:
+        yield
+        return
+    from hermes_cli.profiles import get_profile_dir, profile_exists
+
+    try:
+        home = get_profile_dir(profile).resolve()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid profile") from exc
+    if not profile_exists(profile):
+        raise HTTPException(status_code=404, detail="profile not found")
+    # Leases from a previous dashboard process cannot survive its sockets.
+    if home not in _initialized_homes:
+        computer_state.reset_control(home)
+        _initialized_homes.add(home)
+    token = set_hermes_home_override(home)
+    try:
+        yield
+    finally:
+        reset_hermes_home_override(token)
+
+
+router = APIRouter(dependencies=[Depends(_profile_context)])
 
 # Take control leases only live in this process's WebSocket connections, so
 # none can survive a dashboard (re)start: the agent holds control again.
@@ -517,7 +548,8 @@ def computer_snapshot(tool_call_id: str):
 def computer_ticket():
     from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
 
-    return {"ticket": mint_ticket(user_id="hermuse", provider=_COMPUTER_TICKET_PROVIDER)}
+    return {"ticket": mint_ticket(user_id=str(get_hermes_home().resolve()),
+                                  provider=_COMPUTER_TICKET_PROVIDER)}
 
 
 def _consume_computer_ticket(ticket: str) -> bool:
@@ -529,7 +561,8 @@ def _consume_computer_ticket(ticket: str) -> bool:
         info = consume_ticket(ticket)
     except TicketInvalid:
         return False
-    return info.get("provider") == _COMPUTER_TICKET_PROVIDER
+    return (info.get("provider") == _COMPUTER_TICKET_PROVIDER
+            and info.get("user_id") == str(get_hermes_home().resolve()))
 
 
 def _fps(raw: Optional[str]) -> int:

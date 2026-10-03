@@ -5,6 +5,7 @@ library;
 export 'src/theme.dart';
 export 'src/keyframes.dart' show ysFramesMs;
 export 'src/motion.dart';
+export 'src/glass.dart';
 export 'src/pressable.dart';
 export 'src/button.dart';
 export 'src/dialog.dart';

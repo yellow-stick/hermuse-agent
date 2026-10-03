@@ -8,6 +8,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../shell/agents.dart' show nativeAgentProfileProvider;
 import 'plugin_gate.dart';
 import 'route.dart';
 import 'widgets.dart';
@@ -72,7 +73,12 @@ final class _GoalsState extends ConsumerState<_Goals> {
 
   @override
   Widget build(BuildContext context) {
-    final goals = ref.watch(goalsProvider(widget.instanceId));
+    final goals = ref.watch(
+      goalsProvider(
+        widget.instanceId,
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
+    );
     final all = goals.value ?? const <Goal>[];
     final tracking = [
       for (final goal in all)
@@ -268,7 +274,12 @@ final class _TrackingRowState extends ConsumerState<_TrackingRow>
     try {
       await Future.wait<void>([
         ref
-            .read(goalsProvider(widget.instanceId).notifier)
+            .read(
+              goalsProvider(
+                widget.instanceId,
+                profile: ref.read(nativeAgentProfileProvider),
+              ).notifier,
+            )
             .updateGoal(
               goalId: widget.goal.id,
               note: 'Marked complete.',
@@ -407,7 +418,12 @@ final class _GoalDetailState extends ConsumerState<_GoalDetail> {
     });
     try {
       await ref
-          .read(goalsProvider(widget.instanceId).notifier)
+          .read(
+            goalsProvider(
+              widget.instanceId,
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
+          )
           .updateGoal(goalId: widget.goal.id, note: note);
       if (mounted) setState(_note.clear);
     } on Object catch (e) {
@@ -501,7 +517,12 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
     });
     try {
       await ref
-          .read(goalsProvider(widget.instanceId).notifier)
+          .read(
+            goalsProvider(
+              widget.instanceId,
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
+          )
           .create(
             title: _title.text.trim(),
             category: widget.category,

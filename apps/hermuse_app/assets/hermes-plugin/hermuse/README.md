@@ -8,6 +8,14 @@ over from Hermuse). Data lives as human-readable Markdown + JSON under
 
 Requires Hermes `>=0.21.5,<0.22` (see `requires_hermes` in `plugin.yaml`).
 
+Dashboard HTTP routes and computer WebSockets accept a `profile` query
+parameter. Hermes resolves it to the profile's home; the plugin scopes its
+store, cron and computer operations to that home for the request, without
+changing the process environment. Missing profiles return `404`, invalid
+names return `400`, and computer stream tickets cannot cross profiles.
+Omitting `profile` preserves the existing home. Update the plugin and restart
+the dashboard before using multi-agent product data from the apps.
+
 ## Layout
 
 ```text
@@ -79,17 +87,19 @@ dashboard").
 
 ### From the Hermuse Agent desktop app (Hermes on this computer)
 
-The desktop app bundles a copy of this plugin. It copies it into
-`$HERMES_HOME/plugins/hermuse` (a `plugins/hermuse` that is not this plugin is
-never overwritten), runs `hermes plugins enable hermuse` and
-`hermes hermuse enable` (the background jobs), restarts the Hermes backend it
-supervises and sets up the agent's computer. That backend and the
-`computer setup` it runs get `HERMES_DESKTOP=1`: the plugin then never installs
-Docker itself, never probes `sudo`, and reports a missing Docker as
-`docker_missing` with `"hint": "desktop_setup"`. On Linux the app's setup
-assistant installs or starts Docker after one administrator authorization and
-runs the computer setup through the backend, which alone uses the Docker engine
-the assistant chose (see "The agent's computer").
+The desktop app bundles a copy of this plugin. Linux local setup and SSH setup
+share the canonical service under `/home/hermes/.hermes`, owned by the dedicated
+`hermes` account. Their common installer enables the plugin and jobs, prepares
+system Docker and the agent's computer, and manages `hermuse-dashboard.service`.
+The plugin manages the subscription bridge on this host. Closing the desktop
+does not stop this service. Local setup adds no public network exposure.
+
+On macOS and Windows, the desktop copies the plugin into
+`$HERMES_HOME/plugins/hermuse`, enables it and its jobs, restarts its supervised
+backend and sets up the agent's computer. An unrelated plugin is never
+overwritten. These supervised backends receive `HERMES_DESKTOP=1`: the plugin
+does not install Docker or probe `sudo`, and reports missing Docker as
+`docker_missing` with `"hint": "desktop_setup"`.
 
 ### By hand
 
@@ -133,6 +143,14 @@ left untouched).
 Results are `{"ok": true, "id": …}` (or `{"date": …}`); failures are
 `{"error": …}`. The skill `hermuse:hermuse` tells the agent when to call each
 tool and to honour `PREFERENCES.md` before anything proactive.
+
+The plugin also registers conversational guidance in Hermes' system prompt:
+publish worthwhile, grounded chat results with `feed_post` according to the
+profile's preferences; create requested reminders and recurring work through
+Hermes' built-in `cronjob_manage`; confirm success only after the tool succeeds.
+Jobs intended to publish to Feed must explicitly call `feed_post`, rather than
+only returning a chat response. Loading the plugin itself creates neither
+posts nor schedules and never bypasses approval requirements.
 
 ## REST reference (auth: Hermes' existing `/api/` gate)
 

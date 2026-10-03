@@ -136,9 +136,16 @@ const _schedulerStale = 300;
 /// with pause/resume, run now and delete.
 @riverpod
 class Automations extends _$Automations {
+  bool _refreshPending = false;
+
   @override
-  Future<AutomationBoard> build(String instanceId) async {
-    final rest = await ref.watch(restClientProvider(instanceId).future);
+  Future<AutomationBoard> build(
+    String instanceId, {
+    String profile = 'default',
+  }) async {
+    final rest = await ref.watch(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final body = await rest.getJson(hermesCronRoute);
     final rows = [
       for (final e in (body['data'] as List?) ?? const [])
@@ -159,6 +166,16 @@ class Automations extends _$Automations {
     );
   }
 
+  /// Reloads jobs created or changed in chat, without interrupting a button
+  /// action or clearing its busy state before the server responds.
+  void refreshFromChat() {
+    if (state.value?.busy.isNotEmpty ?? false) {
+      _refreshPending = true;
+    } else {
+      ref.invalidateSelf();
+    }
+  }
+
   /// Runs [action] on [automation]; the board shows it busy meanwhile, then
   /// the job as Hermes returns it (or without it, once deleted). A refusal
   /// lands in [AutomationBoard.error].
@@ -174,7 +191,9 @@ class Automations extends _$Automations {
         error: () => null,
       ),
     );
-    final rest = await ref.read(restClientProvider(instanceId).future);
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
     final path = '$hermesCronRoute/${Uri.encodeComponent(automation.id)}';
     Automation? updated;
     String? error;
@@ -209,6 +228,10 @@ class Automations extends _$Automations {
         error: () => error,
       ),
     );
+    if (_refreshPending && state.value!.busy.isEmpty) {
+      _refreshPending = false;
+      ref.invalidateSelf();
+    }
   }
 }
 

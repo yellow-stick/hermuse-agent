@@ -24,6 +24,9 @@ final class YsPalette {
     required this.paperClear,
     required this.paperEdge,
     required this.paperShadow,
+    required this.glass,
+    required this.glassShine,
+    required this.glassRim,
     required this.neutralAmbient,
     required this.neutralFilm,
     required this.neutralWash,
@@ -66,6 +69,17 @@ final class YsPalette {
 
   /// Resting shadow under the same raised surfaces.
   final YsColor paperShadow;
+
+  /// Liquid glass tint over the blurred, saturated backdrop: floating
+  /// header controls (Chats pill, agent switcher). See [YsGlassMaterial].
+  final YsColor glass;
+
+  /// Sheen washing down from the top edge of [glass] and the dim end of
+  /// its rim.
+  final YsColor glassShine;
+
+  /// Specular rim along the top edge of [glass].
+  final YsColor glassRim;
 
   /// Solid neutral fill: tab track, avatar badges, monogram logos.
   final YsColor neutralAmbient;
@@ -155,6 +169,9 @@ final class YsPalette {
     paperClear: YsColor(0xD9303033),
     paperEdge: YsColor(0x13FFFFFF),
     paperShadow: YsColor(0x38000000),
+    glass: YsColor(0x5C2A2A2D),
+    glassShine: YsColor(0x14FFFFFF),
+    glassRim: YsColor(0x47FFFFFF),
     neutralAmbient: YsColor(0xFF2A2A2D),
     neutralFilm: YsColor(0xFF3A3A3E),
     neutralWash: YsColor(0x663A3A3E),
@@ -190,6 +207,9 @@ final class YsPalette {
     paperClear: YsColor(0xF0FFFFFF),
     paperEdge: YsColor(0x12141412),
     paperShadow: YsColor(0x0F141412),
+    glass: YsColor(0x8CFFFFFF),
+    glassShine: YsColor(0x80FFFFFF),
+    glassRim: YsColor(0xF2FFFFFF),
     neutralAmbient: YsColor(0xFFE9E9E6),
     neutralFilm: YsColor(0xFFDADAD6),
     neutralWash: YsColor(0x0F141412),
@@ -223,6 +243,9 @@ final class YsPalette {
     'paper-clear': paperClear,
     'paper-edge': paperEdge,
     'paper-shadow': paperShadow,
+    'glass': glass,
+    'glass-shine': glassShine,
+    'glass-rim': glassRim,
     'neutral-ambient': neutralAmbient,
     'neutral-film': neutralFilm,
     'neutral-wash': neutralWash,

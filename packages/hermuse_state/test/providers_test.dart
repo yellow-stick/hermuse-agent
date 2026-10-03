@@ -102,6 +102,7 @@ void main() {
   test('side chat list: drafts first, then pinned, then recent', () async {
     SessionRow row(String id, int at, {int? pinned}) => SessionRow(
       instanceId: 'vps',
+      profile: 'default',
       sessionId: id,
       title: 'db $id',
       parentId: 'm',

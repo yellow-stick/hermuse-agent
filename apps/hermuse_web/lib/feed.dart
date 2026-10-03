@@ -286,11 +286,13 @@ class HermusePluginGate extends StatelessComponent {
 class HermuseFeed extends StatefulComponent {
   const HermuseFeed({
     required this.instance,
+    required this.profile,
     required this.onDiscuss,
     super.key,
   });
 
   final HermesInstance instance;
+  final String profile;
   final void Function(String seed) onDiscuss;
 
   @override
@@ -378,9 +380,16 @@ class _HermuseFeedState extends State<HermuseFeed> {
     instance: component.instance,
     title: 'Feed',
     child: HermuseWatch(
-      provider: systemFileProvider(component.instance.id, 'FEED_PROMPT.md'),
+      provider: systemFileProvider(
+        component.instance.id,
+        'FEED_PROMPT.md',
+        profile: component.profile,
+      ),
       builder: (context, prompt) => HermuseWatch(
-        provider: feedProvider(component.instance.id),
+        provider: feedProvider(
+          component.instance.id,
+          profile: component.profile,
+        ),
         builder: (context, feed) => _body(context, prompt, feed),
       ),
     ),
@@ -466,6 +475,7 @@ class _HermuseFeedState extends State<HermuseFeed> {
             _FeedCard(
               key: ValueKey(post.id),
               instanceId: component.instance.id,
+              profile: component.profile,
               post: post,
               onDiscuss: component.onDiscuss,
             ),
@@ -486,6 +496,7 @@ class _HermuseFeedState extends State<HermuseFeed> {
             systemFileProvider(
               component.instance.id,
               'FEED_PROMPT.md',
+              profile: component.profile,
             ).notifier,
           )
           .save(_promptDraft);
@@ -500,12 +511,14 @@ class _HermuseFeedState extends State<HermuseFeed> {
 class _FeedCard extends StatefulComponent {
   const _FeedCard({
     required this.instanceId,
+    required this.profile,
     required this.post,
     required this.onDiscuss,
     super.key,
   });
 
   final String instanceId;
+  final String profile;
   final FeedPost post;
   final void Function(String seed) onDiscuss;
 
@@ -559,7 +572,12 @@ class _FeedCardState extends State<_FeedCard> {
     setState(() => _busy = true);
     try {
       await context.container
-          .read(feedProvider(component.instanceId).notifier)
+          .read(
+            feedProvider(
+              component.instanceId,
+              profile: component.profile,
+            ).notifier,
+          )
           .react(component.post.id, reaction);
     } on Object catch (_) {
       // The feed list refresh shows the truth; a toast would be nicer.

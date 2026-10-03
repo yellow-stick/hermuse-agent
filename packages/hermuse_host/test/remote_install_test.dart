@@ -294,6 +294,313 @@ void main() {
     });
   });
 
+  group('Existing local connection', () {
+    test('connects an unmanaged plugin without running provisioning or installer verification', () async {
+      final server = _Server()..foreignPath = true;
+      final events = await server
+          .installer()
+          .connectLocal(shell: _LocalServerConnection(server))
+          .toList();
+      final outcome = events.whereType<RemoteInstallCompleted>().single.outcome;
+      expect(outcome.baseUrl, 'http://127.0.0.1:9119');
+      expect(outcome.sessionToken, server.loopbackToken);
+      expect(
+        events.whereType<RemoteInstallStepStarted>().map((event) => event.step),
+        [
+          RemoteInstallStep.connect,
+          RemoteInstallStep.dashboard,
+          RemoteInstallStep.verify,
+        ],
+      );
+      expect(server.packageInstalls, 0);
+      expect(server.manifestRequests, 0);
+      expect(server.hermesStarted, isFalse);
+      expect(server.computerStarted, isFalse);
+      expect(server.passwordChanges, 0);
+      expect(server.publicUrlChanges, 0);
+      expect(server.migrationCalls, 0);
+      expect(server.writes, isEmpty);
+      expect(server.verified, isFalse);
+    });
+
+    test('a refused connection returns no credential and never falls back to install', () async {
+      final server = _Server()..connectionRefused = true;
+      final events = <RemoteInstallProgress>[];
+      await expectLater(
+        server
+            .installer()
+            .connectLocal(shell: _LocalServerConnection(server))
+            .forEach(events.add),
+        throwsA(isA<RemoteInstallFailed>()),
+      );
+      expect(events.whereType<RemoteInstallCompleted>(), isEmpty);
+      expect(server.packageInstalls, 0);
+      expect(server.manifestRequests, 0);
+      expect(server.hermesStarted, isFalse);
+      expect(server.computerStarted, isFalse);
+      expect(server.writes, isEmpty);
+    });
+    test(
+      'connection retains exclusivity and cancellation withholds completion',
+      () async {
+        final server = _Server()..connectionGate = Completer<RemoteResult>();
+        final installer = server.installer();
+        final events = <RemoteInstallProgress>[];
+        final stopped = expectLater(
+          installer
+              .connectLocal(shell: _LocalServerConnection(server))
+              .forEach(events.add),
+          throwsA(isA<RemoteInstallCancelled>()),
+        );
+        await server.connectionObserved.future;
+        expect(
+          () => installer.runLocal(
+            shell: _LocalServerConnection(server),
+            pluginBundle: _bundle,
+          ),
+          throwsStateError,
+        );
+        await installer.cancel();
+        await stopped;
+        server.connectionGate!.complete(_ok(server.loopbackToken));
+        expect(events.whereType<RemoteInstallCompleted>(), isEmpty);
+        expect(server.packageInstalls, 0);
+        expect(server.computerStarted, isFalse);
+      },
+    );
+  });
+
+  group('Canonical local provisioning', () {
+    test(
+      'shares canonical runtime, plugin, computer and service stages with SSH',
+      () async {
+        final remote = _Server();
+        final local = _Server();
+        final remoteEvents = await remote.install(remote.installer()).toList();
+        final localEvents = await local
+            .installer()
+            .runLocal(
+              shell: _LocalServerConnection(local),
+              pluginBundle: _bundle,
+              legacyHome: '/home/desktop/.hermes',
+            )
+            .toList();
+        const core = {
+          RemoteInstallStep.hermesUser,
+          RemoteInstallStep.hermes,
+          RemoteInstallStep.plugin,
+          RemoteInstallStep.computer,
+          RemoteInstallStep.dashboard,
+          RemoteInstallStep.verify,
+        };
+        List<RemoteInstallStep> stages(List<RemoteInstallProgress> events) =>
+            events
+                .whereType<RemoteInstallStepFinished>()
+                .map((event) => event.step)
+                .where(core.contains)
+                .toList();
+        expect(stages(localEvents), stages(remoteEvents));
+        expect(local.forcedRepin, isTrue);
+        expect(local.computerPrepared, isTrue);
+        expect(local.computerStarted, isTrue);
+        expect(
+          local.writes.values.map(utf8.decode),
+          remote.writes.values.map(utf8.decode),
+        );
+        final outcome = localEvents
+            .whereType<RemoteInstallCompleted>()
+            .single
+            .outcome;
+        expect(outcome.baseUrl, 'http://127.0.0.1:9119');
+        expect(outcome.sessionToken, local.loopbackToken);
+        expect(outcome.username, isEmpty);
+        expect(outcome.password, isEmpty);
+        expect(outcome.webUrl, isNull);
+        expect(local.connections, 0);
+        expect(local.passwordChanges, 0);
+        expect(local.publicUrlChanges, 0);
+        expect(local.publicAddressLookups, 0);
+        expect(local.caddyConfigurations, isEmpty);
+        expect(local.webDeploys, 0);
+        expect(local.firewallCommitted, isFalse);
+        expect(
+          localEvents.whereType<RemoteInstallStepStarted>().map(
+            (event) => event.step,
+          ),
+          isNot(
+            anyOf(
+              contains(RemoteInstallStep.firewall),
+              contains(RemoteInstallStep.https),
+              contains(RemoteInstallStep.web),
+            ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'leaves separate legacy data untouched when reusing canonical service',
+      () async {
+        final server = _Server()..seedHealthy();
+        server.legacyInventory = {
+          'sourceHome': '/home/desktop/.hermes',
+          'revision': 'legacy-revision',
+          'summary': 'Separate installation must be preserved.',
+        };
+        await server
+            .installer()
+            .runLocal(
+              shell: _LocalServerConnection(server),
+              pluginBundle: _bundle,
+              legacyHome: '/home/desktop/.hermes',
+            )
+            .toList();
+        expect(server.migrationCalls, 0);
+        expect(server.migrationApplied, isFalse);
+        expect(server.passwordChanges, 0);
+        expect(server.writes, isEmpty);
+      },
+    );
+
+    test(
+      'reuses canonical setup without rotating remote login or local token',
+      () async {
+        final server = _Server()..seedHealthy();
+        server.webState = 'ready';
+        final installer = server.installer();
+        Future<RemoteInstallOutcome> install() async {
+          final events = await installer
+              .runLocal(
+                shell: _LocalServerConnection(server),
+                pluginBundle: _bundle,
+              )
+              .toList();
+          return events.whereType<RemoteInstallCompleted>().single.outcome;
+        }
+
+        final first = await install();
+        final second = await install();
+        expect(first.sessionToken, second.sessionToken);
+        expect(server.passwordChanges, 0);
+        expect(server.packageInstalls, 0);
+        expect(server.manifestRequests, 0);
+        expect(server.writes, isEmpty);
+        expect(server.publicUrlChanges, 0);
+        expect(server.publicAddressLookups, 0);
+        expect(server.webDeploys, 0);
+        expect(server.webState, 'ready');
+        expect(server.caddyConfigurations, isEmpty);
+      },
+    );
+
+    for (final revision in [null, 'stale-revision']) {
+      test(
+        'refuses legacy data before install mutations with revision $revision',
+        () async {
+          final server = _Server()
+            ..legacyInventory = {
+              'sourceHome': '/home/desktop/.hermes',
+              'revision': 'current-revision',
+              'summary': 'Existing sessions and credentials; verified backup required.',
+            };
+          await expectLater(
+            server
+                .installer()
+                .runLocal(
+                  shell: _LocalServerConnection(server),
+                  pluginBundle: _bundle,
+                  legacyHome: '/home/desktop/.hermes',
+                  migrationRevision: revision,
+                )
+                .toList(),
+            throwsA(
+              isA<RemoteInstallFailed>().having(
+                (e) => e.step,
+                'step',
+                'preflight',
+              ),
+            ),
+          );
+          expect(server.packageInstalls, 0);
+          expect(server.hermesStarted, isFalse);
+          expect(server.writes, isEmpty);
+          expect(server.migrationApplied, isFalse);
+        },
+      );
+    }
+
+    test(
+      'confirmed local migration runs before the shared runtime stage',
+      () async {
+        final server = _Server()
+          ..legacyInventory = {
+            'sourceHome': '/home/desktop/.hermes',
+            'revision': 'current-revision',
+            'summary': 'Verified backup of existing data.',
+          };
+        await server
+            .installer()
+            .runLocal(
+              shell: _LocalServerConnection(server),
+              pluginBundle: _bundle,
+              legacyHome: '/home/desktop/.hermes',
+              migrationRevision: 'current-revision',
+            )
+            .toList();
+        expect(server.migrationApplied, isTrue);
+        expect(server.migrationBeforeRuntime, isTrue);
+        expect(server.connections, 0);
+      },
+    );
+
+    test(
+      'SSH requires migration approval before any installation mutation',
+      () async {
+        final server = _Server()
+          ..legacyInventory = {
+            'sourceHome': '/root/.hermes',
+            'revision': 'current-revision',
+            'summary':
+                'Existing sessions and credentials; verified backup required.',
+          };
+        await expectLater(
+          server.install(server.installer()).toList(),
+          throwsA(isA<RemoteInstallFailed>()),
+        );
+        expect(server.packageInstalls, 0);
+        expect(server.hermesStarted, isFalse);
+        expect(server.migrationApplied, isFalse);
+      },
+    );
+
+    test('confirmed SSH migration precedes runtime installation', () async {
+      final server = _Server()
+        ..legacyInventory = {
+          'sourceHome': '/root/.hermes',
+          'revision': 'current-revision',
+          'summary': 'Verified backup of existing data.',
+        };
+      var approved = false;
+      await server
+          .installer()
+          .run(
+            host: 'server',
+            pluginBundle: _bundle,
+            onHostKey: (_) async => true,
+            onMigration: (inventory) async {
+              expect(server.packageInstalls, 0);
+              expect(server.hermesStarted, isFalse);
+              expect(inventory.revision, 'current-revision');
+              return approved = true;
+            },
+          )
+          .toList();
+      expect(approved, isTrue);
+      expect(server.migrationApplied, isTrue);
+      expect(server.migrationBeforeRuntime, isTrue);
+    });
+  });
+
   group('Remote installation inventory', () {
     test(
       'fresh setup repairs each stage once and hands off the verified password',
@@ -896,6 +1203,64 @@ void main() {
       );
     });
 
+    test(
+      'authenticates private loopback with token without password login',
+      () async {
+        final requests = <http.Request>[];
+        final client = MockClient((request) async {
+          requests.add(request);
+          if (request.url.path == '/api/plugins/hermuse/files' &&
+              request.headers['x-hermes-session-token'] == 'local-token') {
+            return http.Response('{"files":[]}', 200);
+          }
+          return _dashboardResponse(request);
+        });
+        await verifyRemoteDashboard(
+          const RemoteInstallOutcome(
+            baseUrl: 'http://127.0.0.1:9119',
+            username: '',
+            password: '',
+            sessionToken: 'local-token',
+          ),
+          RemoteCancellation(),
+          client: client,
+        );
+        expect(
+          requests.any((r) => r.url.path == '/auth/password-login'),
+          isFalse,
+        );
+        expect(requests.last.headers['x-hermes-session-token'], 'local-token');
+        expect(
+          requests.every(
+            (r) => r.url.host == '127.0.0.1' && !r.followRedirects,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('never sends local token to noncanonical HTTP origin', () async {
+      var requests = 0;
+      final client = MockClient((request) async {
+        requests++;
+        return _dashboardResponse(request);
+      });
+      await expectLater(
+        verifyRemoteDashboard(
+          const RemoteInstallOutcome(
+            baseUrl: 'http://example.com:9119',
+            username: '',
+            password: '',
+            sessionToken: 'local-token',
+          ),
+          RemoteCancellation(),
+          client: client,
+        ),
+        throwsA(isA<RemoteInstallFailed>()),
+      );
+      expect(requests, 0);
+    });
+
     test('should not accept a login response without a cookie', () async {
       final client = MockClient((request) async {
         if (request.url.path == '/auth/password-login') {
@@ -1075,6 +1440,9 @@ final class _Server implements RemoteShell {
   bool forcedRepin = false;
   bool caddyConflict = false;
   bool foreignPath = false;
+  bool connectionRefused = false;
+  Completer<RemoteResult>? connectionGate;
+  final connectionObserved = Completer<void>();
   bool malformedInventory = false;
   bool firewallRepairIncomplete = false;
   bool firewallActive = false;
@@ -1082,6 +1450,13 @@ final class _Server implements RemoteShell {
   int packageInstalls = 0;
   int passwordChanges = 0;
   int manifestRequests = 0;
+  int publicUrlChanges = 0;
+  int publicAddressLookups = 0;
+  final loopbackToken = List.filled(64, 't').join();
+  Map<String, Object?>? legacyInventory;
+  int migrationCalls = 0;
+  bool migrationApplied = false;
+  bool migrationBeforeRuntime = false;
   Completer<RemoteResult>? inventoryGate;
   final inventoryObserved = Completer<void>();
   RemoteInstallStep? failedRepair;
@@ -1179,6 +1554,45 @@ final class _Server implements RemoteShell {
     void Function(String line)? onLine,
   }) async {
     commands.add(command);
+    if (command.contains('HERMUSE_CANONICAL_PRESENT_V1')) {
+      return _ok(
+        health[RemoteInstallStep.dashboard] == true
+            ? 'HERMUSE_CANONICAL_PRESENT_V1'
+            : 'HERMUSE_CANONICAL_ABSENT_V1',
+      );
+    }
+    if (command.contains('getent passwd') &&
+        !command.contains('HERMUSE_PREFLIGHT_OK') &&
+        !command.contains('HERMUSE_HEALTH_V1') &&
+        command.length < 500) {
+      return _ok('/root');
+    }
+    if (command.contains('HERMUSE_MIGRATION_PY')) {
+      migrationCalls++;
+      if (migrationCalls == 1) return _ok(jsonEncode(legacyInventory));
+      migrationApplied = true;
+      migrationBeforeRuntime = !hermesStarted;
+      return _ok();
+    }
+    if (command.contains('HERMUSE_CONNECT_REFUSED_V1') &&
+        connectionGate != null) {
+      if (!connectionObserved.isCompleted) connectionObserved.complete();
+      return connectionGate!.future;
+    }
+    if (command.contains('HERMUSE_CONNECT_REFUSED_V1') && connectionRefused) {
+      return const RemoteResult(
+        stdout: '',
+        stderr: 'HERMUSE_CONNECT_REFUSED_V1',
+        exitCode: 1,
+      );
+    }
+    if (command.contains('secrets.token_urlsafe(48)')) {
+      return _ok(loopbackToken);
+    }
+    if (command.contains('systemctl restart hermuse-dashboard.service')) {
+      health[RemoteInstallStep.dashboard] = true;
+    }
+    if (command.contains('config set dashboard.public_url')) publicUrlChanges++;
     // The fake models the server boundary, not an alternative provisioning
     // implementation. Decisions, stage parsing and failure handling stay real.
     if (command.contains('HERMUSE_PREFLIGHT_OK') && foreignPath) {
@@ -1237,7 +1651,8 @@ final class _Server implements RemoteShell {
           ? RemoteInstallStep.hermes
           : command.contains('stat -c %U')
           ? RemoteInstallStep.hermesUser
-          : command.contains('auth/password-login')
+          : command.contains('auth/password-login') ||
+                command.contains('x-hermes-session-token')
           ? RemoteInstallStep.dashboard
           : RemoteInstallStep.https;
       if (step == RemoteInstallStep.https && caddyConflict) {
@@ -1329,7 +1744,10 @@ final class _Server implements RemoteShell {
       computerStarted = true;
       health[RemoteInstallStep.computer] = true;
     }
-    if (command.contains('api.ipify.org')) return _ok('8.8.4.4');
+    if (command.contains('api.ipify.org')) {
+      publicAddressLookups++;
+      return _ok('8.8.4.4');
+    }
     if (stdin != null && command.contains('hash_password')) {
       dashboardPassword = stdin;
       passwordChanges++;
@@ -1350,6 +1768,46 @@ final class _Server implements RemoteShell {
       shell.close();
     }
   }
+}
+
+final class _LocalServerConnection implements RemoteOperationHolderShell {
+  _LocalServerConnection(_Server server)
+    : _delegate = _ServerConnection(server);
+  final _ServerConnection _delegate;
+
+  @override
+  Future<RemoteResult> holdOperation(
+    String command, {
+    required Duration timeout,
+    required void Function(String line) onLine,
+  }) => _delegate.run(command, timeout: timeout, onLine: onLine);
+
+  @override
+  Future<RemoteResult> run(
+    String command, {
+    String? stdin,
+    Duration timeout = const Duration(minutes: 10),
+    void Function(String line)? onLine,
+  }) {
+    if (command.contains('HERMUSE_OPERATION_LOCKED_V1')) {
+      throw StateError(
+        'The control holder must not occupy the serialized command channel.',
+      );
+    }
+    return _delegate.run(
+      command,
+      stdin: stdin,
+      timeout: timeout,
+      onLine: onLine,
+    );
+  }
+
+  @override
+  Future<void> writeFile(String path, Uint8List bytes, {int mode = 384}) =>
+      _delegate.writeFile(path, bytes, mode: mode);
+
+  @override
+  void close() => _delegate.close();
 }
 
 final class _ServerConnection implements RemoteShell {

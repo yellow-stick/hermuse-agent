@@ -166,7 +166,10 @@ _STR_ARRAY = {"type": "array", "items": _STR}
 
 FEED_POST_SCHEMA = _schema(
     "feed_post",
-    "Publish a post to the Hermuse feed (stored under HERMES_HOME/hermuse/feed/).",
+    "Publish a real card to the current profile's Hermuse feed. Use for useful "
+    "grounded discoveries, research results or completed-work summaries during "
+    "chat, or when the user asks to post. Read PREFERENCES.md and FEED_PROMPT.md "
+    "first; avoid duplicates and do not post routine replies or invented activity.",
     {
         "title": {**_STR, "description": "Post title (shown on the card)."},
         "body": {**_STR, "description": "Post body in Markdown."},

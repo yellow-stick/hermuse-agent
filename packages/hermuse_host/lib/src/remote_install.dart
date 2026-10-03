@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import 'errors.dart';
 import 'installer.dart';
+import 'linux_migration.dart';
 import 'remote_operation.dart';
 import 'remote_scripts.dart';
 import 'remote_shell.dart';
@@ -66,10 +67,14 @@ final class RemoteInstallOutcome {
     required this.username,
     required this.password,
     this.webUrl,
+    this.sessionToken,
   });
   final String baseUrl;
   final String username;
   final String password;
+
+  /// Stable loopback-only credential handed to the desktop secret store.
+  final String? sessionToken;
 
   /// HTTPS address of the web app published on this server, or null when the
   /// server publishes none.
@@ -81,13 +86,16 @@ typedef RemoteDashboardVerifier = Future<void> Function(
   RemoteCancellation cancellation,
 );
 
-/// Provisions a supported Linux server over host-verified SSH.
+/// Provisions the canonical Linux service over SSH or a trusted root helper.
 ///
 /// Existing firewall rules and Caddy sites are preserved. Changes to either are
 /// guarded by independent systemd restoration timers before mutation. Only a
 /// fresh pinned-key SSH login commits the firewall; client-side TLS and password
 /// authentication commit Caddy. Other completed installation stages remain on
 /// failure/cancellation and can be retried. No SSH credential is persisted.
+///
+/// [runLocal] shares all runtime/data/service stages but never changes public
+/// exposure or password login. It returns a stable private loopback credential.
 class RemoteInstaller {
   RemoteInstaller({
     RemoteConnector? connect,
@@ -111,6 +119,8 @@ class RemoteInstaller {
   /// [webApp] publishes the web app and relay on their own sslip.io address.
   /// When false, none is added, but an existing healthy one is kept and
   /// reported; removal only happens through uninstall.
+  /// An existing login-user installation requires [onMigration] approval unless
+  /// the canonical service already exists, in which case legacy data is kept.
   Stream<RemoteInstallProgress> run({
     required String host,
     int port = 22,
@@ -119,6 +129,68 @@ class RemoteInstaller {
     required Map<String, Uint8List> pluginBundle,
     required Future<bool> Function(RemoteHostKey) onHostKey,
     bool webApp = false,
+    Future<bool> Function(LegacyHermesMigration)? onMigration,
+  }) => _run(
+    host: host,
+    port: port,
+    username: username,
+    password: password,
+    pluginBundle: pluginBundle,
+    onHostKey: onHostKey,
+    webApp: webApp,
+    onMigration: onMigration,
+  );
+
+  /// Runs the identical canonical engine inside the trusted root helper.
+  ///
+  /// The desktop must not implement [shell] itself or pass shell commands over
+  /// the privilege boundary. A confirmed migration revision is rechecked before
+  /// any installation mutation. Public exposure is never changed here.
+  Stream<RemoteInstallProgress> runLocal({
+    required RemoteShell shell,
+    required Map<String, Uint8List> pluginBundle,
+    String? legacyHome,
+    String? migrationRevision,
+  }) => _run(
+    host: 'localhost',
+    port: 22,
+    username: 'root',
+    password: '',
+    pluginBundle: pluginBundle,
+    onHostKey: (_) async => false,
+    localShell: shell,
+    legacyHome: legacyHome,
+    migrationRevision: migrationRevision,
+  );
+
+  /// Connects only to the proven canonical service inside the root helper.
+  ///
+  /// No runtime, plugin, account, Docker or public configuration is provisioned.
+  Stream<RemoteInstallProgress> connectLocal({required RemoteShell shell}) =>
+      _run(
+        host: 'localhost',
+        port: 22,
+        username: 'root',
+        password: '',
+        pluginBundle: const {},
+        onHostKey: (_) async => false,
+        localShell: shell,
+        connectionOnly: true,
+      );
+
+  Stream<RemoteInstallProgress> _run({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+    required Map<String, Uint8List> pluginBundle,
+    required Future<bool> Function(RemoteHostKey) onHostKey,
+    bool webApp = false,
+    RemoteShell? localShell,
+    String? legacyHome,
+    String? migrationRevision,
+    Future<bool> Function(LegacyHermesMigration)? onMigration,
+    bool connectionOnly = false,
   }) {
     if (_active != null) {
       throw StateError('A remote installation is already running.');
@@ -138,13 +210,21 @@ class RemoteInstaller {
           pluginBundle: pluginBundle,
           webApp: webApp,
           onHostKey: onHostKey,
+          localShell: localShell,
+          legacyHome: legacyHome,
+          migrationRevision: migrationRevision,
+          onMigration: onMigration,
           cancellation: cancellation,
           emit: (event) {
             if (!events.isClosed) events.add(event);
           },
         );
         try {
-          await attempt.run();
+          if (connectionOnly) {
+            await attempt.connectExisting();
+          } else {
+            await attempt.run();
+          }
         } catch (error, stack) {
           if (!events.isClosed) events.addError(error, stack);
         } finally {
@@ -178,6 +258,10 @@ final class _RemoteAttempt {
     required this.pluginBundle,
     required this.webApp,
     required this.onHostKey,
+    this.localShell,
+    this.legacyHome,
+    this.migrationRevision,
+    this.onMigration,
     required this.cancellation,
     required this.emit,
   });
@@ -190,6 +274,13 @@ final class _RemoteAttempt {
   final Map<String, Uint8List> pluginBundle;
   final bool webApp;
   final Future<bool> Function(RemoteHostKey) onHostKey;
+  final RemoteShell? localShell;
+  final String? legacyHome;
+  final String? migrationRevision;
+  final Future<bool> Function(LegacyHermesMigration)? onMigration;
+  bool get _local => localShell != null;
+  LegacyHermesMigration? _migration;
+  String? _sessionToken;
   final RemoteCancellation cancellation;
   final void Function(RemoteInstallProgress) emit;
   final _id = _randomSecret(20);
@@ -214,7 +305,12 @@ final class _RemoteAttempt {
 
   String _redact(String value) {
     var clean = stripAnsi(value);
-    for (final secret in [password, _dashboardPassword, _webToken]) {
+    for (final secret in [
+      password,
+      _dashboardPassword,
+      _webToken,
+      _sessionToken,
+    ]) {
       if (secret != null && secret.isNotEmpty) {
         clean = clean.replaceAll(secret, '[redacted]');
       }
@@ -261,8 +357,14 @@ final class _RemoteAttempt {
     cancellation.check();
     final body = _supervise
         ? (root
-              ? _operation!.supervise(script, timeout.inSeconds)
-              : supervisedCommand(script, timeout.inSeconds))
+              ? _operation!.supervise(
+                  script,
+                  timeout.inSeconds,
+                  interruptible: !_local,
+                )
+              : (_local
+                    ? script
+                    : supervisedCommand(script, timeout.inSeconds)))
         : script;
     final command =
         '${root && !_root ? 'sudo -n ' : ''}'
@@ -355,12 +457,14 @@ final class _RemoteAttempt {
     _log('Checking existing server setup…');
     await _run(remoteOwnershipPreflightScript, log: false);
     final packages = await _health(prerequisitesHealthScript);
-    final status = await _run(
-      'if command -v ufw >/dev/null; then LC_ALL=C ufw status verbose; else echo "Status: unavailable"; fi',
-      log: false,
-    );
-    if (ufwAllowsPorts(status.stdout, ports)) {
-      _healthy.add(RemoteInstallStep.firewall);
+    if (!_local) {
+      final status = await _run(
+        'if command -v ufw >/dev/null; then LC_ALL=C ufw status verbose; else echo "Status: unavailable"; fi',
+        log: false,
+      );
+      if (ufwAllowsPorts(status.stdout, ports)) {
+        _healthy.add(RemoteInstallStep.firewall);
+      }
     }
     for (final (step, script, dependencies) in [
       (
@@ -387,32 +491,36 @@ final class _RemoteAttempt {
     _step = RemoteInstallStep.computer;
     await _run(computerOwnershipScript, log: false);
     _step = RemoteInstallStep.dashboard;
-    await _resolveDomain();
-    if (_domain != null &&
-        _healthy.containsAll({
-          RemoteInstallStep.hermes,
-          RemoteInstallStep.plugin,
-        })) {
-      _dashboardInstalled =
-          await _health(dashboardHealthScript(_domain!, authenticate: false)) ==
-          _RemoteHealth.ready;
-    }
-    if (_domain != null) await _inspectWeb();
-    _step = RemoteInstallStep.https;
-    if (_domain != null) {
-      if (await _health(
-            caddyHealthScript(_domain!, webDomain: _caddyWebDomain),
-          ) ==
-          _RemoteHealth.ready) {
-        _healthy.add(RemoteInstallStep.https);
+    if (!_local) {
+      await _resolveDomain();
+      if (_domain != null &&
+          _healthy.containsAll({
+            RemoteInstallStep.hermes,
+            RemoteInstallStep.plugin,
+          })) {
+        _dashboardInstalled =
+            await _health(
+              dashboardHealthScript(_domain!, authenticate: false),
+            ) ==
+            _RemoteHealth.ready;
       }
-    } else {
-      // A fresh machine can defer DNS until prerequisite tools are installed.
-      // Existing routes must be inspectable before any mutation is permitted.
-      await _run(
-        "if command -v caddy >/dev/null; then echo 'Cannot inspect existing Caddy routes without detecting the public address.' >&2; exit 1; fi",
-        log: false,
-      );
+      if (_domain != null) await _inspectWeb();
+      _step = RemoteInstallStep.https;
+      if (_domain != null) {
+        if (await _health(
+              caddyHealthScript(_domain!, webDomain: _caddyWebDomain),
+            ) ==
+            _RemoteHealth.ready) {
+          _healthy.add(RemoteInstallStep.https);
+        }
+      } else {
+        // A fresh machine can defer DNS until prerequisite tools are installed.
+        // Existing routes must be inspectable before any mutation is permitted.
+        await _run(
+          "if command -v caddy >/dev/null; then echo 'Cannot inspect existing Caddy routes without detecting the public address.' >&2; exit 1; fi",
+          log: false,
+        );
+      }
     }
     cancellation.check();
     for (final step in RemoteInstallStep.values) {
@@ -426,6 +534,24 @@ final class _RemoteAttempt {
   }
 
   Future<void> _dashboard() async {
+    if (_local) {
+      await _run(
+        remoteOwnershipMutationScript({dashboardTokenFile}),
+        log: false,
+      );
+      final token = await _run(ensureDashboardTokenScript, log: false);
+      _sessionToken = token.stdout.trim();
+      if (!RegExp(r'^[A-Za-z0-9_-]{64}$').hasMatch(_sessionToken!)) {
+        throw const RemoteInstallFailed(
+          'dashboard',
+          'The loopback credential response was invalid.',
+        );
+      }
+      await _run(configureDashboardScript());
+      await _prove(localDashboardHealthScript, stdin: _sessionToken);
+      await _run(_ownershipCheckpoint, log: false);
+      return;
+    }
     if (_domain == null) await _resolveDomain();
     if (_domain == null) {
       throw const RemoteInstallFailed(
@@ -456,16 +582,86 @@ final class _RemoteAttempt {
     await _run(_ownershipCheckpoint, log: false);
   }
 
+  Future<void> connectExisting() async {
+    try {
+      await _stage(RemoteInstallStep.connect, () async {
+        _shell = localShell!;
+        final identity = await _run('id -u', root: false, log: false);
+        _root = identity.stdout.trim() == '0';
+        if (!_root) {
+          throw const RemoteInstallFailed(
+            'connect',
+            'HERMUSE_CONNECT_REFUSED_V1',
+          );
+        }
+        _operation = await RemoteOperationLock.acquire(
+          _shell!,
+          root: true,
+          cancellation: cancellation,
+        );
+        _supervise = true;
+      });
+      await _stage(RemoteInstallStep.dashboard, () async {
+        final result = await _run(
+          connectDashboardScript,
+          log: false,
+          timeout: const Duration(minutes: 2),
+        );
+        _sessionToken = result.stdout.trim();
+        if (!RegExp(r'^[A-Za-z0-9_-]{64}$').hasMatch(_sessionToken!)) {
+          throw const RemoteInstallFailed(
+            'dashboard',
+            'HERMUSE_CONNECT_REFUSED_V1',
+          );
+        }
+      });
+      await _stage(RemoteInstallStep.verify, () async {
+        await _run(
+          verifyConnectedDashboardScript,
+          stdin: _sessionToken,
+          log: false,
+          timeout: const Duration(seconds: 30),
+        );
+      });
+      emit(
+        RemoteInstallCompleted(
+          RemoteInstallOutcome(
+            baseUrl: 'http://127.0.0.1:9119',
+            username: '',
+            password: '',
+            sessionToken: _sessionToken,
+          ),
+        ),
+      );
+    } on RemoteInstallCancelled {
+      rethrow;
+    } catch (_) {
+      cancellation.check();
+      // Never expose a root command's diagnostics or a partial credential.
+      throw RemoteInstallFailed(_step.name, 'HERMUSE_CONNECT_REFUSED_V1');
+    } finally {
+      _operation?.release();
+      (_shell ?? localShell)?.close();
+      _sessionToken = null;
+    }
+  }
+
   Future<void> run() async {
     try {
       _validateInputs();
       await _stage(RemoteInstallStep.connect, () async {
-        _shell = await _connect();
+        _shell = localShell ?? await _connect();
       });
       var serverSshPort = port;
       await _stage(RemoteInstallStep.preflight, () async {
         final identity = await _run('id -u', root: false, log: false);
         _root = identity.stdout.trim() == '0';
+        if (_local && !_root) {
+          throw const RemoteInstallFailed(
+            'preflight',
+            'Local provisioning requires the trusted root helper.',
+          );
+        }
         if (!_root) {
           final sudo = await _run(
             'sudo -n true',
@@ -486,20 +682,25 @@ final class _RemoteAttempt {
           root: _root,
           cancellation: cancellation,
         );
-        final connection = await _run(
-          r'printf "%s" "$SSH_CONNECTION"',
-          root: false,
-          log: false,
-        );
-        final connectionParts = connection.stdout.trim().split(RegExp(r'\s+'));
-        serverSshPort = int.tryParse(connectionParts.last) ?? 0;
-        if (serverSshPort < 1 || serverSshPort > 65535) {
-          throw const RemoteInstallFailed(
-            'preflight',
-            'SSH did not report its server-side port.',
+        if (!_local) {
+          final connection = await _run(
+            r'printf "%s" "$SSH_CONNECTION"',
+            root: false,
+            log: false,
           );
+          final connectionParts = connection.stdout.trim().split(
+            RegExp(r'\s+'),
+          );
+          serverSshPort = int.tryParse(connectionParts.last) ?? 0;
+          if (serverSshPort < 1 || serverSshPort > 65535) {
+            throw const RemoteInstallFailed(
+              'preflight',
+              'SSH did not report its server-side port.',
+            );
+          }
         }
-        await _run(preflightScript);
+        await _run(provisioningPreflightScript(local: _local));
+        await _inspectMigration();
         _supervise = true;
         final prerequisitesReady = await _inventory({
           port,
@@ -515,10 +716,13 @@ final class _RemoteAttempt {
           await _run(_ownershipCheckpoint, log: false);
         }
       });
-      await _stage(
-        RemoteInstallStep.firewall,
-        () => _firewall({port, serverSshPort, 80, 443}, {port, serverSshPort}),
-      );
+      if (!_local) {
+        await _stage(
+          RemoteInstallStep.firewall,
+          () =>
+              _firewall({port, serverSshPort, 80, 443}, {port, serverSshPort}),
+        );
+      }
       await _stage(RemoteInstallStep.hermesUser, () async {
         await _run(
           remoteOwnershipMutationScript({remoteHermesHome}, account: true),
@@ -528,58 +732,72 @@ final class _RemoteAttempt {
         await _prove(hermesUserHealthScript);
         await _run(_ownershipCheckpoint, log: false);
       });
+      if (_migration case final migration?) {
+        await _run(
+          remoteOwnershipMutationScript({remoteHermesHome}),
+          log: false,
+        );
+        await _run(migrateLegacyHermesScript(migration), log: false);
+        await _run(_ownershipCheckpoint, log: false);
+      }
       await _stage(RemoteInstallStep.hermes, _installHermes);
       await _stage(RemoteInstallStep.plugin, _installPlugin);
       await _stage(RemoteInstallStep.computer, _installComputer);
       await _stage(RemoteInstallStep.dashboard, _dashboard);
-      final domain = _domain!;
-      final webDomain = webAppDomain(domain);
-      if (_web == null) {
-        // The public address was unknown during inventory; inspect read-only
-        // now, before the web or Caddy steps can change anything.
-        await _inspectWeb();
-        if (_web == _RemoteHealth.ready) {
-          emit(
-            const RemoteInstallStepFinished(
-              RemoteInstallStep.web,
-              previouslyCompleted: true,
-            ),
+      final domain = _domain;
+      final webDomain = domain == null ? null : webAppDomain(domain);
+      if (!_local) {
+        if (_web == null) {
+          // The public address was unknown during inventory; inspect read-only
+          // now, before the web or Caddy steps can change anything.
+          await _inspectWeb();
+          if (_web == _RemoteHealth.ready) {
+            emit(
+              const RemoteInstallStepFinished(
+                RemoteInstallStep.web,
+                previouslyCompleted: true,
+              ),
+            );
+          }
+        }
+        if (webApp) {
+          await _stage(RemoteInstallStep.web, _installWeb);
+        } else if (_web == _RemoteHealth.repair) {
+          _log(
+            'The existing web app at https://$webDomain is not healthy and was '
+            'left unchanged. Choose to publish the web app to repair it, or '
+            'uninstall to remove it.',
           );
         }
+        final caddyWebDomain = _caddyWebDomain;
+        await _stage(RemoteInstallStep.https, () async {
+          await _run(installCaddyScript);
+          await _run(
+            caddyOwnershipScript(domain!, webDomain: caddyWebDomain),
+            log: false,
+          );
+          await _run(
+            remoteOwnershipMutationScript({}, caddy: true),
+            log: false,
+          );
+          _caddyRollback = '$_directory/caddy';
+          await _run(
+            caddyConfigureScript(
+              _caddyRollback!,
+              domain,
+              webDomain: caddyWebDomain,
+            ),
+          );
+          await _prove(caddyHealthScript(domain, webDomain: caddyWebDomain));
+        });
       }
-      if (webApp) {
-        await _stage(RemoteInstallStep.web, _installWeb);
-      } else if (_web == _RemoteHealth.repair) {
-        _log(
-          'The existing web app at https://$webDomain is not healthy and was '
-          'left unchanged. Choose to publish the web app to repair it, or '
-          'uninstall to remove it.',
-        );
-      }
-      final caddyWebDomain = _caddyWebDomain;
-      await _stage(RemoteInstallStep.https, () async {
-        await _run(installCaddyScript);
-        await _run(
-          caddyOwnershipScript(domain, webDomain: caddyWebDomain),
-          log: false,
-        );
-        await _run(remoteOwnershipMutationScript({}, caddy: true), log: false);
-        _caddyRollback = '$_directory/caddy';
-        await _run(
-          caddyConfigureScript(
-            _caddyRollback!,
-            domain,
-            webDomain: caddyWebDomain,
-          ),
-        );
-        await _prove(caddyHealthScript(domain, webDomain: caddyWebDomain));
-      });
       final webPublished = _web == _RemoteHealth.ready;
       final outcome = RemoteInstallOutcome(
-        baseUrl: 'https://$domain',
-        username: 'admin',
-        password: _dashboardPassword!,
-        webUrl: webPublished ? 'https://$webDomain' : null,
+        baseUrl: _local ? 'http://127.0.0.1:9119' : 'https://$domain',
+        username: _local ? '' : 'admin',
+        password: _local ? '' : _dashboardPassword!,
+        sessionToken: _sessionToken,
+        webUrl: !_local && webPublished ? 'https://$webDomain' : null,
       );
       await _stage(RemoteInstallStep.verify, () async {
         try {
@@ -589,6 +807,13 @@ final class _RemoteAttempt {
         } on RemoteInstallCancelled {
           rethrow;
         } catch (error) {
+          if (_local) {
+            throw RemoteInstallFailed(
+              'verify',
+              'The local service could not be authenticated or its plugin and '
+                  'computer are not ready. ${_redact('$error')}',
+            );
+          }
           throw RemoteInstallFailed(
             'verify',
             'The HTTPS ${webPublished ? 'dashboard and web app' : 'dashboard'} '
@@ -647,13 +872,75 @@ final class _RemoteAttempt {
         }
       }
       _operation?.release();
-      _shell?.close();
+      (_shell ?? localShell)?.close();
       _dashboardPassword = null;
       _webToken = null;
+      _sessionToken = null;
     }
   }
 
+  Future<void> _inspectMigration() async {
+    String? sourceHome = legacyHome;
+    if (!_local) {
+      final home = await _run(
+        'getent passwd ${shellQuote(username)} | cut -d: -f6',
+        log: false,
+      );
+      sourceHome = '${home.stdout.trim()}/.hermes';
+    }
+    if (sourceHome == null ||
+        sourceHome.isEmpty ||
+        sourceHome == remoteHermesHome) {
+      return;
+    }
+    final canonical = await _run(canonicalInstancePresentScript, log: false);
+    if (canonical.stdout.trim() == 'HERMUSE_CANONICAL_PRESENT_V1') {
+      _log(
+        'Reusing the canonical service; the separate per-user installation is left unchanged.',
+      );
+      return;
+    }
+    final result = await _run(
+      'if [ -e ${shellQuote(sourceHome)} ] || [ -L ${shellQuote(sourceHome)} ]; then\n'
+      '${inspectLegacyHermesScript(sourceHome)}\n'
+      "else printf 'null\\n'; fi",
+      log: false,
+    );
+    final value = jsonDecode(result.stdout.trim());
+    if (value == null) {
+      if (migrationRevision != null) {
+        throw const RemoteInstallFailed(
+          'preflight',
+          'The confirmed legacy installation changed. Inspect it again.',
+        );
+      }
+      return;
+    }
+    final inventory = LegacyHermesMigration.fromJson(
+      Map<String, Object?>.from(value as Map),
+    );
+    final approved = _local
+        ? migrationRevision == inventory.revision
+        : onMigration != null &&
+              await cancellation.bind(onMigration!(inventory));
+    if (!approved) {
+      throw const RemoteInstallFailed(
+        'preflight',
+        'An existing per-user Hermes installation requires explicit migration '
+            'approval. Review its data and verified backup plan before retrying; '
+            'a second installation will not be created.',
+      );
+    }
+    _migration = inventory;
+  }
+
   void _validateInputs() {
+    if (_local && migrationRevision != null && legacyHome == null) {
+      throw const RemoteInstallFailed(
+        'preflight',
+        'A confirmed migration must identify its legacy data directory.',
+      );
+    }
     if (host.isEmpty ||
         host.contains(RegExp(r'[\s/\x00]')) ||
         port < 1 ||
@@ -819,7 +1106,10 @@ final class _RemoteAttempt {
 
   Future<void> _installPlugin() async {
     if (await _health(_pluginHealth) == _RemoteHealth.ready) return;
-    final upload = '/tmp/hermuse-upload-$_id';
+    if (_local) {
+      await _run('install -d -m 0700 ${shellQuote(_directory)}');
+    }
+    final upload = _local ? '$_directory/plugin' : '/tmp/hermuse-upload-$_id';
     await _run(createPluginStagingScript(upload), root: false);
     // Cleanup only paths this attempt created, never an attacker's preexisting
     // directory or symlink that made the exclusive mkdir fail.
@@ -1080,8 +1370,10 @@ Map<String, Object?> parseRemoteComputerStatus(String stdout) {
   );
 }
 
-/// Checks real TLS, Hermes compatibility, authentication, plugin and computer
-/// readiness from the installing computer, not merely from the server itself.
+/// Checks Hermes compatibility, authentication, plugin and computer readiness.
+///
+/// Remote outcomes require real TLS and password login. Local outcomes require
+/// the canonical loopback origin and its token, without changing login settings.
 /// A published web app must also answer, know the dashboard and reach it
 /// through its relay; it never receives the dashboard credential.
 Future<void> verifyRemoteDashboard(
@@ -1095,7 +1387,12 @@ Future<void> verifyRemoteDashboard(
   cancellation.addListener(connection.close);
   final base = Uri.parse(outcome.baseUrl);
   final web = outcome.webUrl == null ? null : Uri.parse(outcome.webUrl!);
-  if (base.scheme != 'https' ||
+  final local =
+      outcome.sessionToken != null &&
+      outcome.sessionToken!.isNotEmpty &&
+      outcome.baseUrl == 'http://127.0.0.1:9119' &&
+      web == null;
+  if ((!local && base.scheme != 'https') ||
       base.userInfo.isNotEmpty ||
       (web != null &&
           (web.scheme != 'https' ||
@@ -1108,7 +1405,11 @@ Future<void> verifyRemoteDashboard(
       'Remote dashboards and web apps must use HTTPS.',
     );
   }
-  final rest = HermesRestClient(connection, baseUrl: base);
+  final rest = HermesRestClient(
+    connection,
+    baseUrl: base,
+    sessionToken: local ? outcome.sessionToken : null,
+  );
   Future<T> bounded<T>(Future<T> request) =>
       cancellation.bind(request.timeout(const Duration(seconds: 15)));
   try {
@@ -1126,7 +1427,8 @@ Future<void> verifyRemoteDashboard(
       }
     }
     checkSupportedVersion(status.version);
-    if (!status.authRequired || !status.authProviders.contains('basic')) {
+    if (!local &&
+        (!status.authRequired || !status.authProviders.contains('basic'))) {
       throw const RemoteInstallFailed(
         'verify',
         'The public dashboard is not protected by password login.',
@@ -1142,17 +1444,19 @@ Future<void> verifyRemoteDashboard(
         'The public plugin API did not enforce authentication.',
       );
     }
-    await bounded(
-      rest.passwordLogin(
-        username: outcome.username,
-        password: outcome.password,
-      ),
-    );
-    if (!rest.hasCookieSession) {
-      throw const RemoteInstallFailed(
-        'verify',
-        'Dashboard login did not establish an authenticated session.',
+    if (!local) {
+      await bounded(
+        rest.passwordLogin(
+          username: outcome.username,
+          password: outcome.password,
+        ),
       );
+      if (!rest.hasCookieSession) {
+        throw const RemoteInstallFailed(
+          'verify',
+          'Dashboard login did not establish an authenticated session.',
+        );
+      }
     }
     await bounded(rest.getJson('/api/plugins/hermuse/files'));
     final jobs = await bounded(rest.getJson('/api/plugins/hermuse/cron'));

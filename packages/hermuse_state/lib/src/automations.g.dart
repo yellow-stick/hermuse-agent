@@ -22,7 +22,7 @@ final class AutomationsProvider
   /// with pause/resume, run now and delete.
   AutomationsProvider._({
     required AutomationsFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'automationsProvider',
@@ -38,7 +38,7 @@ final class AutomationsProvider
   String toString() {
     return r'automationsProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -56,7 +56,7 @@ final class AutomationsProvider
   }
 }
 
-String _$automationsHash() => r'794e78729870475f14a8dcde5e1315d5c7cd6720';
+String _$automationsHash() => r'961071f8c59e63af560c0538f978d613458ffa16';
 
 /// Hermes' cron jobs of [instanceId] (the Hermuse plugin's and the user's),
 /// with pause/resume, run now and delete.
@@ -68,7 +68,7 @@ final class AutomationsFamily extends $Family
           AsyncValue<AutomationBoard>,
           AutomationBoard,
           FutureOr<AutomationBoard>,
-          String
+          (String, {String profile})
         > {
   AutomationsFamily._()
     : super(
@@ -82,8 +82,11 @@ final class AutomationsFamily extends $Family
   /// Hermes' cron jobs of [instanceId] (the Hermuse plugin's and the user's),
   /// with pause/resume, run now and delete.
 
-  AutomationsProvider call(String instanceId) =>
-      AutomationsProvider._(argument: instanceId, from: this);
+  AutomationsProvider call(String instanceId, {String profile = 'default'}) =>
+      AutomationsProvider._(
+        argument: (instanceId, profile: profile),
+        from: this,
+      );
 
   @override
   String toString() => r'automationsProvider';
@@ -93,10 +96,14 @@ final class AutomationsFamily extends $Family
 /// with pause/resume, run now and delete.
 
 abstract class _$Automations extends $AsyncNotifier<AutomationBoard> {
-  late final _$args = ref.$arg as String;
-  String get instanceId => _$args;
+  late final _$args = ref.$arg as (String, {String profile});
+  String get instanceId => _$args.$1;
+  String get profile => _$args.profile;
 
-  FutureOr<AutomationBoard> build(String instanceId);
+  FutureOr<AutomationBoard> build(
+    String instanceId, {
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -109,6 +116,9 @@ abstract class _$Automations extends $AsyncNotifier<AutomationBoard> {
               Object?,
               Object?
             >;
-    return element.handleCreate(ref, () => build(_$args));
+    return element.handleCreate(
+      ref,
+      () => build(_$args.$1, profile: _$args.profile),
+    );
   }
 }

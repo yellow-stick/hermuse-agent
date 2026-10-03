@@ -7,7 +7,10 @@ import 'package:hermuse_data/hermuse_data.dart';
 import 'package:http/http.dart' as http;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import 'agents.dart';
+import 'automations.dart';
 import 'onboarding.dart' show setupChatTitle;
+import 'product.dart';
 import 'saved_sign_in.dart';
 
 part 'providers.g.dart';
@@ -120,9 +123,12 @@ final class InstanceAuth {
   /// connection refuses them (its [HermesException], e.g.
   /// [HermesAuthFailed]) or the registry rejects the instance
   /// ([DuplicateInstance]); the secrets go to the [SecretStore] only.
+  /// [replaceExisting] updates an existing registration only after the same
+  /// connection proof, preserving its identity when changing its login method.
   Future<void> add(
     HermesInstance candidate, {
     required Map<String, String> secrets,
+    bool replaceExisting = false,
   }) async {
     final trial = MemorySecretStore();
     for (final MapEntry(:key, :value) in secrets.entries) {
@@ -141,10 +147,20 @@ final class InstanceAuth {
     await _ref.read(trialConnectProvider)(candidate, trial);
     // Registry first: secrets written before a failed add would be orphaned
     // under the new id.
-    await (await _ref.read(registryProvider.future)).add(candidate);
+    final registry = await _ref.read(registryProvider.future);
+    if (replaceExisting) {
+      await registry.update(candidate);
+    } else {
+      await registry.add(candidate);
+    }
     final store = _ref.read(secretStoreProvider);
     for (final MapEntry(:key, :value) in secrets.entries) {
       await store.write(candidate.id, key, value);
+    }
+    if (replaceExisting) {
+      _ref
+        ..invalidate(savedSignInProvider(candidate.id))
+        ..invalidate(connectionProvider(candidate.id));
     }
   }
 }
@@ -154,10 +170,15 @@ final class InstanceAuth {
 Stream<List<HermesInstance>> instances(Ref ref) =>
     ref.watch(hermuseDatabaseProvider).watchInstances();
 
-/// The shared connection of one instance, opened lazily and closed
-/// [connectionLinger] after its last listener goes away.
+/// A profile's separate connection, opened lazily and closed
+/// [connectionLinger] after its last listener goes away. Credentials remain
+/// keyed by the real registered instance id.
 @Riverpod(retry: _noRetry)
-Future<HermesConnection> connection(Ref ref, String instanceId) async {
+Future<HermesConnection> connection(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) async {
   final link = ref.keepAlive();
   Timer? linger;
   ref.onCancel(() => linger = Timer(connectionLinger, link.close));
@@ -172,7 +193,9 @@ Future<HermesConnection> connection(Ref ref, String instanceId) async {
   final registry = await ref.watch(registryProvider.future);
   final instance = registry.byId(instanceId);
   if (instance == null) throw StateError('unknown instance $instanceId');
-  transport = await ref.read(transportFactoryProvider)(instance);
+  transport = await ref.read(transportFactoryProvider)(
+    instance.copyWith(profile: () => profile),
+  );
   if (disposed) {
     unawaited(transport.close());
     throw StateError('connection to $instanceId disposed while opening');
@@ -182,45 +205,71 @@ Future<HermesConnection> connection(Ref ref, String instanceId) async {
 
 /// Live [ConnectionState] of an instance (drives status badges).
 @riverpod
-Stream<ConnectionState> connectionState(Ref ref, String instanceId) async* {
-  final transport = (await ref.watch(connectionProvider(instanceId).future))
-      .transport;
+Stream<ConnectionState> connectionState(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) async* {
+  final transport = (await ref.watch(
+    connectionProvider(instanceId, profile: profile).future,
+  )).transport;
   yield transport.currentState;
   yield* transport.state;
 }
 
-/// Settings key of the main chat of [instanceId] (its stored session id).
-String _mainKey(String instanceId) => 'main_session:$instanceId';
+String _profileKey(String prefix, String instanceId, String profile) =>
+    profile == 'default'
+    ? '$prefix:$instanceId'
+    : '$prefix:$instanceId:profile:${Uri.encodeComponent(profile)}';
 
-/// Settings key of the thread on screen for [instanceId] (main or side).
-String _openKey(String instanceId) => 'open_thread:$instanceId';
+String _mainKey(String instanceId, String profile) =>
+    _profileKey('main_session', instanceId, profile);
 
-/// The main chat of [instanceId]: its stored session id, or '' when it has
-/// not been created yet (created on the first message).
-///
-/// Before main chats existed the conversation on screen was persisted as
-/// `active_thread`; that conversation is adopted as the main chat.
-Future<String> _mainSessionOf(HermuseDatabase db, String instanceId) async {
-  final saved = await db.readSetting(_mainKey(instanceId));
+String _openKey(String instanceId, String profile) =>
+    _profileKey('open_thread', instanceId, profile);
+
+String _selectedProfileKey(String instanceId) => 'agent_profile:$instanceId';
+
+/// Named legacy instance keys are moved once by the database migration.
+Future<String?> _profileSetting(
+  HermuseDatabase db,
+  String prefix,
+  String instanceId,
+  String profile,
+) => db.readSetting(_profileKey(prefix, instanceId, profile));
+
+Future<String> _mainSessionOf(
+  HermuseDatabase db,
+  String instanceId,
+  String profile,
+) async {
+  final saved = await _profileSetting(db, 'main_session', instanceId, profile);
   if (saved != null) return saved;
   final legacy = await db.readSetting(ActiveThread._key);
   if (legacy == null) return '';
   final json = jsonDecode(legacy) as Map<String, Object?>;
   final sessionId = json['session_id'] as String? ?? '';
-  if (json['instance_id'] != instanceId || sessionId.isEmpty) return '';
-  await db.writeSetting(_mainKey(instanceId), sessionId);
+  final registered = (await db.loadInstances())
+      .where((i) => i.id == instanceId)
+      .firstOrNull;
+  final legacyProfile =
+      json['profile'] as String? ?? registered?.profile ?? 'default';
+  if (json['instance_id'] != instanceId ||
+      legacyProfile != profile ||
+      sessionId.isEmpty) {
+    return '';
+  }
+  await db.writeSetting(_mainKey(instanceId, profile), sessionId);
   return sessionId;
 }
 
-/// The main chat on screen: `ThreadRef(instance, mainSessionId)`, one main
-/// chat per instance (every other thread is a side chat of it). Persisted across launches (settings table).
-///
-/// A main chat not created yet is `ThreadRef(instanceId, '')`; once its
-/// session exists the stored id is persisted for the next launch while the
-/// open chat keeps its provider key.
+/// The selected agent's main chat, persisted across launches. An uncreated
+/// main chat keeps its draft provider key while its stored id is saved.
 @Riverpod(keepAlive: true)
 class ActiveThread extends _$ActiveThread {
   static const _key = 'active_thread';
+  final _opened = <(String, String), ThreadRef>{};
+  int _selection = 0;
 
   @override
   Future<ThreadRef?> build() async {
@@ -228,43 +277,88 @@ class ActiveThread extends _$ActiveThread {
     final registry = await ref.watch(registryProvider.future);
     final raw = await db.readSetting(_key);
     String? instanceId;
+    String? profile;
     if (raw != null) {
       final json = jsonDecode(raw) as Map<String, Object?>;
       final saved = json['instance_id'] as String;
-      if (registry.byId(saved) != null) instanceId = saved;
+      if (registry.byId(saved) != null) {
+        instanceId = saved;
+        profile = json['profile'] as String?;
+      }
     }
     instanceId ??= registry.primary?.id;
     if (instanceId == null) return null;
-    return ThreadRef(
-      instanceId: instanceId,
-      sessionId: await _mainSessionOf(db, instanceId),
-    );
+    profile ??=
+        await db.readSetting(_selectedProfileKey(instanceId)) ??
+        registry.byId(instanceId)?.profile ??
+        'default';
+    return _restore(db, instanceId, profile);
   }
 
-  /// Opens the main chat of [instanceId].
-  Future<void> openInstance(String instanceId) async {
-    final db = ref.read(hermuseDatabaseProvider);
+  Future<ThreadRef> _restore(
+    HermuseDatabase db,
+    String instanceId,
+    String profile,
+  ) async {
+    final key = (instanceId, profile);
+    if (_opened[key] case final opened?) return opened;
     final thread = ThreadRef(
       instanceId: instanceId,
-      sessionId: await _mainSessionOf(db, instanceId),
+      profile: profile,
+      sessionId: await _mainSessionOf(db, instanceId, profile),
     );
-    state = AsyncData(thread);
-    await _persist(thread);
+    return _opened.putIfAbsent(key, () => thread);
   }
 
-  /// Opens the onboarding conversation [setup]: it becomes the instance's
-  /// main chat when there is none yet, otherwise a side chat of it that
-  /// opens on screen.
-  Future<void> openSetup(ThreadRef setup) async {
-    if (setup.isNew) return openInstance(setup.instanceId);
+  /// Restores the last selected agent of this registered instance.
+  Future<void> openInstance(String instanceId) async {
+    final selection = ++_selection;
     final db = ref.read(hermuseDatabaseProvider);
-    final main = await _mainSessionOf(db, setup.instanceId);
+    final registry = await ref.read(registryProvider.future);
+    final profile =
+        await db.readSetting(_selectedProfileKey(instanceId)) ??
+        registry.byId(instanceId)?.profile ??
+        'default';
+    if (!ref.mounted || selection != _selection) return;
+    await _openAgent(instanceId, profile, selection);
+  }
+
+  /// Opens or restores one agent without changing the registered instance.
+  Future<void> openAgent(String instanceId, String profile) =>
+      _openAgent(instanceId, profile, ++_selection);
+
+  Future<void> _openAgent(
+    String instanceId,
+    String profile,
+    int selection,
+  ) async {
+    final db = ref.read(hermuseDatabaseProvider);
+    final thread = await _restore(db, instanceId, profile);
+    if (!ref.mounted || selection != _selection) return;
+    await db.writeSettings({
+      _key: jsonEncode({'instance_id': instanceId, 'profile': profile}),
+      _selectedProfileKey(instanceId): profile,
+    });
+    if (!ref.mounted || selection != _selection) return;
+    state = AsyncData(thread);
+  }
+
+  /// Opens onboarding as this profile's main chat, or as a side chat.
+  Future<void> openSetup(ThreadRef setup) async {
+    if (setup.isNew) return openAgent(setup.instanceId, setup.profile);
+    final db = ref.read(hermuseDatabaseProvider);
+    final main = await _mainSessionOf(db, setup.instanceId, setup.profile);
     if (main.isEmpty || main == setup.sessionId) {
-      await db.writeSetting(_mainKey(setup.instanceId), setup.sessionId);
+      await db.writeSetting(
+        _mainKey(setup.instanceId, setup.profile),
+        setup.sessionId,
+      );
+      _opened.remove((setup.instanceId, setup.profile));
     } else {
       await db.upsertSession(
         SessionRow(
           instanceId: setup.instanceId,
+          profile: setup.profile,
           sessionId: setup.sessionId,
           title: setupChatTitle,
           parentId: main,
@@ -272,50 +366,105 @@ class ActiveThread extends _$ActiveThread {
           archived: false,
         ),
       );
-      await db.writeSetting(_openKey(setup.instanceId), setup.sessionId);
-      ref.invalidate(chatSessionProvider);
+      await db.writeSetting(
+        _openKey(setup.instanceId, setup.profile),
+        setup.sessionId,
+      );
+      final thread =
+          _opened[(setup.instanceId, setup.profile)] ??
+          ThreadRef(
+            instanceId: setup.instanceId,
+            profile: setup.profile,
+            sessionId: main,
+          );
+      ref.invalidate(chatSessionProvider(thread));
     }
-    await openInstance(setup.instanceId);
+    await openAgent(setup.instanceId, setup.profile);
   }
 
-  /// Records the stored id of a main chat created from a draft.
-  Future<void> mainCreated(ThreadRef created) async {
-    final db = ref.read(hermuseDatabaseProvider);
-    await db.writeSetting(_mainKey(created.instanceId), created.sessionId);
-    await _persist(created);
-  }
-
-  Future<void> _persist(ThreadRef thread) => ref
+  /// Persists a newly created main session without changing selection.
+  /// A late callback from a background agent must never steal the screen.
+  Future<void> mainCreated(ThreadRef created) => ref
       .read(hermuseDatabaseProvider)
-      .writeSetting(_key, jsonEncode({'instance_id': thread.instanceId}));
+      .writeSetting(
+        _mainKey(created.instanceId, created.profile),
+        created.sessionId,
+      );
 }
 
 /// The chat of the main session [thread] (main chat + its side chats),
 /// opened on the thread that was on screen last time.
-@riverpod
+@Riverpod(keepAlive: true)
 Future<ChatController> chatSession(Ref ref, ThreadRef thread) async {
   final db = ref.watch(hermuseDatabaseProvider);
   // Keep the connection open while the chat lives, without rebuilding it.
-  ref.listen(connectionProvider(thread.instanceId), (_, _) {});
+  ref.listen(
+    connectionProvider(thread.instanceId, profile: thread.profile),
+    (_, _) {},
+  );
   final registry = await ref.watch(registryProvider.future);
   final sides = thread.isNew
       ? const <SessionRow>[]
-      : await db.loadSideChats(thread.instanceId, thread.sessionId);
+      : await db.loadSideChats(
+          thread.instanceId,
+          thread.sessionId,
+          profile: thread.profile,
+        );
   final controller = ChatController(
     connections: _ProviderConnections(ref),
     ref: thread,
-    observer: _DatabaseObserver(db, (created) {
-      if (ref.mounted) {
-        unawaited(ref.read(activeThreadProvider.notifier).mainCreated(created));
-      }
-    }),
-    agentName: registry.byId(thread.instanceId)?.label ?? 'Hermes',
+    observer: _DatabaseObserver(
+      db,
+      (created) {
+        if (ref.mounted) {
+          unawaited(
+            ref.read(activeThreadProvider.notifier).mainCreated(created),
+          );
+        }
+      },
+      (changed, tool) {
+        if (!ref.mounted) return;
+        if (tool == null || tool == 'feed_post') {
+          ref.invalidate(
+            feedProvider(changed.instanceId, profile: changed.profile),
+          );
+        }
+        if (tool == null || tool == 'cronjob_manage') {
+          final provider = automationsProvider(
+            changed.instanceId,
+            profile: changed.profile,
+          );
+          // An unopened tab reads fresh data when it is first watched.
+          if (ref.exists(provider)) {
+            ref.read(provider.notifier).refreshFromChat();
+          }
+        }
+      },
+    ),
+    agentName:
+        ref
+            .read(agentProfileProvider(thread.instanceId, thread.profile))
+            ?.displayName ??
+        (thread.profile == 'default'
+            ? registry.byId(thread.instanceId)?.label ?? 'Hermes'
+            : thread.profile),
     sideThreads: [
       for (final s in sides)
         Thread(id: s.sessionId, title: s.title, startedAt: '', messages: []),
     ],
-    initialThreadId: await db.readSetting(_openKey(thread.instanceId)),
+    initialThreadId: await _profileSetting(
+      db,
+      'open_thread',
+      thread.instanceId,
+      thread.profile,
+    ),
   );
+  ref.listen(agentProfileProvider(thread.instanceId, thread.profile), (
+    _,
+    next,
+  ) {
+    if (next != null) controller.setAgentName(next.displayName);
+  });
   ref.onDispose(controller.dispose);
   return controller;
 }
@@ -331,7 +480,12 @@ Stream<List<SessionRow>> sideChats(
     ? Stream.value(const [])
     : ref
           .watch(hermuseDatabaseProvider)
-          .watchSideChats(main.instanceId, main.sessionId, archived: archived);
+          .watchSideChats(
+            main.instanceId,
+            main.sessionId,
+            archived: archived,
+            profile: main.profile,
+          );
 
 /// Last activity of the main chat [main] (null until it exists).
 @riverpod
@@ -339,7 +493,7 @@ Stream<DateTime?> mainChatUpdatedAt(Ref ref, ThreadRef main) => main.isNew
     ? Stream.value(null)
     : ref
           .watch(hermuseDatabaseProvider)
-          .watchSession(main.instanceId, main.sessionId)
+          .watchSession(main.instanceId, main.sessionId, profile: main.profile)
           .map(
             (row) => row == null
                 ? null
@@ -402,6 +556,7 @@ Future<void> setSideChatPinned(
   sideChat.instanceId,
   sideChat.sessionId,
   pinned ? DateTime.now().millisecondsSinceEpoch : null,
+  profile: sideChat.profile,
 );
 
 /// A result of [chatSearch].
@@ -443,10 +598,10 @@ Future<List<ChatSearchHit>> chatSearch(
   final main = state.mainThread;
   final rows = main.id.startsWith('draft-')
       ? const <SessionRow>[]
-      : await db.loadSideChats(chat.instanceId, main.id);
+      : await db.loadSideChats(chat.instanceId, main.id, profile: chat.profile);
   final mainRow = main.id.startsWith('draft-')
       ? null
-      : await db.loadSession(chat.instanceId, main.id);
+      : await db.loadSession(chat.instanceId, main.id, profile: chat.profile);
   final updated = {
     for (final r in [...rows, ?mainRow])
       r.sessionId: DateTime.fromMillisecondsSinceEpoch(r.updatedAt),
@@ -461,6 +616,7 @@ Future<List<ChatSearchHit>> chatSearch(
   final messages = await db.search(
     query,
     instanceId: chat.instanceId,
+    profile: chat.profile,
     sessionIds: saved,
     limit: limit,
   );
@@ -547,20 +703,25 @@ final class _ProviderConnections implements HermesConnections {
   final Ref _ref;
 
   @override
-  Future<HermesConnection> connectionFor(String instanceId) {
-    final provider = connectionProvider(instanceId);
+  Future<HermesConnection> connectionFor(
+    String instanceId, {
+    String profile = 'default',
+  }) {
+    final provider = connectionProvider(instanceId, profile: profile);
     if (_ref.read(provider).hasError) _ref.invalidate(provider);
     return _ref.read(provider.future);
   }
 }
 
-/// Mirrors chats into the local cache (side chat index + FTS transcript).
+/// Mirrors chats into the local cache and refreshes their product surfaces.
 final class _DatabaseObserver implements ChatObserver {
-  _DatabaseObserver(this._db, this._mainCreated);
+  _DatabaseObserver(this._db, this._mainCreated, this._productsChanged);
   final HermuseDatabase _db;
 
   /// Called when the main (non side) session gets its stored id.
   final void Function(ThreadRef) _mainCreated;
+
+  final void Function(ThreadRef, String? tool) _productsChanged;
 
   static int _now() => DateTime.now().millisecondsSinceEpoch;
 
@@ -575,6 +736,7 @@ final class _DatabaseObserver implements ChatObserver {
       _db.upsertSession(
         SessionRow(
           instanceId: ref.instanceId,
+          profile: ref.profile,
           sessionId: ref.sessionId,
           title: title,
           parentId: parentId,
@@ -587,36 +749,63 @@ final class _DatabaseObserver implements ChatObserver {
 
   @override
   void sessionTitled(ThreadRef ref, String title) {
-    unawaited(_db.renameSession(ref.instanceId, ref.sessionId, title));
+    unawaited(
+      _db.renameSession(
+        ref.instanceId,
+        ref.sessionId,
+        title,
+        profile: ref.profile,
+      ),
+    );
   }
 
   @override
   void turnEnded(ThreadRef ref) {
-    unawaited(_db.touchSession(ref.instanceId, ref.sessionId, _now()));
+    // Also covers product changes made through terminal or delegated tools.
+    _productsChanged(ref, null);
+    unawaited(
+      _db.touchSession(
+        ref.instanceId,
+        ref.sessionId,
+        _now(),
+        profile: ref.profile,
+      ),
+    );
   }
 
   @override
   void threadOpened(ThreadRef ref) {
-    unawaited(_db.writeSetting(_openKey(ref.instanceId), ref.sessionId));
+    unawaited(
+      _db.writeSetting(_openKey(ref.instanceId, ref.profile), ref.sessionId),
+    );
   }
 
   @override
   void sessionArchived(ThreadRef ref, {required bool archived}) {
     unawaited(
-      _db.setSessionArchived(ref.instanceId, ref.sessionId, archived: archived),
+      _db.setSessionArchived(
+        ref.instanceId,
+        ref.sessionId,
+        archived: archived,
+        profile: ref.profile,
+      ),
     );
   }
 
   @override
   void sessionDeleted(ThreadRef ref) {
-    unawaited(_db.deleteSession(ref.instanceId, ref.sessionId));
+    unawaited(
+      _db.deleteSession(ref.instanceId, ref.sessionId, profile: ref.profile),
+    );
   }
 
   @override
   void toolCompleted(ThreadRef ref, ActivityItem item) {
+    _productsChanged(ref, item.tool);
     unawaited(
       _db.addActivity(
         instanceId: ref.instanceId,
+        profile: ref.profile,
         sessionId: item.sessionId,
         tool: item.tool,
         summary: item.summary,
@@ -634,6 +823,7 @@ final class _DatabaseObserver implements ChatObserver {
         if (m.id.startsWith('row-') && int.tryParse(m.id.substring(4)) != null)
           MessageRow(
             instanceId: ref.instanceId,
+            profile: ref.profile,
             sessionId: ref.sessionId,
             messageId: m.id,
             author: m.author.name,
@@ -642,7 +832,14 @@ final class _DatabaseObserver implements ChatObserver {
           ),
     ];
     if (rows.isNotEmpty) {
-      unawaited(_db.cacheTranscript(ref.instanceId, ref.sessionId, rows));
+      unawaited(
+        _db.cacheTranscript(
+          ref.instanceId,
+          ref.sessionId,
+          rows,
+          profile: ref.profile,
+        ),
+      );
     }
   }
 }

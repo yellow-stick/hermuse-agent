@@ -10,6 +10,9 @@ extension YsFlutterPalette on YsPalette {
   Color get paperClearColor => Color(paperClear.value);
   Color get paperEdgeColor => Color(paperEdge.value);
   Color get paperShadowColor => Color(paperShadow.value);
+  Color get glassColor => Color(glass.value);
+  Color get glassShineColor => Color(glassShine.value);
+  Color get glassRimColor => Color(glassRim.value);
   Color get neutralAmbientColor => Color(neutralAmbient.value);
   Color get neutralFilmColor => Color(neutralFilm.value);
   Color get neutralWashColor => Color(neutralWash.value);

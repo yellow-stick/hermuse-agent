@@ -2,6 +2,8 @@
 library;
 
 export 'src/activity.dart';
+export 'src/agents.dart';
+export 'src/app_theme.dart';
 export 'src/app_update.dart';
 export 'src/automations.dart';
 export 'src/computer.dart';

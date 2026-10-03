@@ -2,19 +2,21 @@ import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'glass.dart';
 import 'icon.dart';
 import 'pressable.dart';
 
 /// Button variants on top of [YsPressable].
 abstract final class YsButton {
-  /// Pill with a [paperClear] background: floating "Chats"/"Invite" pills,
-  /// "New side chat".
+  /// Pill with a [paperClear] background: "Copy"/"Show" pills; [glass]
+  /// floats it as liquid glass ([ysGlassRules]): the "Chats" pill.
   static Component pill({
     YsIcon? icon,
     required String label,
     VoidCallback? onPressed,
     String? tooltip,
     bool small = false,
+    bool glass = false,
     Key? key,
   }) => YsPillButton(
     icon: icon,
@@ -22,6 +24,7 @@ abstract final class YsButton {
     onPressed: onPressed,
     tooltip: tooltip,
     small: small,
+    glass: glass,
     key: key,
   );
 
@@ -90,6 +93,7 @@ class YsPillButton extends StatelessComponent {
     this.onPressed,
     this.tooltip,
     this.small = false,
+    this.glass = false,
     super.key,
   });
 
@@ -98,6 +102,7 @@ class YsPillButton extends StatelessComponent {
   final VoidCallback? onPressed;
   final String? tooltip;
   final bool small;
+  final bool glass;
 
   @override
   Component build(BuildContext context) {
@@ -105,7 +110,11 @@ class YsPillButton extends StatelessComponent {
     return YsPressable(
       onPressed: onPressed,
       label: tooltip == null ? null : label,
-      classes: small ? 'ys-btn-pill ys-btn-pill-sm' : 'ys-btn-pill',
+      classes: [
+        'ys-btn-pill',
+        if (small) 'ys-btn-pill-sm',
+        if (glass) 'ys-btn-pill-glass',
+      ].join(' '),
       builder: (context, state) => .fragment([
         if (icon != null) YsIconView(icon, size: 18),
         span(classes: 'ys-btn-pill-label', [.text(label)]),
@@ -153,6 +162,7 @@ class YsPillButton extends StatelessComponent {
       css('&.ys-btn-pill-sm .ys-btn-pill-label')
           .styles(fontSize: 12.px, lineHeight: 16.px, fontWeight: .w500),
     ]),
+    ...ysGlassRules('.ys-btn-pill.ys-btn-pill-glass'),
   ];
 }
 

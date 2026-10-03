@@ -1,7 +1,7 @@
 """Hermuse agent-plugin entry point (``register(ctx)`` called by the loader).
 
-Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, the
-``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
+Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, conversational
+system-prompt guidance, the ``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
 and its ``pre_tool_call`` / ``transform_tool_result`` hooks, restarts the
 subscription bridge when it was set up and does not run (see
 :func:`subscription_bridge.start_if_configured`), and — inside a running
@@ -27,8 +27,35 @@ logger = logging.getLogger(__name__)
 
 SKILL_NAME = "hermuse"
 SKILL_DESCRIPTION = (
-    "Hermuse product layer: when to call feed_post, idea_propose, goal_track, "
-    "goal_update, artifact_save and reflection_write, honouring PREFERENCES.md."
+    "Hermuse feed and automations during chat: publish useful grounded updates "
+    "with feed_post, schedule requested work with Hermes cronjob_manage, and "
+    "use Ideas, Goals, Library and Reflections, honouring PREFERENCES.md."
+)
+
+CONVERSATION_GUIDANCE = (
+    "Hermuse surfaces are backed by real tools, not chat prose. Use only tools "
+    "available in this session; if one is unavailable or fails, explain the "
+    "limitation instead of claiming that something was saved or scheduled. "
+    "Load the hermuse:hermuse skill for the product workflow.\n\n"
+    "During conversation, use feed_post for genuinely useful discoveries, "
+    "research results or completed-work summaries worth keeping in the user's "
+    "feed, as well as explicit requests to post. First read the active profile's "
+    "HERMES_HOME/hermuse/PREFERENCES.md and FEED_PROMPT.md, honour topic, timing "
+    "and format preferences, and check recent feed entries to avoid duplicates. "
+    "Ground the post in actual conversation or tool results and link sources "
+    "when applicable. Do not post every reply, invent activity, seed sample "
+    "content or publish just to fill an empty feed. A successful feed_post "
+    "result is what confirms publication.\n\n"
+    "When the user requests a reminder, recurring task or automation, use "
+    "Hermes cronjob_manage to create or update a real scheduled job in the "
+    "current profile. Inspect existing jobs before creating a duplicate or "
+    "changing one; clarify missing timing or task details. Job prompts must "
+    "be self-contained. For jobs meant to populate Hermuse surfaces, include "
+    "the hermuse:hermuse skill and require the appropriate persistence tool "
+    "(for a feed job, feed_post), not just a final chat response. Confirm the "
+    "schedule and job id only after a successful tool result, and relay any "
+    "scheduler or delivery warnings. Never create unsolicited schedules, "
+    "bypass approval requirements or approve actions on the user's behalf."
 )
 
 PLUGIN_NAME = "hermuse"
@@ -41,6 +68,7 @@ SPA_CATCH_ALL = "/{full_path:path}"
 
 def register(ctx) -> None:
     agent_tools.register_tools(ctx)
+    ctx.register_system_prompt_section("hermuse.conversation", CONVERSATION_GUIDANCE)
     try:
         skill_md = Path(__file__).parent / "skills" / "hermuse" / "SKILL.md"
         ctx.register_skill(SKILL_NAME, skill_md, SKILL_DESCRIPTION)

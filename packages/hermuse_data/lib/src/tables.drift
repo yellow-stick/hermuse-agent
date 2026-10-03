@@ -12,6 +12,7 @@ CREATE TABLE instances (
 
 CREATE TABLE sessions (
   instance_id TEXT NOT NULL REFERENCES instances (id) ON DELETE CASCADE,
+  profile TEXT NOT NULL DEFAULT 'default',
   session_id TEXT NOT NULL,
   title TEXT NOT NULL DEFAULT '',
   -- Stored id of the main session this side chat branches from.
@@ -23,20 +24,21 @@ CREATE TABLE sessions (
   archived BOOLEAN NOT NULL DEFAULT FALSE,
   -- When the side chat was pinned (ms since epoch); null when not pinned.
   pinned_at INTEGER,
-  PRIMARY KEY (instance_id, session_id)
+  PRIMARY KEY (instance_id, profile, session_id)
 ) AS SessionRow;
 
 CREATE TABLE messages (
   instance_id TEXT NOT NULL,
+  profile TEXT NOT NULL DEFAULT 'default',
   session_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
   author TEXT NOT NULL,
   body_text TEXT NOT NULL,
   -- Transcript row id: orders messages and matches `session.resume` ids.
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (instance_id, session_id, message_id),
-  FOREIGN KEY (instance_id, session_id)
-    REFERENCES sessions (instance_id, session_id) ON DELETE CASCADE
+  PRIMARY KEY (instance_id, profile, session_id, message_id),
+  FOREIGN KEY (instance_id, profile, session_id)
+    REFERENCES sessions (instance_id, profile, session_id) ON DELETE CASCADE
 ) AS MessageRow;
 
 CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -70,6 +72,7 @@ CREATE TABLE settings (
 CREATE TABLE activity (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   instance_id TEXT NOT NULL REFERENCES instances (id) ON DELETE CASCADE,
+  profile TEXT NOT NULL DEFAULT 'default',
   -- Session of the chat it ran in; '' for a chat not created yet.
   session_id TEXT NOT NULL,
   tool TEXT NOT NULL,
@@ -78,13 +81,14 @@ CREATE TABLE activity (
   at INTEGER NOT NULL
 ) AS ActivityRow;
 
-CREATE INDEX activity_by_time ON activity (instance_id, at);
+CREATE INDEX activity_by_time ON activity (instance_id, profile, at);
 
 searchMessages:
   SELECT m.** FROM messages_fts f
     INNER JOIN messages m ON m.rowid = f.rowid
     WHERE messages_fts MATCH :query
       AND m.instance_id = :instanceId
+      AND m.profile = :profile
       AND m.session_id IN :sessionIds
     ORDER BY rank
     LIMIT :limit;

@@ -7,6 +7,48 @@ import 'package:test/test.dart';
 
 void main() {
   group('RemoteUninstaller', () {
+    test(
+      'local inspection and removal use the same inventory without SSH',
+      () async {
+        final server = _Server();
+        final uninstaller = RemoteUninstaller(connect: server.connect);
+        final inspectionShell = _Shell(server, '');
+        final inventory = await uninstaller.inspectLocal(
+          shell: inspectionShell,
+        );
+        expect(inspectionShell.closed, isTrue);
+        expect(inventory.host, 'localhost');
+        expect(inventory.revision, 'fixture-confirmed-revision');
+        final removalShell = _Shell(server, '');
+        final events = await uninstaller
+            .runLocal(shell: removalShell, inventory: inventory)
+            .toList();
+        expect(
+          events.whereType<RemoteUninstallCompleted>().single.outcome.complete,
+          isTrue,
+        );
+        expect(server.removals, 1);
+        expect(server.connections, 0);
+        expect(removalShell.closed, isTrue);
+      },
+    );
+
+    test('local removal rejects a remote inventory before mutation', () async {
+      final server = _Server();
+      final uninstaller = RemoteUninstaller(connect: server.connect);
+      final inventory = await uninstaller.inspect(
+        host: 'remote.example',
+        onHostKey: (_) async => true,
+      );
+      await expectLater(
+        uninstaller
+            .runLocal(shell: _Shell(server, ''), inventory: inventory)
+            .toList(),
+        throwsA(isA<RemoteInstallFailed>()),
+      );
+      expect(server.removals, 0);
+    });
+
     test('should pin inspected server identity before opening destructive reconnect', () async {
       final server = _Server();
       final uninstaller = RemoteUninstaller(connect: server.connect);

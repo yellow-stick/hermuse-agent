@@ -81,6 +81,8 @@ final class ConnectionCard {
     this.apiMode = '',
     this.defaultModel = '',
     this.models = const [],
+    this.providerKey = '',
+    this.isDefault = false,
   });
 
   /// Provider id (`nous`, `openai-codex`, `openai-api`, `custom:<id>`, …).
@@ -154,8 +156,18 @@ final class ConnectionCard {
   /// Model ids a custom endpoint lists (Hermes `models`).
   final List<String> models;
 
-  /// The provider id Hermes resolves for this card ([hermesProviderId]).
-  String get hermesProvider => hermesProviderId(id);
+  /// The `providers.<key>` Hermes saved a bridge card's endpoint under
+  /// (`meta-bridge` for "Meta (bridge)"); '' until it is registered and for
+  /// every other card.
+  final String providerKey;
+
+  /// This provider runs the instance's main model (Hermes `model.provider`).
+  final bool isDefault;
+
+  /// The provider id Hermes resolves for this card: [providerKey] for a
+  /// bridge, [hermesProviderId] otherwise.
+  String get hermesProvider =>
+      providerKey.isNotEmpty ? providerKey : hermesProviderId(id);
 
   ConnectionCard copyWith({
     String? name,
@@ -179,6 +191,8 @@ final class ConnectionCard {
     String? apiMode,
     String? defaultModel,
     List<String>? models,
+    String? providerKey,
+    bool? isDefault,
   }) => ConnectionCard(
     id: id,
     name: name ?? this.name,
@@ -204,6 +218,8 @@ final class ConnectionCard {
     apiMode: apiMode ?? this.apiMode,
     defaultModel: defaultModel ?? this.defaultModel,
     models: models ?? this.models,
+    providerKey: providerKey ?? this.providerKey,
+    isDefault: isDefault ?? this.isDefault,
   );
 }
 
@@ -597,15 +613,16 @@ List<ConnectionCard> buildConnectionCards({
         usableByProvider.putIfAbsent(file.provider, () => []).add(file);
       }
     }
-    final endpointNames = {
+    final keysByName = <String, String>{
       for (final entry in (endpoints['endpoints'] as List?) ?? const [])
-        (entry as Map<String, Object?>)['name'] as String? ?? '',
+        if (entry is Map<String, Object?>)
+          entry['name'] as String? ?? '': entry['id'] as String? ?? '',
     };
     for (final spec in bridgeCardSpecs) {
       final creds = [
         for (final p in spec.authFileProviders) ...?usableByProvider[p],
       ];
-      final registered = endpointNames.contains(spec.label);
+      final registered = keysByName.containsKey(spec.label);
       final connected = creds.isNotEmpty && registered;
       final email = creds.isEmpty ? '' : (creds.first.email ?? '');
       cards.add(
@@ -628,11 +645,46 @@ List<ConnectionCard> buildConnectionCards({
               : 'Nothing to disconnect yet.',
           advanced: true,
           bridgeSpec: spec,
+          providerKey: keysByName[spec.label] ?? '',
         ),
       );
     }
   }
-  return cards;
+  return _markDefault(cards, endpoints);
+}
+
+/// [cards] with the one running the instance's main model marked
+/// [ConnectionCard.isDefault]: Hermes' `current.provider` of the
+/// custom-endpoints answer (`model.provider` of `config.yaml`), and the
+/// endpoint rows it flags `is_current` (Hermes may spell an endpoint by its
+/// key or by `custom:<name>`). Only a connected card can be the default.
+List<ConnectionCard> _markDefault(
+  List<ConnectionCard> cards,
+  Map<String, Object?> endpoints,
+) {
+  final current = switch (endpoints['current']) {
+    {'provider': final String provider} => provider.trim().toLowerCase(),
+    _ => '',
+  };
+  final currentKeys = {
+    for (final entry in (endpoints['endpoints'] as List?) ?? const [])
+      if (entry is Map<String, Object?> && entry['is_current'] == true)
+        (entry['id'] as String? ?? '').toLowerCase(),
+  };
+  bool runs(ConnectionCard card) {
+    if (card.state != ConnectionCardState.connected) return false;
+    final key = card.hermesProvider.toLowerCase();
+    return currentKeys.contains(key) ||
+        (current.isNotEmpty &&
+            (current == key ||
+                current == 'custom:$key' ||
+                current == 'custom:${card.name.toLowerCase()}'));
+  }
+
+  return [
+    for (final card in cards)
+      runs(card) ? card.copyWith(isDefault: true) : card,
+  ];
 }
 
 /// Bridge card of an instance served by its server's bridge: connected when
@@ -661,9 +713,10 @@ ConnectionCard _serverBridgeCard(
       if (row['name'] == spec.label) row,
   ];
   final endpoint = server.endpoint;
-  final registered =
-      endpoint != null &&
-      named.any((row) => _sameUrl(row['base_url'], endpoint));
+  final served = endpoint == null
+      ? null
+      : named.where((row) => _sameUrl(row['base_url'], endpoint)).firstOrNull;
+  final registered = served != null;
   final connected = server.supported && usable.isNotEmpty && registered;
   final outdated = server.supported && !server.signIn && usable.isEmpty;
   final needsPlugin =
@@ -700,6 +753,7 @@ ConnectionCard _serverBridgeCard(
     disconnectHint: removable ? '' : 'Nothing to disconnect yet.',
     advanced: true,
     bridgeSpec: spec,
+    providerKey: served?['id'] as String? ?? '',
     onServer: true,
     needsPlugin: needsPlugin,
   );

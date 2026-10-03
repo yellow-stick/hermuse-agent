@@ -18,9 +18,14 @@ import 'screens.dart';
 /// Goals: Tracking checklist + "Create a goal" categories + detail dialog
 /// with summary and dated activity timeline.
 class HermuseGoals extends StatefulComponent {
-  const HermuseGoals({required this.instance, super.key});
+  const HermuseGoals({
+    required this.instance,
+    required this.profile,
+    super.key,
+  });
 
   final HermesInstance instance;
+  final String profile;
 
   @override
   State<HermuseGoals> createState() => _HermuseGoalsState();
@@ -165,7 +170,10 @@ class _HermuseGoalsState extends State<HermuseGoals> {
     instance: component.instance,
     title: 'Goals',
     child: HermuseWatch(
-      provider: goalsProvider(component.instance.id),
+      provider: goalsProvider(
+        component.instance.id,
+        profile: component.profile,
+      ),
       builder: (context, goals) => _body(context, goals),
     ),
   );
@@ -209,6 +217,7 @@ class _HermuseGoalsState extends State<HermuseGoals> {
                 _TrackingRow(
                   key: ValueKey(goal.id),
                   instanceId: component.instance.id,
+                  profile: component.profile,
                   goal: goal,
                   onOpen: () => setState(() => _detailId = goal.id),
                   onLeaving: (leaving) => setState(
@@ -241,6 +250,7 @@ class _HermuseGoalsState extends State<HermuseGoals> {
           onClose: () => setState(() => _detailId = null),
           child: _GoalDetail(
             instanceId: component.instance.id,
+            profile: component.profile,
             goal: detail,
             onChanged: () => setState(() {}),
           ),
@@ -251,6 +261,7 @@ class _HermuseGoalsState extends State<HermuseGoals> {
           onClose: () => setState(() => _createCategory = null),
           child: _GoalCreate(
             instanceId: component.instance.id,
+            profile: component.profile,
             category: category,
             onCreated: () => setState(() => _createCategory = null),
           ),
@@ -278,6 +289,7 @@ class _HermuseGoalsState extends State<HermuseGoals> {
 class _TrackingRow extends StatefulComponent {
   const _TrackingRow({
     required this.instanceId,
+    required this.profile,
     required this.goal,
     required this.onOpen,
     required this.onLeaving,
@@ -285,6 +297,7 @@ class _TrackingRow extends StatefulComponent {
   });
 
   final String instanceId;
+  final String profile;
   final Goal goal;
   final VoidCallback onOpen;
   final ValueChanged<bool> onLeaving;
@@ -345,7 +358,12 @@ class _TrackingRowState extends State<_TrackingRow> {
     try {
       await Future.wait<void>([
         context.container
-            .read(goalsProvider(component.instanceId).notifier)
+            .read(
+              goalsProvider(
+                component.instanceId,
+                profile: component.profile,
+              ).notifier,
+            )
             .updateGoal(
               goalId: component.goal.id,
               note: 'Marked complete.',
@@ -378,11 +396,13 @@ class _TrackingRowState extends State<_TrackingRow> {
 class _GoalDetail extends StatefulComponent {
   const _GoalDetail({
     required this.instanceId,
+    required this.profile,
     required this.goal,
     required this.onChanged,
   });
 
   final String instanceId;
+  final String profile;
   final Goal goal;
   final VoidCallback onChanged;
 
@@ -451,10 +471,17 @@ class _GoalDetailState extends State<_GoalDetail> {
     });
     try {
       await context.container
-          .read(goalsProvider(component.instanceId).notifier)
+          .read(
+            goalsProvider(
+              component.instanceId,
+              profile: component.profile,
+            ).notifier,
+          )
           .updateGoal(goalId: component.goal.id, note: note);
-      if (mounted) setState(() => _note = '');
-      component.onChanged();
+      if (mounted) {
+        setState(() => _note = '');
+        component.onChanged();
+      }
     } on Object catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -466,11 +493,13 @@ class _GoalDetailState extends State<_GoalDetail> {
 class _GoalCreate extends StatefulComponent {
   const _GoalCreate({
     required this.instanceId,
+    required this.profile,
     required this.category,
     required this.onCreated,
   });
 
   final String instanceId;
+  final String profile;
   final String category;
   final VoidCallback onCreated;
 
@@ -535,7 +564,12 @@ class _GoalCreateState extends State<_GoalCreate> {
                 });
                 try {
                   await context.container
-                      .read(goalsProvider(component.instanceId).notifier)
+                      .read(
+                        goalsProvider(
+                          component.instanceId,
+                          profile: component.profile,
+                        ).notifier,
+                      )
                       .create(
                         title: _title.trim(),
                         category: component.category,

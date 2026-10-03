@@ -214,6 +214,34 @@ enum YsIcon {
     'l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594'
     'l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/>'
     '<path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>',
+  ),
+
+  /// A shell command the agent ran.
+  terminal(
+    '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m7 11 2-2-2-2"/>'
+    '<path d="M11 13h4"/>',
+  ),
+
+  /// A file the agent read or changed.
+  fileText(
+    '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>'
+    '<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/>'
+    '<path d="M16 17H8"/>',
+  ),
+
+  /// Code the agent executed.
+  code('<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>'),
+
+  /// Any other tool.
+  wrench(
+    '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 '
+    '0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94'
+    'l-3.76 3.76z"/>',
+  ),
+
+  /// Something that failed.
+  xCircle(
+    '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
   );
 
   const YsIcon(this.body);

@@ -459,5 +459,10 @@ String? keysymFor(String domKey, {bool controlOrMeta = false}) =>
 
 /// Computer client of [instanceId], on its authenticated REST client.
 @riverpod
-Future<ComputerClient> computerClient(Ref ref, String instanceId) async =>
-    ComputerClient(await ref.watch(restClientProvider(instanceId).future));
+Future<ComputerClient> computerClient(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) async => ComputerClient(
+  await ref.watch(restClientProvider(instanceId, profile: profile).future),
+);

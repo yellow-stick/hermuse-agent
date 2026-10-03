@@ -39,6 +39,7 @@ class _Ctx:
         self.cli = {}
         self.browser_providers = []
         self.hooks = {}
+        self.prompt_sections = {}
 
     def register_tool(self, name, toolset, schema, handler, **kwargs):
         self.tools[name] = {
@@ -57,6 +58,9 @@ class _Ctx:
 
     def register_hook(self, hook_name, callback):
         self.hooks.setdefault(hook_name, []).append(callback)
+
+    def register_system_prompt_section(self, id, content, **kwargs):
+        self.prompt_sections[id] = {"content": content, **kwargs}
 
 
 @pytest.fixture()
@@ -95,13 +99,53 @@ def test_registered_in_real_registry(registered):
             registry.deregister(name)
 
 
-def test_skill_registered(registered):
-    assert set(registered.skills) == {"hermuse"}
-    skill_md = registered.skills["hermuse"]["path"]
-    assert skill_md.name == "SKILL.md"
-    text = skill_md.read_text()
-    assert text.startswith("---\n")
-    assert "PREFERENCES.md" in text
+def test_registration_does_not_seed_feed_or_schedule_jobs(registered, hermes_home):
+    import store as plugin_store
+    from cron import jobs
+
+    assert plugin_store.list_feed(plugin_store.hermuse_root(hermes_home)) == []
+    with jobs.use_cron_store(hermes_home):
+        assert jobs.load_jobs() == []
+
+
+def test_feed_tool_uses_active_profile_at_invocation(registered, hermes_home):
+    import store as plugin_store
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    handler = registered.tools["feed_post"]["handler"]
+    profiles = [hermes_home / "profiles" / name for name in ("work", "personal")]
+    published = []
+    for profile in profiles:
+        token = set_hermes_home_override(profile)
+        try:
+            result = json.loads(handler({
+                "title": f"{profile.name} discovery",
+                "body": f"Research result for {profile.name}.",
+                "topic": "Research",
+                "sources": ["https://example.com/source"],
+            }))
+        finally:
+            reset_hermes_home_override(token)
+        assert result["ok"]
+        published.append(result)
+
+    for profile, result in zip(profiles, published):
+        root = plugin_store.hermuse_root(profile)
+        [post] = plugin_store.list_feed(root)
+        assert post["id"] == result["id"]
+        assert post["title"] == f"{profile.name} discovery"
+        assert post["sources"] == ["https://example.com/source"]
+        assert post["body"] in (root / "feed" / result["file"]).read_text()
+    assert plugin_store.list_feed(plugin_store.hermuse_root(hermes_home)) == []
+
+
+@pytest.mark.parametrize("args", [{"title": "Missing body"}, {"body": "Missing title"}])
+def test_invalid_feed_tool_call_does_not_publish(registered, hermes_home, args):
+    import store as plugin_store
+
+    result = json.loads(registered.tools["feed_post"]["handler"](args))
+    assert "error" in result
+    assert plugin_store.list_feed(plugin_store.hermuse_root(hermes_home)) == []
 
 
 def test_cli_registered_and_dispatches_status(registered, hermes_home, capsys):

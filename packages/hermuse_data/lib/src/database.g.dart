@@ -518,6 +518,18 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL REFERENCES instances(id)ON DELETE CASCADE',
   );
+  static const VerificationMeta _profileMeta = const VerificationMeta(
+    'profile',
+  );
+  late final GeneratedColumn<String> profile = GeneratedColumn<String>(
+    'profile',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'default\'',
+    defaultValue: const CustomExpression('\'default\''),
+  );
   static const VerificationMeta _sessionIdMeta = const VerificationMeta(
     'sessionId',
   );
@@ -587,6 +599,7 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
   @override
   List<GeneratedColumn> get $columns => [
     instanceId,
+    profile,
     sessionId,
     title,
     parentId,
@@ -613,6 +626,12 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
       );
     } else if (isInserting) {
       context.missing(_instanceIdMeta);
+    }
+    if (data.containsKey('profile')) {
+      context.handle(
+        _profileMeta,
+        profile.isAcceptableOrUnknown(data['profile']!, _profileMeta),
+      );
     }
     if (data.containsKey('session_id')) {
       context.handle(
@@ -658,7 +677,7 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
   }
 
   @override
-  Set<GeneratedColumn> get $primaryKey => {instanceId, sessionId};
+  Set<GeneratedColumn> get $primaryKey => {instanceId, profile, sessionId};
   @override
   SessionRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
@@ -666,6 +685,10 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
       instanceId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}instance_id'],
+      )!,
+      profile: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile'],
       )!,
       sessionId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -701,7 +724,7 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
 
   @override
   List<String> get customConstraints => const [
-    'PRIMARY KEY(instance_id, session_id)',
+    'PRIMARY KEY(instance_id, profile, session_id)',
   ];
   @override
   bool get dontWriteConstraints => true;
@@ -709,6 +732,7 @@ class Sessions extends Table with TableInfo<Sessions, SessionRow> {
 
 class SessionRow extends DataClass implements Insertable<SessionRow> {
   final String instanceId;
+  final String profile;
   final String sessionId;
   final String title;
 
@@ -726,6 +750,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
   final int? pinnedAt;
   const SessionRow({
     required this.instanceId,
+    required this.profile,
     required this.sessionId,
     required this.title,
     this.parentId,
@@ -737,6 +762,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['instance_id'] = Variable<String>(instanceId);
+    map['profile'] = Variable<String>(profile);
     map['session_id'] = Variable<String>(sessionId);
     map['title'] = Variable<String>(title);
     if (!nullToAbsent || parentId != null) {
@@ -753,6 +779,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
   SessionsCompanion toCompanion(bool nullToAbsent) {
     return SessionsCompanion(
       instanceId: Value(instanceId),
+      profile: Value(profile),
       sessionId: Value(sessionId),
       title: Value(title),
       parentId: parentId == null && nullToAbsent
@@ -773,6 +800,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return SessionRow(
       instanceId: serializer.fromJson<String>(json['instance_id']),
+      profile: serializer.fromJson<String>(json['profile']),
       sessionId: serializer.fromJson<String>(json['session_id']),
       title: serializer.fromJson<String>(json['title']),
       parentId: serializer.fromJson<String?>(json['parent_id']),
@@ -786,6 +814,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'instance_id': serializer.toJson<String>(instanceId),
+      'profile': serializer.toJson<String>(profile),
       'session_id': serializer.toJson<String>(sessionId),
       'title': serializer.toJson<String>(title),
       'parent_id': serializer.toJson<String?>(parentId),
@@ -797,6 +826,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
 
   SessionRow copyWith({
     String? instanceId,
+    String? profile,
     String? sessionId,
     String? title,
     Value<String?> parentId = const Value.absent(),
@@ -805,6 +835,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
     Value<int?> pinnedAt = const Value.absent(),
   }) => SessionRow(
     instanceId: instanceId ?? this.instanceId,
+    profile: profile ?? this.profile,
     sessionId: sessionId ?? this.sessionId,
     title: title ?? this.title,
     parentId: parentId.present ? parentId.value : this.parentId,
@@ -817,6 +848,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
       instanceId: data.instanceId.present
           ? data.instanceId.value
           : this.instanceId,
+      profile: data.profile.present ? data.profile.value : this.profile,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       title: data.title.present ? data.title.value : this.title,
       parentId: data.parentId.present ? data.parentId.value : this.parentId,
@@ -830,6 +862,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
   String toString() {
     return (StringBuffer('SessionRow(')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('title: $title, ')
           ..write('parentId: $parentId, ')
@@ -843,6 +876,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
   @override
   int get hashCode => Object.hash(
     instanceId,
+    profile,
     sessionId,
     title,
     parentId,
@@ -855,6 +889,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
       identical(this, other) ||
       (other is SessionRow &&
           other.instanceId == this.instanceId &&
+          other.profile == this.profile &&
           other.sessionId == this.sessionId &&
           other.title == this.title &&
           other.parentId == this.parentId &&
@@ -865,6 +900,7 @@ class SessionRow extends DataClass implements Insertable<SessionRow> {
 
 class SessionsCompanion extends UpdateCompanion<SessionRow> {
   final Value<String> instanceId;
+  final Value<String> profile;
   final Value<String> sessionId;
   final Value<String> title;
   final Value<String?> parentId;
@@ -874,6 +910,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
   final Value<int> rowid;
   const SessionsCompanion({
     this.instanceId = const Value.absent(),
+    this.profile = const Value.absent(),
     this.sessionId = const Value.absent(),
     this.title = const Value.absent(),
     this.parentId = const Value.absent(),
@@ -884,6 +921,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
   });
   SessionsCompanion.insert({
     required String instanceId,
+    this.profile = const Value.absent(),
     required String sessionId,
     this.title = const Value.absent(),
     this.parentId = const Value.absent(),
@@ -896,6 +934,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
        updatedAt = Value(updatedAt);
   static Insertable<SessionRow> custom({
     Expression<String>? instanceId,
+    Expression<String>? profile,
     Expression<String>? sessionId,
     Expression<String>? title,
     Expression<String>? parentId,
@@ -906,6 +945,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
   }) {
     return RawValuesInsertable({
       if (instanceId != null) 'instance_id': instanceId,
+      if (profile != null) 'profile': profile,
       if (sessionId != null) 'session_id': sessionId,
       if (title != null) 'title': title,
       if (parentId != null) 'parent_id': parentId,
@@ -918,6 +958,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
 
   SessionsCompanion copyWith({
     Value<String>? instanceId,
+    Value<String>? profile,
     Value<String>? sessionId,
     Value<String>? title,
     Value<String?>? parentId,
@@ -928,6 +969,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
   }) {
     return SessionsCompanion(
       instanceId: instanceId ?? this.instanceId,
+      profile: profile ?? this.profile,
       sessionId: sessionId ?? this.sessionId,
       title: title ?? this.title,
       parentId: parentId ?? this.parentId,
@@ -943,6 +985,9 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
     final map = <String, Expression>{};
     if (instanceId.present) {
       map['instance_id'] = Variable<String>(instanceId.value);
+    }
+    if (profile.present) {
+      map['profile'] = Variable<String>(profile.value);
     }
     if (sessionId.present) {
       map['session_id'] = Variable<String>(sessionId.value);
@@ -972,6 +1017,7 @@ class SessionsCompanion extends UpdateCompanion<SessionRow> {
   String toString() {
     return (StringBuffer('SessionsCompanion(')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('title: $title, ')
           ..write('parentId: $parentId, ')
@@ -999,6 +1045,18 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL',
+  );
+  static const VerificationMeta _profileMeta = const VerificationMeta(
+    'profile',
+  );
+  late final GeneratedColumn<String> profile = GeneratedColumn<String>(
+    'profile',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'default\'',
+    defaultValue: const CustomExpression('\'default\''),
   );
   static const VerificationMeta _sessionIdMeta = const VerificationMeta(
     'sessionId',
@@ -1056,6 +1114,7 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
   @override
   List<GeneratedColumn> get $columns => [
     instanceId,
+    profile,
     sessionId,
     messageId,
     author,
@@ -1081,6 +1140,12 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
       );
     } else if (isInserting) {
       context.missing(_instanceIdMeta);
+    }
+    if (data.containsKey('profile')) {
+      context.handle(
+        _profileMeta,
+        profile.isAcceptableOrUnknown(data['profile']!, _profileMeta),
+      );
     }
     if (data.containsKey('session_id')) {
       context.handle(
@@ -1126,7 +1191,12 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
   }
 
   @override
-  Set<GeneratedColumn> get $primaryKey => {instanceId, sessionId, messageId};
+  Set<GeneratedColumn> get $primaryKey => {
+    instanceId,
+    profile,
+    sessionId,
+    messageId,
+  };
   @override
   MessageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
@@ -1134,6 +1204,10 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
       instanceId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}instance_id'],
+      )!,
+      profile: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile'],
       )!,
       sessionId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -1165,8 +1239,8 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
 
   @override
   List<String> get customConstraints => const [
-    'PRIMARY KEY(instance_id, session_id, message_id)',
-    'FOREIGN KEY(instance_id, session_id)REFERENCES sessions(instance_id, session_id)ON DELETE CASCADE',
+    'PRIMARY KEY(instance_id, profile, session_id, message_id)',
+    'FOREIGN KEY(instance_id, profile, session_id)REFERENCES sessions(instance_id, profile, session_id)ON DELETE CASCADE',
   ];
   @override
   bool get dontWriteConstraints => true;
@@ -1174,6 +1248,7 @@ class Messages extends Table with TableInfo<Messages, MessageRow> {
 
 class MessageRow extends DataClass implements Insertable<MessageRow> {
   final String instanceId;
+  final String profile;
   final String sessionId;
   final String messageId;
   final String author;
@@ -1183,6 +1258,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   final int createdAt;
   const MessageRow({
     required this.instanceId,
+    required this.profile,
     required this.sessionId,
     required this.messageId,
     required this.author,
@@ -1193,6 +1269,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['instance_id'] = Variable<String>(instanceId);
+    map['profile'] = Variable<String>(profile);
     map['session_id'] = Variable<String>(sessionId);
     map['message_id'] = Variable<String>(messageId);
     map['author'] = Variable<String>(author);
@@ -1204,6 +1281,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   MessagesCompanion toCompanion(bool nullToAbsent) {
     return MessagesCompanion(
       instanceId: Value(instanceId),
+      profile: Value(profile),
       sessionId: Value(sessionId),
       messageId: Value(messageId),
       author: Value(author),
@@ -1219,6 +1297,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MessageRow(
       instanceId: serializer.fromJson<String>(json['instance_id']),
+      profile: serializer.fromJson<String>(json['profile']),
       sessionId: serializer.fromJson<String>(json['session_id']),
       messageId: serializer.fromJson<String>(json['message_id']),
       author: serializer.fromJson<String>(json['author']),
@@ -1231,6 +1310,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'instance_id': serializer.toJson<String>(instanceId),
+      'profile': serializer.toJson<String>(profile),
       'session_id': serializer.toJson<String>(sessionId),
       'message_id': serializer.toJson<String>(messageId),
       'author': serializer.toJson<String>(author),
@@ -1241,6 +1321,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
 
   MessageRow copyWith({
     String? instanceId,
+    String? profile,
     String? sessionId,
     String? messageId,
     String? author,
@@ -1248,6 +1329,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
     int? createdAt,
   }) => MessageRow(
     instanceId: instanceId ?? this.instanceId,
+    profile: profile ?? this.profile,
     sessionId: sessionId ?? this.sessionId,
     messageId: messageId ?? this.messageId,
     author: author ?? this.author,
@@ -1259,6 +1341,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
       instanceId: data.instanceId.present
           ? data.instanceId.value
           : this.instanceId,
+      profile: data.profile.present ? data.profile.value : this.profile,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       messageId: data.messageId.present ? data.messageId.value : this.messageId,
       author: data.author.present ? data.author.value : this.author,
@@ -1271,6 +1354,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   String toString() {
     return (StringBuffer('MessageRow(')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('messageId: $messageId, ')
           ..write('author: $author, ')
@@ -1283,6 +1367,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
   @override
   int get hashCode => Object.hash(
     instanceId,
+    profile,
     sessionId,
     messageId,
     author,
@@ -1294,6 +1379,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
       identical(this, other) ||
       (other is MessageRow &&
           other.instanceId == this.instanceId &&
+          other.profile == this.profile &&
           other.sessionId == this.sessionId &&
           other.messageId == this.messageId &&
           other.author == this.author &&
@@ -1303,6 +1389,7 @@ class MessageRow extends DataClass implements Insertable<MessageRow> {
 
 class MessagesCompanion extends UpdateCompanion<MessageRow> {
   final Value<String> instanceId;
+  final Value<String> profile;
   final Value<String> sessionId;
   final Value<String> messageId;
   final Value<String> author;
@@ -1311,6 +1398,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   final Value<int> rowid;
   const MessagesCompanion({
     this.instanceId = const Value.absent(),
+    this.profile = const Value.absent(),
     this.sessionId = const Value.absent(),
     this.messageId = const Value.absent(),
     this.author = const Value.absent(),
@@ -1320,6 +1408,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   });
   MessagesCompanion.insert({
     required String instanceId,
+    this.profile = const Value.absent(),
     required String sessionId,
     required String messageId,
     required String author,
@@ -1334,6 +1423,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
        createdAt = Value(createdAt);
   static Insertable<MessageRow> custom({
     Expression<String>? instanceId,
+    Expression<String>? profile,
     Expression<String>? sessionId,
     Expression<String>? messageId,
     Expression<String>? author,
@@ -1343,6 +1433,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   }) {
     return RawValuesInsertable({
       if (instanceId != null) 'instance_id': instanceId,
+      if (profile != null) 'profile': profile,
       if (sessionId != null) 'session_id': sessionId,
       if (messageId != null) 'message_id': messageId,
       if (author != null) 'author': author,
@@ -1354,6 +1445,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
 
   MessagesCompanion copyWith({
     Value<String>? instanceId,
+    Value<String>? profile,
     Value<String>? sessionId,
     Value<String>? messageId,
     Value<String>? author,
@@ -1363,6 +1455,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   }) {
     return MessagesCompanion(
       instanceId: instanceId ?? this.instanceId,
+      profile: profile ?? this.profile,
       sessionId: sessionId ?? this.sessionId,
       messageId: messageId ?? this.messageId,
       author: author ?? this.author,
@@ -1377,6 +1470,9 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
     final map = <String, Expression>{};
     if (instanceId.present) {
       map['instance_id'] = Variable<String>(instanceId.value);
+    }
+    if (profile.present) {
+      map['profile'] = Variable<String>(profile.value);
     }
     if (sessionId.present) {
       map['session_id'] = Variable<String>(sessionId.value);
@@ -1403,6 +1499,7 @@ class MessagesCompanion extends UpdateCompanion<MessageRow> {
   String toString() {
     return (StringBuffer('MessagesCompanion(')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('messageId: $messageId, ')
           ..write('author: $author, ')
@@ -1820,6 +1917,18 @@ class Activity extends Table with TableInfo<Activity, ActivityRow> {
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL REFERENCES instances(id)ON DELETE CASCADE',
   );
+  static const VerificationMeta _profileMeta = const VerificationMeta(
+    'profile',
+  );
+  late final GeneratedColumn<String> profile = GeneratedColumn<String>(
+    'profile',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT \'default\'',
+    defaultValue: const CustomExpression('\'default\''),
+  );
   static const VerificationMeta _sessionIdMeta = const VerificationMeta(
     'sessionId',
   );
@@ -1865,6 +1974,7 @@ class Activity extends Table with TableInfo<Activity, ActivityRow> {
   List<GeneratedColumn> get $columns => [
     id,
     instanceId,
+    profile,
     sessionId,
     tool,
     summary,
@@ -1892,6 +2002,12 @@ class Activity extends Table with TableInfo<Activity, ActivityRow> {
       );
     } else if (isInserting) {
       context.missing(_instanceIdMeta);
+    }
+    if (data.containsKey('profile')) {
+      context.handle(
+        _profileMeta,
+        profile.isAcceptableOrUnknown(data['profile']!, _profileMeta),
+      );
     }
     if (data.containsKey('session_id')) {
       context.handle(
@@ -1937,6 +2053,10 @@ class Activity extends Table with TableInfo<Activity, ActivityRow> {
         DriftSqlType.string,
         data['${effectivePrefix}instance_id'],
       )!,
+      profile: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}profile'],
+      )!,
       sessionId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}session_id'],
@@ -1968,6 +2088,7 @@ class Activity extends Table with TableInfo<Activity, ActivityRow> {
 class ActivityRow extends DataClass implements Insertable<ActivityRow> {
   final int id;
   final String instanceId;
+  final String profile;
 
   /// Session of the chat it ran in; '' for a chat not created yet.
   final String sessionId;
@@ -1979,6 +2100,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
   const ActivityRow({
     required this.id,
     required this.instanceId,
+    required this.profile,
     required this.sessionId,
     required this.tool,
     required this.summary,
@@ -1989,6 +2111,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
     map['instance_id'] = Variable<String>(instanceId);
+    map['profile'] = Variable<String>(profile);
     map['session_id'] = Variable<String>(sessionId);
     map['tool'] = Variable<String>(tool);
     map['summary'] = Variable<String>(summary);
@@ -2000,6 +2123,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
     return ActivityCompanion(
       id: Value(id),
       instanceId: Value(instanceId),
+      profile: Value(profile),
       sessionId: Value(sessionId),
       tool: Value(tool),
       summary: Value(summary),
@@ -2015,6 +2139,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
     return ActivityRow(
       id: serializer.fromJson<int>(json['id']),
       instanceId: serializer.fromJson<String>(json['instance_id']),
+      profile: serializer.fromJson<String>(json['profile']),
       sessionId: serializer.fromJson<String>(json['session_id']),
       tool: serializer.fromJson<String>(json['tool']),
       summary: serializer.fromJson<String>(json['summary']),
@@ -2027,6 +2152,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'instance_id': serializer.toJson<String>(instanceId),
+      'profile': serializer.toJson<String>(profile),
       'session_id': serializer.toJson<String>(sessionId),
       'tool': serializer.toJson<String>(tool),
       'summary': serializer.toJson<String>(summary),
@@ -2037,6 +2163,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
   ActivityRow copyWith({
     int? id,
     String? instanceId,
+    String? profile,
     String? sessionId,
     String? tool,
     String? summary,
@@ -2044,6 +2171,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
   }) => ActivityRow(
     id: id ?? this.id,
     instanceId: instanceId ?? this.instanceId,
+    profile: profile ?? this.profile,
     sessionId: sessionId ?? this.sessionId,
     tool: tool ?? this.tool,
     summary: summary ?? this.summary,
@@ -2055,6 +2183,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
       instanceId: data.instanceId.present
           ? data.instanceId.value
           : this.instanceId,
+      profile: data.profile.present ? data.profile.value : this.profile,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       tool: data.tool.present ? data.tool.value : this.tool,
       summary: data.summary.present ? data.summary.value : this.summary,
@@ -2067,6 +2196,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
     return (StringBuffer('ActivityRow(')
           ..write('id: $id, ')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('tool: $tool, ')
           ..write('summary: $summary, ')
@@ -2076,13 +2206,15 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
   }
 
   @override
-  int get hashCode => Object.hash(id, instanceId, sessionId, tool, summary, at);
+  int get hashCode =>
+      Object.hash(id, instanceId, profile, sessionId, tool, summary, at);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is ActivityRow &&
           other.id == this.id &&
           other.instanceId == this.instanceId &&
+          other.profile == this.profile &&
           other.sessionId == this.sessionId &&
           other.tool == this.tool &&
           other.summary == this.summary &&
@@ -2092,6 +2224,7 @@ class ActivityRow extends DataClass implements Insertable<ActivityRow> {
 class ActivityCompanion extends UpdateCompanion<ActivityRow> {
   final Value<int> id;
   final Value<String> instanceId;
+  final Value<String> profile;
   final Value<String> sessionId;
   final Value<String> tool;
   final Value<String> summary;
@@ -2099,6 +2232,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
   const ActivityCompanion({
     this.id = const Value.absent(),
     this.instanceId = const Value.absent(),
+    this.profile = const Value.absent(),
     this.sessionId = const Value.absent(),
     this.tool = const Value.absent(),
     this.summary = const Value.absent(),
@@ -2107,6 +2241,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
   ActivityCompanion.insert({
     this.id = const Value.absent(),
     required String instanceId,
+    this.profile = const Value.absent(),
     required String sessionId,
     required String tool,
     this.summary = const Value.absent(),
@@ -2118,6 +2253,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
   static Insertable<ActivityRow> custom({
     Expression<int>? id,
     Expression<String>? instanceId,
+    Expression<String>? profile,
     Expression<String>? sessionId,
     Expression<String>? tool,
     Expression<String>? summary,
@@ -2126,6 +2262,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (instanceId != null) 'instance_id': instanceId,
+      if (profile != null) 'profile': profile,
       if (sessionId != null) 'session_id': sessionId,
       if (tool != null) 'tool': tool,
       if (summary != null) 'summary': summary,
@@ -2136,6 +2273,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
   ActivityCompanion copyWith({
     Value<int>? id,
     Value<String>? instanceId,
+    Value<String>? profile,
     Value<String>? sessionId,
     Value<String>? tool,
     Value<String>? summary,
@@ -2144,6 +2282,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
     return ActivityCompanion(
       id: id ?? this.id,
       instanceId: instanceId ?? this.instanceId,
+      profile: profile ?? this.profile,
       sessionId: sessionId ?? this.sessionId,
       tool: tool ?? this.tool,
       summary: summary ?? this.summary,
@@ -2159,6 +2298,9 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
     }
     if (instanceId.present) {
       map['instance_id'] = Variable<String>(instanceId.value);
+    }
+    if (profile.present) {
+      map['profile'] = Variable<String>(profile.value);
     }
     if (sessionId.present) {
       map['session_id'] = Variable<String>(sessionId.value);
@@ -2180,6 +2322,7 @@ class ActivityCompanion extends UpdateCompanion<ActivityRow> {
     return (StringBuffer('ActivityCompanion(')
           ..write('id: $id, ')
           ..write('instanceId: $instanceId, ')
+          ..write('profile: $profile, ')
           ..write('sessionId: $sessionId, ')
           ..write('tool: $tool, ')
           ..write('summary: $summary, ')
@@ -2212,22 +2355,24 @@ abstract class _$HermuseDatabase extends GeneratedDatabase {
   late final Activity activity = Activity(this);
   late final Index activityByTime = Index(
     'activity_by_time',
-    'CREATE INDEX activity_by_time ON activity (instance_id, at)',
+    'CREATE INDEX activity_by_time ON activity (instance_id, profile, at)',
   );
   Selectable<SearchMessagesResult> searchMessages(
     String query,
     String instanceId,
+    String profile,
     List<String> sessionIds,
     int limit,
   ) {
-    var $arrayStartIndex = 4;
+    var $arrayStartIndex = 5;
     final expandedsessionIds = $expandVar($arrayStartIndex, sessionIds.length);
     $arrayStartIndex += sessionIds.length;
     return customSelect(
-      'SELECT"m"."instance_id" AS "nested_0.instance_id", "m"."session_id" AS "nested_0.session_id", "m"."message_id" AS "nested_0.message_id", "m"."author" AS "nested_0.author", "m"."body_text" AS "nested_0.body_text", "m"."created_at" AS "nested_0.created_at" FROM messages_fts AS f INNER JOIN messages AS m ON m."rowid" = f."rowid" WHERE messages_fts MATCH ?1 AND m.instance_id = ?2 AND m.session_id IN ($expandedsessionIds) ORDER BY rank LIMIT ?3',
+      'SELECT"m"."instance_id" AS "nested_0.instance_id", "m"."profile" AS "nested_0.profile", "m"."session_id" AS "nested_0.session_id", "m"."message_id" AS "nested_0.message_id", "m"."author" AS "nested_0.author", "m"."body_text" AS "nested_0.body_text", "m"."created_at" AS "nested_0.created_at" FROM messages_fts AS f INNER JOIN messages AS m ON m."rowid" = f."rowid" WHERE messages_fts MATCH ?1 AND m.instance_id = ?2 AND m.profile = ?3 AND m.session_id IN ($expandedsessionIds) ORDER BY rank LIMIT ?4',
       variables: [
         Variable<String>(query),
         Variable<String>(instanceId),
+        Variable<String>(profile),
         Variable<int>(limit),
         for (var $ in sessionIds) Variable<String>($),
       ],
@@ -2748,6 +2893,7 @@ typedef $InstancesProcessedTableManager =
     >;
 typedef $SessionsCreateCompanionBuilder = SessionsCompanion Function({
   required String instanceId,
+  Value<String> profile,
   required String sessionId,
   Value<String> title,
   Value<String?> parentId,
@@ -2758,6 +2904,7 @@ typedef $SessionsCreateCompanionBuilder = SessionsCompanion Function({
 });
 typedef $SessionsUpdateCompanionBuilder = SessionsCompanion Function({
   Value<String> instanceId,
+  Value<String> profile,
   Value<String> sessionId,
   Value<String> title,
   Value<String?> parentId,
@@ -2797,6 +2944,11 @@ class $SessionsFilterComposer extends Composer<_$HermuseDatabase, Sessions> {
     super.$addJoinBuilderToRootComposer,
     super.$removeJoinBuilderFromRootComposer,
   });
+  ColumnFilters<String> get profile => $composableBuilder(
+    column: $table.profile,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<String> get sessionId => $composableBuilder(
     column: $table.sessionId,
     builder: (column) => ColumnFilters(column),
@@ -2859,6 +3011,11 @@ class $SessionsOrderingComposer extends Composer<_$HermuseDatabase, Sessions> {
     super.$addJoinBuilderToRootComposer,
     super.$removeJoinBuilderFromRootComposer,
   });
+  ColumnOrderings<String> get profile => $composableBuilder(
+    column: $table.profile,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sessionId => $composableBuilder(
     column: $table.sessionId,
     builder: (column) => ColumnOrderings(column),
@@ -2922,6 +3079,9 @@ class $SessionsAnnotationComposer
     super.$addJoinBuilderToRootComposer,
     super.$removeJoinBuilderFromRootComposer,
   });
+  GeneratedColumn<String> get profile =>
+      $composableBuilder(column: $table.profile, builder: (column) => column);
+
   GeneratedColumn<String> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
 
@@ -2993,6 +3153,7 @@ class $SessionsTableManager
           updateCompanionCallback:
               ({
                 Value<String> instanceId = const Value.absent(),
+                Value<String> profile = const Value.absent(),
                 Value<String> sessionId = const Value.absent(),
                 Value<String> title = const Value.absent(),
                 Value<String?> parentId = const Value.absent(),
@@ -3002,6 +3163,7 @@ class $SessionsTableManager
                 Value<int> rowid = const Value.absent(),
               }) => SessionsCompanion(
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 title: title,
                 parentId: parentId,
@@ -3013,6 +3175,7 @@ class $SessionsTableManager
           createCompanionCallback:
               ({
                 required String instanceId,
+                Value<String> profile = const Value.absent(),
                 required String sessionId,
                 Value<String> title = const Value.absent(),
                 Value<String?> parentId = const Value.absent(),
@@ -3022,6 +3185,7 @@ class $SessionsTableManager
                 Value<int> rowid = const Value.absent(),
               }) => SessionsCompanion.insert(
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 title: title,
                 parentId: parentId,
@@ -3098,6 +3262,7 @@ typedef $SessionsProcessedTableManager =
     >;
 typedef $MessagesCreateCompanionBuilder = MessagesCompanion Function({
   required String instanceId,
+  Value<String> profile,
   required String sessionId,
   required String messageId,
   required String author,
@@ -3107,6 +3272,7 @@ typedef $MessagesCreateCompanionBuilder = MessagesCompanion Function({
 });
 typedef $MessagesUpdateCompanionBuilder = MessagesCompanion Function({
   Value<String> instanceId,
+  Value<String> profile,
   Value<String> sessionId,
   Value<String> messageId,
   Value<String> author,
@@ -3125,6 +3291,11 @@ class $MessagesFilterComposer extends Composer<_$HermuseDatabase, Messages> {
   });
   ColumnFilters<String> get instanceId => $composableBuilder(
     column: $table.instanceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get profile => $composableBuilder(
+    column: $table.profile,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3167,6 +3338,11 @@ class $MessagesOrderingComposer extends Composer<_$HermuseDatabase, Messages> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get profile => $composableBuilder(
+    column: $table.profile,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sessionId => $composableBuilder(
     column: $table.sessionId,
     builder: (column) => ColumnOrderings(column),
@@ -3206,6 +3382,9 @@ class $MessagesAnnotationComposer
     column: $table.instanceId,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get profile =>
+      $composableBuilder(column: $table.profile, builder: (column) => column);
 
   GeneratedColumn<String> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
@@ -3252,6 +3431,7 @@ class $MessagesTableManager
           updateCompanionCallback:
               ({
                 Value<String> instanceId = const Value.absent(),
+                Value<String> profile = const Value.absent(),
                 Value<String> sessionId = const Value.absent(),
                 Value<String> messageId = const Value.absent(),
                 Value<String> author = const Value.absent(),
@@ -3260,6 +3440,7 @@ class $MessagesTableManager
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion(
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 messageId: messageId,
                 author: author,
@@ -3270,6 +3451,7 @@ class $MessagesTableManager
           createCompanionCallback:
               ({
                 required String instanceId,
+                Value<String> profile = const Value.absent(),
                 required String sessionId,
                 required String messageId,
                 required String author,
@@ -3278,6 +3460,7 @@ class $MessagesTableManager
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion.insert(
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 messageId: messageId,
                 author: author,
@@ -3571,6 +3754,7 @@ typedef $SettingsProcessedTableManager =
 typedef $ActivityCreateCompanionBuilder = ActivityCompanion Function({
   Value<int> id,
   required String instanceId,
+  Value<String> profile,
   required String sessionId,
   required String tool,
   Value<String> summary,
@@ -3579,6 +3763,7 @@ typedef $ActivityCreateCompanionBuilder = ActivityCompanion Function({
 typedef $ActivityUpdateCompanionBuilder = ActivityCompanion Function({
   Value<int> id,
   Value<String> instanceId,
+  Value<String> profile,
   Value<String> sessionId,
   Value<String> tool,
   Value<String> summary,
@@ -3617,6 +3802,11 @@ class $ActivityFilterComposer extends Composer<_$HermuseDatabase, Activity> {
   });
   ColumnFilters<int> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get profile => $composableBuilder(
+    column: $table.profile,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3677,6 +3867,11 @@ class $ActivityOrderingComposer extends Composer<_$HermuseDatabase, Activity> {
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get profile => $composableBuilder(
+    column: $table.profile,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sessionId => $composableBuilder(
     column: $table.sessionId,
     builder: (column) => ColumnOrderings(column),
@@ -3732,6 +3927,9 @@ class $ActivityAnnotationComposer
   });
   GeneratedColumn<int> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get profile =>
+      $composableBuilder(column: $table.profile, builder: (column) => column);
 
   GeneratedColumn<String> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
@@ -3799,6 +3997,7 @@ class $ActivityTableManager
               ({
                 Value<int> id = const Value.absent(),
                 Value<String> instanceId = const Value.absent(),
+                Value<String> profile = const Value.absent(),
                 Value<String> sessionId = const Value.absent(),
                 Value<String> tool = const Value.absent(),
                 Value<String> summary = const Value.absent(),
@@ -3806,6 +4005,7 @@ class $ActivityTableManager
               }) => ActivityCompanion(
                 id: id,
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 tool: tool,
                 summary: summary,
@@ -3815,6 +4015,7 @@ class $ActivityTableManager
               ({
                 Value<int> id = const Value.absent(),
                 required String instanceId,
+                Value<String> profile = const Value.absent(),
                 required String sessionId,
                 required String tool,
                 Value<String> summary = const Value.absent(),
@@ -3822,6 +4023,7 @@ class $ActivityTableManager
               }) => ActivityCompanion.insert(
                 id: id,
                 instanceId: instanceId,
+                profile: profile,
                 sessionId: sessionId,
                 tool: tool,
                 summary: summary,

@@ -5,9 +5,10 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
-import 'brand.dart';
+import 'agents.dart';
 import 'scope.dart';
 import 'screens.dart';
+import 'tool_icon.dart';
 
 /// Profile panel (360 wide): avatar, name, status, tabs, and the selected
 /// tab: activity, approvals, automations or connectors.
@@ -15,6 +16,10 @@ class HermusePanel extends StatelessComponent {
   const HermusePanel({
     required this.agentName,
     required this.instanceId,
+    required this.profile,
+    required this.avatarId,
+    required this.chat,
+    this.onEditAgent,
     required this.threadIds,
     required this.approvals,
     required this.tab,
@@ -28,6 +33,10 @@ class HermusePanel extends StatelessComponent {
 
   final String agentName;
   final String instanceId;
+  final String profile;
+  final String avatarId;
+  final ChatState chat;
+  final VoidCallback? onEditAgent;
 
   /// The current chat's threads: activity of these opens its chat.
   final Set<String> threadIds;
@@ -60,12 +69,13 @@ class HermusePanel extends StatelessComponent {
         ),
       ]),
       div(classes: 'hermuse-panel-avatar', [
-        YsAvatar(
-          src: hermuseAvatarUrl,
+        HermuseAgentAvatar(
+          profile: profile,
+          avatarId: avatarId,
+          chat: chat,
           alt: '$agentName avatar',
           size: 100,
-          onEdit: () {},
-          editLabel: 'Edit avatar',
+          onEdit: onEditAgent,
         ),
       ]),
       h1(classes: 'hermuse-panel-name', [.text(agentName)]),
@@ -95,13 +105,14 @@ class HermusePanel extends StatelessComponent {
       ]),
       switch (tab) {
         PanelTab.activity => HermuseWatch(
-          provider: activityProvider(instanceId),
+          provider: activityProvider(instanceId, profile: profile),
           builder: (context, activity) => _activity(activity.value ?? []),
         ),
         PanelTab.approvals => _approvals(),
         PanelTab.automations => _AutomationsTab(
-          key: ValueKey(instanceId),
+          key: ValueKey('$instanceId:$profile'),
           instanceId: instanceId,
+          profile: profile,
         ),
         PanelTab.connectors => const _PanelEmpty(PanelTab.connectors),
       },
@@ -121,17 +132,19 @@ class HermusePanel extends StatelessComponent {
   Component _activityRow(ActivityItem item) {
     final content = [
       div(classes: 'hermuse-activity-icon', [
-        YsIconView(
-          item.kind == ActivityKind.webSearch
-              ? YsIcon.webSearch
-              : YsIcon.checkCircle,
-          size: 18,
-        ),
+        YsIconView(toolIcon(item.kind), size: 18),
       ]),
       div(classes: 'hermuse-activity-body', [
         p(classes: 'hermuse-activity-title', [.text(item.title)]),
         if (item.summary.isNotEmpty)
-          p(classes: 'hermuse-activity-desc', [.text(item.summary)]),
+          p(
+            classes:
+                item.kind == ToolKind.terminal || item.kind == ToolKind.code
+                ? 'hermuse-activity-desc hermuse-activity-clamp '
+                      'hermuse-activity-mono'
+                : 'hermuse-activity-desc hermuse-activity-clamp',
+            [.text(item.summary)],
+          ),
         p(classes: 'hermuse-activity-time', [.text(formatChatTime(item.at))]),
       ]),
     ];
@@ -277,6 +290,20 @@ class HermusePanel extends StatelessComponent {
         lineHeight: 18.px,
         color: .variable('--content-muted'),
       ),
+      css('.hermuse-activity-clamp').styles(
+        overflow: .hidden,
+        raw: {
+          'display': '-webkit-box',
+          '-webkit-line-clamp': '2',
+          '-webkit-box-orient': 'vertical',
+          'overflow-wrap': 'anywhere',
+        },
+      ),
+      css('.hermuse-activity-mono').styles(
+        fontSize: YsType.code.size.px,
+        lineHeight: YsType.code.lineHeight.px,
+        raw: {'font-family': YsType.monoFamily},
+      ),
       css('.hermuse-activity-time').styles(
         margin: .zero,
         fontSize: 12.px,
@@ -320,22 +347,6 @@ class HermusePanel extends StatelessComponent {
       ),
       css('.hermuse-automation .hermuse-activity-body')
           .styles(raw: {'flex': '1', 'min-width': '0'}),
-      css('.hermuse-automation-name').styles(
-        display: .flex,
-        flexDirection: .row,
-        alignItems: .center,
-        gap: .all(YsSpace.xs.px),
-      ),
-      css('.hermuse-automation-tag').styles(
-        padding: .symmetric(horizontal: 6.px),
-        radius: .circular(YsRadius.pill.px),
-        fontSize: 11.px,
-        lineHeight: 16.px,
-        fontWeight: .w500,
-        color: .variable('--content-muted'),
-        backgroundColor: .variable('--neutral-ambient'),
-        raw: {'flex-shrink': '0'},
-      ),
       css('.hermuse-automation-failed').styles(color: .variable('--error')),
       css('.hermuse-automation-actions').styles(
         display: .flex,
@@ -405,9 +416,14 @@ class _PanelEmpty extends StatelessComponent {
 /// Hermes' cron jobs of [instanceId], reloaded whenever the tab opens, with
 /// pause/resume, run now and delete (after a confirmation).
 class _AutomationsTab extends StatefulComponent {
-  const _AutomationsTab({required this.instanceId, super.key});
+  const _AutomationsTab({
+    required this.instanceId,
+    required this.profile,
+    super.key,
+  });
 
   final String instanceId;
+  final String profile;
 
   @override
   State<_AutomationsTab> createState() => _AutomationsTabState();
@@ -420,18 +436,28 @@ class _AutomationsTabState extends State<_AutomationsTab> {
   void initState() {
     super.initState();
     // Fresh on every opening: jobs run and change on the server meanwhile.
-    context.container.invalidate(automationsProvider(component.instanceId));
+    context.container.invalidate(
+      automationsProvider(component.instanceId, profile: component.profile),
+    );
   }
 
   void _perform(Automation automation, AutomationAction action) {
     context.container
-        .read(automationsProvider(component.instanceId).notifier)
+        .read(
+          automationsProvider(
+            component.instanceId,
+            profile: component.profile,
+          ).notifier,
+        )
         .perform(automation, action);
   }
 
   @override
   Component build(BuildContext context) => HermuseWatch(
-    provider: automationsProvider(component.instanceId),
+    provider: automationsProvider(
+      component.instanceId,
+      profile: component.profile,
+    ),
     builder: (context, async) {
       final board = async.value;
       if (board == null) {
@@ -444,7 +470,10 @@ class _AutomationsTabState extends State<_AutomationsTab> {
               YsButton.neutral(
                 label: 'Retry',
                 onPressed: () => context.container.invalidate(
-                  automationsProvider(component.instanceId),
+                  automationsProvider(
+                    component.instanceId,
+                    profile: component.profile,
+                  ),
                 ),
               ),
             ]),
@@ -515,11 +544,7 @@ class _AutomationsTabState extends State<_AutomationsTab> {
         YsIconView(YsIcon.upcoming, size: 18),
       ]),
       div(classes: 'hermuse-activity-body', [
-        p(classes: 'hermuse-activity-title hermuse-automation-name', [
-          span([.text(automation.name)]),
-          if (automation.owner == AutomationOwner.hermuse)
-            span(classes: 'hermuse-automation-tag', [.text('Hermuse')]),
-        ]),
+        p(classes: 'hermuse-activity-title', [.text(automation.name)]),
         p(classes: 'hermuse-activity-desc', [.text(automation.schedule)]),
         p(classes: 'hermuse-activity-time', [
           .text(switch (busy) {
