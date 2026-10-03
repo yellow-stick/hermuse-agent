@@ -17,6 +17,7 @@ final class YsMenuItem {
     this.icon,
     this.checked,
     this.destructive = false,
+    this.enabled = true,
   });
 
   final String label;
@@ -28,6 +29,9 @@ final class YsMenuItem {
 
   /// Destructive action (Delete): drawn in the error colour.
   final bool destructive;
+
+  /// False for an informational entry (an exact date): muted, not pickable.
+  final bool enabled;
 }
 
 /// Opens and closes the menu of a [YsMenuAnchor].
@@ -319,7 +323,11 @@ final class _MenuItemRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    final color = item.destructive ? palette.errorColor : palette.contentColor;
+    final color = !item.enabled
+        ? palette.contentMutedColor
+        : item.destructive
+        ? palette.errorColor
+        : palette.contentColor;
     final icon = item.icon;
     final checked = item.checked;
     return Semantics(
@@ -328,10 +336,10 @@ final class _MenuItemRow extends StatelessWidget {
           ? SemanticsRole.menuItem
           : SemanticsRole.menuItemCheckbox,
       button: true,
-      enabled: true,
+      enabled: item.enabled,
       checked: checked,
       child: YsPressable(
-        onPressed: onPicked,
+        onPressed: item.enabled ? onPicked : null,
         focusNode: focusNode,
         excludeSemantics: true,
         builder: (context, state) => AnimatedContainer(

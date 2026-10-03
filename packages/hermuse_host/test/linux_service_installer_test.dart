@@ -91,6 +91,32 @@ ${_frames([
     );
   });
 
+  test('inspection reports a canonical service whose scheduler needs repair', () async {
+    for (final ready in [false, true, null]) {
+      final binary = await helper('''[ "\$1" = inspect ] || exit 98
+read request
+${_frames([
+        {'event': 'inspection', 'canonicalPresent': true, 'authRequired': false, 'schedulerReady': ready, 'legacyPresent': false, 'legacy': null},
+        done,
+      ])}''');
+      final service = LinuxServiceInstaller(
+        helper: () async => binary,
+        startProcess: (executable, arguments, environment) {
+          expect(executable, binary.path);
+          return Process.start(
+            executable,
+            arguments,
+            environment: environment,
+            includeParentEnvironment: false,
+          );
+        },
+      );
+      final inspection = await service.inspect();
+      expect(inspection.canonicalPresent, isTrue);
+      expect(inspection.schedulerReady, ready);
+    }
+  });
+
   test('failed connection never invokes installation as a fallback', () async {
     var invocations = 0;
     final binary = await helper('''[ "\$1" = connect ] || exit 98

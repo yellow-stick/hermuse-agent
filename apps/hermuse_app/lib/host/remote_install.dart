@@ -995,6 +995,7 @@ final class _RemoteInstallScreenState extends State<RemoteInstallScreen> {
   RemoteInstallStep.plugin => (YsIcon.puzzle, 'Hermuse plugin and jobs'),
   RemoteInstallStep.computer => (YsIcon.monitor, 'Docker and agent’s computer'),
   RemoteInstallStep.dashboard => (YsIcon.keyRound, 'Dashboard account'),
+  RemoteInstallStep.scheduler => (YsIcon.upcoming, 'Scheduler'),
   RemoteInstallStep.web => (YsIcon.globe, 'Web app'),
   RemoteInstallStep.https => (YsIcon.lock, 'Caddy and public HTTPS'),
   RemoteInstallStep.verify => (YsIcon.check, 'Final readiness checks'),

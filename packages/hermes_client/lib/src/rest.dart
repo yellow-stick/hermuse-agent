@@ -191,6 +191,9 @@ final class HermesRestClient {
   Future<Map<String, Object?>> putJson(String path, Object? body) =>
       _send('PUT', path, body: body);
 
+  Future<Map<String, Object?>> patchJson(String path, Object? body) =>
+      _send('PATCH', path, body: body);
+
   Future<Map<String, Object?>> delete(String path) => _send('DELETE', path);
 
   /// `DELETE` with a JSON body (`DELETE /api/env` takes `{key, profile?}`).

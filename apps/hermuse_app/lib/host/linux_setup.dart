@@ -223,16 +223,35 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
     // An unavailable status probe must not be mistaken for an ungated service.
     // The login screen probes again without privileged service mutation.
     final dashboardLogin = existingLocal && inspection.authRequired != false;
+    // A broken scheduler (the gateway unit) is reviewed first: the user
+    // may repair it before signing in or authorizing access.
+    final needsRepair = existingLocal && inspection.schedulerReady == false;
     state = state.copyWith(
       purpose: dashboardLogin
           ? LinuxSetupPurpose.dashboardLogin
           : existingLocal
           ? LinuxSetupPurpose.connect
           : LinuxSetupPurpose.provision,
-      phase: dashboardLogin
+      phase: dashboardLogin && !needsRepair
           ? const SetupDashboardLogin()
           : SetupReview(inspection),
     );
+  }
+
+  /// Repairs the reviewed canonical service with the idempotent installer
+  /// (it reinstalls and restarts the scheduler unit).
+  Future<void> repairScheduler() {
+    if (state.phase is! SetupReview) return Future.value();
+    state = state.copyWith(purpose: LinuxSetupPurpose.provision);
+    return authorize();
+  }
+
+  /// Leaves the scheduler as it is and goes on to the dashboard login.
+  void skipSchedulerRepair() {
+    if (state.phase is SetupReview &&
+        state.purpose == LinuxSetupPurpose.dashboardLogin) {
+      _show(const SetupDashboardLogin());
+    }
   }
 
   Future<bool> _keyring() async {
@@ -268,7 +287,12 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       if (!_stopped()) await _run(state.goal ?? LinuxSetupGoal.reopen);
       return;
     }
-    if (phase is! SetupReview) return;
+    // A gated service under scheduler review is never installed over by a
+    // plain authorize: only [repairScheduler] or the dashboard login go on.
+    if (phase is! SetupReview ||
+        state.purpose == LinuxSetupPurpose.dashboardLogin) {
+      return;
+    }
     _show(const SetupInstalling());
     var completed = false;
     final progress = state.purpose == LinuxSetupPurpose.connect

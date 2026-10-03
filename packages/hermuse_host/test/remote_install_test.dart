@@ -636,6 +636,7 @@ void main() {
         RemoteInstallStep.hermes,
         RemoteInstallStep.plugin,
         RemoteInstallStep.computer,
+        RemoteInstallStep.scheduler,
         RemoteInstallStep.https,
       ]);
       expect(
@@ -657,6 +658,7 @@ void main() {
       expect(server.packageInstalls, 0);
       expect(server.hermesStarted, isFalse);
       expect(server.writes, isEmpty);
+      expect(server.schedulerConfigurations, 0);
       expect(server.computerStarted, isFalse);
       expect(server.computerPrepared, isFalse);
       expect(server.firewallCommitted, isFalse);
@@ -680,6 +682,81 @@ void main() {
             .map((event) => event.step),
         found,
       );
+    });
+
+    test(
+      'a missing scheduler on a healthy server is reported and repaired alone',
+      () async {
+        final server = _Server()..seedHealthy();
+        server.health[RemoteInstallStep.scheduler] = false;
+        final events = await server.install(server.installer()).toList();
+        expect(
+          events
+              .whereType<RemoteInstallStepFinished>()
+              .where((event) => event.previouslyCompleted)
+              .map((event) => event.step),
+          isNot(contains(RemoteInstallStep.scheduler)),
+        );
+        expect(
+          events.whereType<RemoteInstallStepStarted>().map(
+            (event) => event.step,
+          ),
+          [
+            RemoteInstallStep.connect,
+            RemoteInstallStep.preflight,
+            RemoteInstallStep.dashboard,
+            RemoteInstallStep.scheduler,
+            RemoteInstallStep.verify,
+          ],
+        );
+        expect(server.schedulerConfigurations, 1);
+        expect(server.packageInstalls, 0);
+        expect(server.hermesStarted, isFalse);
+        expect(server.computerPrepared, isFalse);
+        expect(server.writes, isEmpty);
+        final configure = server.commands.indexWhere(
+          (command) =>
+              command.contains('systemctl restart hermuse-gateway.service'),
+        );
+        expect(
+          server.commands
+              .skip(configure + 1)
+              .any((command) => command.contains('ticker_heartbeat')),
+          isTrue,
+          reason: 'the repaired scheduler must be proven healthy',
+        );
+      },
+    );
+
+    test('a failed scheduler repair stops setup before verification', () async {
+      final server = _Server()
+        ..seedHealthy()
+        ..failedRepair = RemoteInstallStep.scheduler;
+      server.health[RemoteInstallStep.scheduler] = false;
+      final events = <RemoteInstallProgress>[];
+      await expectLater(
+        server.install(server.installer()).forEach(events.add),
+        throwsA(
+          isA<RemoteInstallFailed>().having(
+            (error) => error.step,
+            'step',
+            'scheduler',
+          ),
+        ),
+      );
+      expect(events.whereType<RemoteInstallCompleted>(), isEmpty);
+      expect(server.verified, isFalse);
+    });
+
+    test('a repaired plugin restarts an otherwise healthy scheduler', () async {
+      final server = _Server()..seedHealthy();
+      server.health[RemoteInstallStep.plugin] = false;
+      final events = await server.install(server.installer()).toList();
+      expect(
+        events.whereType<RemoteInstallStepStarted>().map((event) => event.step),
+        contains(RemoteInstallStep.scheduler),
+      );
+      expect(server.schedulerConfigurations, 1);
     });
 
     test(
@@ -913,6 +990,10 @@ void main() {
           .toList();
       expect(
         started.indexOf(RemoteInstallStep.web),
+        started.indexOf(RemoteInstallStep.scheduler) + 1,
+      );
+      expect(
+        started.indexOf(RemoteInstallStep.scheduler),
         started.indexOf(RemoteInstallStep.dashboard) + 1,
       );
       expect(
@@ -1452,6 +1533,7 @@ final class _Server implements RemoteShell {
   int manifestRequests = 0;
   int publicUrlChanges = 0;
   int publicAddressLookups = 0;
+  int schedulerConfigurations = 0;
   final loopbackToken = List.filled(64, 't').join();
   Map<String, Object?>? legacyInventory;
   int migrationCalls = 0;
@@ -1592,6 +1674,10 @@ final class _Server implements RemoteShell {
     if (command.contains('systemctl restart hermuse-dashboard.service')) {
       health[RemoteInstallStep.dashboard] = true;
     }
+    if (command.contains('systemctl restart hermuse-gateway.service')) {
+      schedulerConfigurations++;
+      health[RemoteInstallStep.scheduler] = true;
+    }
     if (command.contains('config set dashboard.public_url')) publicUrlChanges++;
     // The fake models the server boundary, not an alternative provisioning
     // implementation. Decisions, stage parsing and failure handling stay real.
@@ -1643,7 +1729,9 @@ final class _Server implements RemoteShell {
           'HERMUSE_HEALTH_V1:${prerequisitesReady ? 'ready' : 'repair'}',
         );
       }
-      final step = command.contains('hermuse_inventory_specs')
+      final step = command.contains('ticker_heartbeat')
+          ? RemoteInstallStep.scheduler
+          : command.contains('hermuse_inventory_specs')
           ? RemoteInstallStep.plugin
           : command.contains('webSocketDebuggerUrl')
           ? RemoteInstallStep.computer

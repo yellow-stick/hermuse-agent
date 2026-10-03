@@ -367,6 +367,7 @@ Future<int> runLinuxServiceHelper(
         }
       }
       bool? authRequired;
+      bool? schedulerReady;
       if (canonicalPresent) {
         final status = await shell.run(inspectDashboardAuthenticationScript);
         if (status.exitCode == 0) {
@@ -376,11 +377,20 @@ Future<int> runLinuxServiceHelper(
             _ => null,
           };
         }
+        final scheduler = await shell.run(schedulerServiceStatusScript);
+        if (scheduler.exitCode == 0) {
+          schedulerReady = switch (scheduler.stdout.trim()) {
+            'HERMUSE_HEALTH_V1:ready' => true,
+            'HERMUSE_HEALTH_V1:repair' => false,
+            _ => null,
+          };
+        }
       }
       emit({
         'event': 'inspection',
         'canonicalPresent': canonicalPresent,
         'authRequired': authRequired,
+        'schedulerReady': schedulerReady,
         'legacyPresent': legacyPresent,
         'legacy': legacy,
       });

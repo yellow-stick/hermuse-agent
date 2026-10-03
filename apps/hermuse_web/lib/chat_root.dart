@@ -241,6 +241,16 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
     });
   }
 
+  /// Try it (Ideas): opens the main chat and sends [text] there. An open
+  /// side-by-side chat shows it without leaving the route.
+  void _tryInChat(ChatController controller, String text) {
+    controller.openThread(controller.state.mainThread.id);
+    setState(() {
+      if (!(_split && _splitFits)) _destination = HermuseDestination.chat;
+    });
+    unawaited(controller.send(text));
+  }
+
   /// Opens [threadId]; the chats panel then closes unless "Keep chat panel
   /// visible" docks it (the compact drawer always closes).
   void _pickThread(
@@ -322,7 +332,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           [_route(context, instances, active)],
         ),
         if (_overlay == _Overlay.settings)
-          _loadingShell(child: HermuseSettings(onBack: _closeSettings)),
+          _loadingShell(
+            child: HermuseSettings(
+              onBack: _closeSettings,
+              instanceId: _shown?.instanceId,
+              profile: _shown?.profile ?? 'default',
+            ),
+          ),
       ]),
     ),
   );
@@ -612,7 +628,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
       HermuseDestination.ideas => HermuseIdeas(
         instance: instance,
         profile: controller.profile,
-        onStartInChat: (seed) => _discussSeed(controller, seed),
+        onStartInChat: (text) => _tryInChat(controller, text),
       ),
       HermuseDestination.goals => HermuseGoals(
         instance: instance,
@@ -794,6 +810,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
               setState(() => _panelOverride = false);
             }
           },
+          onStop: (threadId) => unawaited(controller.interrupt(threadId)),
           onOpenComputer: controller.openComputer,
         ),
       if (profileOpen)

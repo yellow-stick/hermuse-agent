@@ -242,6 +242,75 @@ enum YsIcon {
   /// Something that failed.
   xCircle(
     '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  ),
+
+  /// Heartbeat check-ins; the Identity cards' glyph; "Love" on a post.
+  heart(
+    '<path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 '
+    '1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-'
+    '3.2-3-5.5"/>',
+  ),
+
+  /// Idea theme: workouts, fitness.
+  dumbbell(
+    '<path d="M17.596 12.768a2 2 0 1 0 2.829-2.829l-1.768-1.767a2 2 0 0 0 '
+    '2.828-2.829l-2.828-2.828a2 2 0 0 0-2.829 2.828l-1.767-1.768a2 2 0 1 0-'
+    '2.829 2.829z"/><path d="m2.5 21.5 1.4-1.4"/><path d="m20.1 3.9 1.4-1.4"/>'
+    '<path d="M5.343 21.485a2 2 0 1 0 2.829-2.828l1.767 1.768a2 2 0 1 0 2.829-'
+    '2.829l-6.364-6.364a2 2 0 1 0-2.829 2.829l1.768 1.767a2 2 0 0 0-2.828 2.829z"/>'
+    '<path d="m9.6 14.4 4.8-4.8"/>',
+  ),
+
+  /// Idea theme: shopping.
+  shoppingBag(
+    '<path d="M16 10a4 4 0 0 1-8 0"/><path d="M3.103 6.034h17.794"/>'
+    '<path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 '
+    '2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z"/>',
+  ),
+
+  /// Idea theme: people, relationships.
+  users(
+    '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" '
+    'r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 '
+    '7.75"/>',
+  ),
+
+  /// Idea theme: the city, local life.
+  building(
+    '<rect width="16" height="20" x="4" y="2" rx="2" ry="2"/><path d="M9 22v-4h6v4"/>'
+    '<path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M12 6h.01"/>'
+    '<path d="M12 10h.01"/><path d="M12 14h.01"/><path d="M16 10h.01"/>'
+    '<path d="M16 14h.01"/><path d="M8 10h.01"/><path d="M8 14h.01"/>',
+  ),
+
+  /// Idea theme: returns, refunds.
+  undo('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+
+  /// Idea theme: the inbox, email.
+  inbox(
+    '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 '
+    '2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  ),
+
+  /// Idea theme: money, budgets.
+  wallet(
+    '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 '
+    '0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 '
+    '1 0 0 0 1-1v-4"/>',
+  ),
+
+  /// Idea theme: health.
+  heartPulse(
+    '<path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 '
+    '1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-'
+    '3.2-3-5.5"/><path d="M3.22 13H9.5l.5-1 2 4.5 2-7 1.5 3.5h5.27"/>',
+  ),
+
+  /// Idea theme: travel.
+  plane(
+    '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 '
+    '6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3'
+    'l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
   );
 
   const YsIcon(this.body);

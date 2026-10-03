@@ -1,10 +1,11 @@
 # Hermuse plugin for Hermes
 
-Product layer on top of Hermes Agent: **Feed, Ideas, Goals, Library**
-(artifacts + system files), **Reflections**, **proactive preferences**, and the
-agent's **computer** (a Docker browser + desktop the user can watch and take
-over from Hermuse). Data lives as human-readable Markdown + JSON under
-`HERMES_HOME/hermuse/` so the user can read and edit it with any tool.
+Product layer on top of Hermes Agent: **Feed, Ideas, Goals, Activity tasks,
+Library** (artifacts + system files), **Reflections**, **proactive
+preferences** and the **heartbeat**, plus the agent's **computer** (a Docker
+browser + desktop the user can watch and take over from Hermuse). Data lives
+as human-readable Markdown + JSON under `HERMES_HOME/hermuse/` so the user can
+read and edit it with any tool.
 
 Requires Hermes `>=0.21.5,<0.22` (see `requires_hermes` in `plugin.yaml`).
 
@@ -22,16 +23,20 @@ the dashboard before using multi-agent product data from the apps.
 hermes-plugin/hermuse/
 ├── plugin.yaml            # agent-plugin manifest (kind: standalone, provides_tools,
 │                          #   provides_hooks, provides_browser_providers)
-├── __init__.py            # register(ctx): 6 tools + skill + `hermes hermuse` CLI +
-│                          #   `hermuse` browser provider + computer hooks + restart of
-│                          #   a set-up subscription bridge + live mount of the
+├── __init__.py            # register(ctx): 6 tools + skill + system-prompt sections +
+│                          #   task recorder + `hermes hermuse` CLI + `hermuse`
+│                          #   browser provider + computer hooks + restart of a
+│                          #   set-up subscription bridge + live mount of the
 │                          #   dashboard routes (no restart after install)
-├── store.py               # stdlib-only file store (shared by tools + dashboard backend)
+├── store.py               # stdlib-only file store (shared by tools + dashboard backend),
+│                          #   incl. the starter Ideas catalog and memory-file access
+├── task_recorder.py       # Activity: pre/post_llm_call + on_session_end hooks, one task
+│                          #   per turn, summaries by the `hermuse_task_summary` aux task
 ├── subscription_bridge.py # pinned CLIProxyAPI next to Hermes (see "Subscription bridge")
 ├── dashboard_restart.py   # in-place restart of the dashboard (see "Restarting the dashboard")
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
-├── cron_specs.py          # feed/ideas/goals/reflection job specs + idempotent registration
+├── cron_specs.py          # feed/ideas/goals/reflection/heartbeat specs + idempotent registration
 ├── plugin_cli.py          # `hermes hermuse status|enable|disable|doctor|computer`
 ├── skills/hermuse/SKILL.md  # skill `hermuse:hermuse`: when to call each tool
 ├── computer/              # the agent's computer (see "The agent's computer")
@@ -111,8 +116,8 @@ cp -r hermes-plugin/hermuse ~/.hermes/plugins/hermuse
 hermes plugins enable hermuse
 
 # 3. Register the background jobs (daily feed, weekly ideas, weekly goals
-#    check-in, nightly reflection). Re-running only refreshes the specs; a
-#    paused job stays paused.
+#    check-in, nightly reflection, heartbeat every 30 minutes). Re-running
+#    only refreshes the specs; a paused job stays paused.
 hermes hermuse enable
 
 # 4. Set up the agent's computer (see "The agent's computer").
@@ -133,10 +138,10 @@ left untouched).
 
 | Tool | Params |
 | --- | --- |
-| `feed_post` | `title`, `body` (Markdown), `topic?`, `sources?[]` |
-| `idea_propose` | `title`, `pitch` (Markdown), `group`, `first_step?` |
-| `goal_track` | `title`, `category` (`health`\|`relationships`\|`finance`\|`career`\|`interests`\|`productivity`\|`something_else`), `why`, `target_date?` |
-| `goal_update` | `goal_id`, `note`, `progress?` |
+| `feed_post` | `title`, `body` (Markdown), `why` ("Why I created this"), `topic?`, `sources?[]`, `image_url?` (http(s)) |
+| `idea_propose` | `title`, `pitch` (Markdown), `group`, `first_step?`, `icon?` (`workout`\|`shopping`\|`people`\|`city`\|`documents`\|`returns`\|`inbox`\|`money`\|`health`\|`travel`) |
+| `goal_track` | `title`, `category` (`health`\|`relationships`\|`finance`\|`career`\|`interests`\|`productivity`\|`something_else`), `why`, `target_date?`, `source?` (`agent` default \| `user`), `parent_id?`, `cron_job_id?` |
+| `goal_update` | `goal_id`, `note?`, `progress?`, `status_line?` (at least one of `note` / `status_line`) |
 | `artifact_save` | `title`, `kind` (`document`\|`web`\|`image`\|`video`\|`podcast`\|`other`), exactly one of `content`/`path`, `filename?`, `tags?[]` |
 | `reflection_write` | `date` (`YYYY-MM-DD`), `body` (Markdown) |
 
@@ -144,13 +149,40 @@ Results are `{"ok": true, "id": …}` (or `{"date": …}`); failures are
 `{"error": …}`. The skill `hermuse:hermuse` tells the agent when to call each
 tool and to honour `PREFERENCES.md` before anything proactive.
 
-The plugin also registers conversational guidance in Hermes' system prompt:
+The plugin also registers two system-prompt sections. `hermuse.conversation`:
 publish worthwhile, grounded chat results with `feed_post` according to the
 profile's preferences; create requested reminders and recurring work through
 Hermes' built-in `cronjob_manage`; confirm success only after the tool succeeds.
 Jobs intended to publish to Feed must explicitly call `feed_post`, rather than
-only returning a chat response. Loading the plugin itself creates neither
+only returning a chat response. `hermuse_behaviour` (proactive agent): the
+user's main chat is the `Bot Chat` session; every reminder or later/recurring
+action, even a minute away, is a `cronjob_manage` `action="create"` job with
+`deliver="bot-chat"` (one-shot `in 2m` / ISO time, recurring `every day 8am` /
+cron) whose final response is the message to the user, never a wait or
+`sleep` inside the turn, confirmed with its fire time; the agent never asks
+which platform or channel to deliver to; scheduled briefs saying `Ask the
+user` are asked through `clarify` and not acted on; multi-day commitments and things to keep in
+mind are tracked with `goal_track source="agent"` (linked to the job through
+`cron_job_id`) and their `status_line` kept current; choices are offered with
+`clarify`; feed posts carry `why`. Loading the plugin itself creates neither
 posts nor schedules and never bypasses approval requirements.
+
+## Activity tasks
+
+`task_recorder.py` writes one task per user request or scheduled run to
+`tasks/index.json` (the 1000 newest are kept): `pre_llm_call` notes the start
+and the request, `post_llm_call` records the finished turn with the tools it
+called and a heuristic title (request's first line, or the job name for
+scheduled work) and summary (first sentence of the answer), then a background
+worker asks the auxiliary model for a 3-7 word imperative title and a one-line
+result (`ctx.llm.complete_structured`, auxiliary task `hermuse_task_summary`,
+configurable as `auxiliary.hermuse_task_summary`); without a model the
+heuristic stays. `on_session_end` marks `interrupted` / `failed` turns. Cron
+run sessions (`cron_<job>_<stamp>`) are `cron`, or `heartbeat` for the
+heartbeat job; a heartbeat run that answers `NO_REPLY` is not recorded. The
+run session is the task of a scheduled run, so the Bot Chat turn relaying its
+output (`[Cronjob "<name>" output — …`) is not recorded, and delegated
+subagent turns belong to their parent's task.
 
 ## REST reference (auth: Hermes' existing `/api/` gate)
 
@@ -162,17 +194,25 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | Method | Path | Body → Result |
 | --- | --- | --- |
 | `GET` | `/feed?limit=` | → `{"posts": […]}` (newest first) |
-| `POST` | `/feed` | `{title, body, topic?, sources?[]}` → post (`201`) |
+| `POST` | `/feed` | `{title, body, topic?, sources?[], why?, image_url?}` → post (`201`) |
+| `POST` | `/feed/generate` | marks the feed job due now (`cron.jobs.trigger_job`; the scheduler fires it on its next tick) → `{"job_id", "started": true}`; `409` feed job not registered |
 | `GET` | `/feed/{id}` | → post / `404` |
+| `DELETE` | `/feed/{id}` | → `{"ok": true}` / `404` (removes the `.md` too) |
 | `POST` | `/feed/{id}/react` | `{reaction: love\|discuss}` → post (toggles) |
-| `GET` | `/ideas?limit=` | → `{"ideas": […]}` |
-| `POST` | `/ideas` | `{title, pitch, group, first_step?}` → idea (`201`) |
-| `GET` | `/ideas/{id}` | → idea / `404` |
-| `POST` | `/ideas/{id}/feedback` | `{feedback}` → idea (appends) |
+| `GET` | `/ideas?limit=` | → `{"ideas": […]}`: agent ideas (newest first), then the starter catalog; dismissed ones hidden |
+| `POST` | `/ideas` | `{title, pitch, group, first_step?, icon?}` → idea (`201`) |
+| `GET` | `/ideas/{id}` | → idea (seeded ones too) / `404` |
+| `POST` | `/ideas/{id}/feedback` | `{feedback}` → idea (appends; agent ideas only) |
+| `POST` | `/ideas/{id}/dismiss` | → `{"ok": true}` / `404`: hides a seeded or agent idea (`ideas/dismissed.json`) |
 | `GET` | `/goals?limit=` | → `{"goals": […]}` |
-| `POST` | `/goals` | `{title, category, why, target_date?}` → goal (`201`) |
+| `POST` | `/goals` | `{title, category, why, target_date?, source? (user\|agent), parent_id?}` → goal (`201`); unknown parent `422` |
 | `GET` | `/goals/{id}` | → goal / `404` |
-| `POST` | `/goals/{id}/update` | `{note, progress?, status? (tracking\|done)}` → goal |
+| `PATCH` | `/goals/{id}` | `{title?, done?}` → goal (rename / complete / reopen) |
+| `DELETE` | `/goals/{id}` | → `{"ok": true}` / `404`; deletes its subgoals too |
+| `POST` | `/goals/{id}/update` | `{note, progress?, status? (tracking\|done), status_line?}` → goal |
+| `GET` | `/tasks?limit=1..1000&before=<iso>` | → `{"tasks": [task]}` newest first (`started_at` before `before`); bad timestamp `422` |
+| `GET` | `/memory/{memory\|user}` | → `{target, entries: [str], updated_at}` from `HERMES_HOME/memories/MEMORY.md` / `USER.md` |
+| `PUT` | `/memory/{memory\|user}` | `{entries: [str]}` → `{"ok": true}`; written under Hermes' `MemoryStore` lock, entries joined by `\n§\n`; an entry with a line holding only `§` → `422` |
 | `GET` | `/artifacts?limit=` | → `{"artifacts": […]}` |
 | `GET` | `/artifacts/{id}` | → artifact / `404` |
 | `GET` | `/artifacts/{id}/download` | → file bytes |
@@ -181,9 +221,9 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | `GET` / `PUT` | `/preferences` | raw `PREFERENCES.md` (`{name, content}` / `{content}`) |
 | `GET` | `/files` | → `{"files": ["FEED_PROMPT.md", …]}` |
 | `GET` / `PUT` | `/files/{name}` | allow-listed system file (`{name, content}` / `{content}`); anything else → `404` (traversal impossible: exact allow-list match, no path joining) |
-| `GET` | `/cron` | → `{"jobs": [{key, name, schedule, registered, job_id, enabled, next_run_at}]}` |
-| `POST` | `/cron/enable` | register/refresh the 4 jobs → `{"jobs": […]}` |
-| `POST` | `/cron/disable` | remove the 4 jobs → `{"removed": […]}` |
+| `GET` | `/cron` | → `{"jobs": [{key, name, schedule, hidden, registered, job_id, enabled, next_run_at}]}` (`hidden`: maintenance jobs the app keeps out of Upcoming) |
+| `POST` | `/cron/enable` | register/refresh the 5 jobs → `{"jobs": […]}` |
+| `POST` | `/cron/disable` | remove the 5 jobs → `{"removed": […]}` |
 | `GET` | `/computer/status` | → `{state, detail, control: agent\|human, mode: browser\|desktop}` |
 | `POST` | `/computer/setup` | configure Hermes + start the background bootstrap when Docker or the image is missing → `{state, detail}` |
 | `POST` | `/computer/start` / `/computer/stop` | → status shape; start failure → `409 {detail}` |
@@ -204,9 +244,10 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 
 Shapes:
 
-- post: `{id, title, topic, body, sources[], file, created_at, reactions: {love?: ts, discuss?: ts}}`
-- idea: `{id, title, pitch, group, first_step, file, created_at, feedback: [{at, text}]}` — click an idea to start the task in chat; `feedback` is the "Idea feedback" affordance.
-- goal: `{id, title, category, why, target_date, status, file, created_at, timeline: [{at, note, progress}]}` — `status` is `tracking` or `done` (the Tracking checkbox).
+- post: `{id, title, topic, body, sources[], why, image_url, file, created_at, reactions: {love?: ts, discuss?: ts}}`
+- idea: `{id, title, pitch, group, icon, seeded, first_step, file, created_at, feedback: [{at, text}]}` — seeded ideas (ids `seed-…`, static data shipped with the plugin) have `file` and `created_at` null; click an idea to start the task in chat; `feedback` is the "Idea feedback" affordance.
+- goal: `{id, title, category, why, target_date, status, done, source, status_line, parent_id, cron_job_id, file, created_at, timeline: [{at, note, progress}]}` — `status` is `tracking` or `done` (`done` mirrors it); records from before 0.5.0 read as `source: user`, `status_line` = latest timeline progress.
+- task: `{id, session_id, turn_id, title, summary, status: completed\|failed\|interrupted, source: chat\|cron\|heartbeat\|other, started_at, finished_at, tools: [str]}`
 - artifact: `{id, title, kind, file, size, tags[], created_at}`
 - reflection: `{date, file, written_at, body}`
 
@@ -222,8 +263,9 @@ hermuse/
 ├── HEARTBEAT.md              # recurring-check checklist (never results)
 ├── feed/<date>-<slug>-<id>.md   # front-matter + Markdown body
 ├── feed/index.json           # posts incl. reactions {love, discuss}
-├── ideas/<id>.md  +  index.json
+├── ideas/<id>.md  +  index.json  +  dismissed.json
 ├── goals/<id>.md  +  index.json  # .md carries the appended timeline too
+├── tasks/index.json          # Activity tasks (newest 1000)
 ├── artifacts/files/<id>/<file>  +  index.json
 ├── reflections/<date>.md  +  index.json
 ├── computer/                 # runtime.json, control.json, build.json + build.log,
@@ -239,21 +281,25 @@ Writes are atomic (temp file + fsync + rename); ids are 12-hex random.
 
 ## Cron jobs
 
-Four specs in `cron_specs.py`, authored through the real `cron.jobs` API
+Five specs in `cron_specs.py`, authored through the real `cron.jobs` API
 (same records the scheduler reads):
 
-| Key | Schedule | What |
-| --- | --- | --- |
-| `feed` | `0 8 * * *` | daily feed edition from `FEED_PROMPT.md` + web/news |
-| `ideas` | `0 9 * * 1` | weekly ideas refresh |
-| `goals` | `0 9 * * 0` | weekly goal check-ins + `HEARTBEAT.md` watches |
-| `reflection` | `0 2 * * *` | nightly reflection journal + memory pass |
+| Key | Schedule | Deliver | What |
+| --- | --- | --- | --- |
+| `feed` | `0 8 * * *` | `local` | daily feed edition from `FEED_PROMPT.md` + web/news |
+| `ideas` | `0 9 * * 1` | `local` | weekly ideas refresh |
+| `goals` | `0 9 * * 0` | `local` | weekly goal check-ins + `HEARTBEAT.md` watches |
+| `reflection` | `0 2 * * *` | `local` | nightly reflection journal + memory pass |
+| `heartbeat` | `*/30 * * * *` | `bot-chat` | reviews memory, user profile, goals, the checklist and upcoming jobs without acting; when something needs the user it hands the main chat a brief (`Ask the user: …` / `Offer these choices with clarify: A \| B \| C` / `Do not act before the user answers.`), which the main-chat agent asks through `clarify` and then waits; otherwise answers `NO_REPLY` |
 
-Jobs run the `hermuse:hermuse` skill, deliver `local` (surfaces render from
-the files), and are tagged `origin: {source: hermuse, key}` so registration
-is idempotent. Installing the plugin never starts background work on its own;
-registration is always an explicit `hermes hermuse enable` (or
-`POST /cron/enable`).
+Jobs run the `hermuse:hermuse` skill and are tagged
+`origin: {source: hermuse, key}` so registration is idempotent. The four
+maintenance jobs deliver `local` (surfaces render from the files) and are
+`hidden` in `GET /cron`; the heartbeat delivers `bot-chat`, Hermes' delivery
+into the profile's `Bot Chat` session (the app's main chat), which withholds a
+bare `NO_REPLY`. Jobs only fire where a scheduler ticks (`hermes gateway`).
+Installing the plugin never starts background work on its own; registration
+is always an explicit `hermes hermuse enable` (or `POST /cron/enable`).
 
 ## Restarting the dashboard
 
@@ -399,8 +445,14 @@ Covers store writes/round-trips, idempotent defaults that never clobber
 edits, REST routes + `files/` traversal rejection, the in-place dashboard
 restart (the launch command re-executed after the session teardown, one at a
 time, refused where it cannot run in place), real-backend cron
-registration idempotence, entry-point wiring (tools + skill + CLI + browser
-provider + hooks) and the live mount of the routes into a running dashboard,
+registration idempotence (heartbeat delivering `bot-chat`, maintenance jobs
+`hidden`), entry-point wiring (tools + skill + system-prompt sections + CLI +
+browser provider + hooks + auxiliary task) and the live mount of the routes
+into a running dashboard, Activity tasks (one per turn, tools of the turn,
+cron/heartbeat/chat sources, silent heartbeats skipped, model summary with
+heuristic fallback, interrupted/failed turns), memory files under Hermes'
+lock, goal patch/cascading delete and legacy records, feed `why`/delete/
+generate, the Ideas catalog merge and dismissals,
 and the computer: Take control lease, `pre_tool_call` gate and readiness
 guard, snapshots, Docker states against a scripted `docker` (incl. the
 `sg docker` wrapper), the bootstrap (Docker install through `sudo`, pull,

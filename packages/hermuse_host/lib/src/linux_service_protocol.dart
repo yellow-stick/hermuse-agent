@@ -287,6 +287,7 @@ String? _preflightRefusal(String detail) {
     'An unrelated plugin occupies the Hermuse plugin directory.': 'The plugin at /home/hermes/.hermes/plugins/hermuse is not owned by this installer and was left unchanged. Use Connect with a dashboard URL to connect to the existing instance without reinstalling it.',
     'The hermes user already exists and is not owned by this installer.': 'The existing hermes account is not owned by this installer. It was left unchanged; connect to its existing dashboard instead.',
     'An unrelated hermuse-dashboard.service exists; it will not be overwritten.': 'An unmanaged hermuse-dashboard.service already exists and was left unchanged. Connect to its existing dashboard instead.',
+    'An unrelated hermuse-gateway.service exists; it will not be overwritten.': 'An unmanaged hermuse-gateway.service already exists and was left unchanged. Remove or rename that scheduler service before setup.',
     '/home/hermes already exists; it will not be overwritten.': '/home/hermes already contains an unmanaged home. It was left unchanged; resolve that directory conflict before setup.',
     'At least 4 GB RAM is required.':
         'This installation requires at least 4 GB of RAM.',

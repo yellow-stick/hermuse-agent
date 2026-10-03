@@ -33,6 +33,30 @@ void main() {
     },
   );
 
+  test('side chats follow the main chat to its new session', () async {
+    await db.saveInstances([instance('a', 'A')]);
+    for (final (id, profile) in [('s1', 'default'), ('s2', 'aya')]) {
+      await db.upsertSession(
+        SessionRow(
+          instanceId: 'a',
+          profile: profile,
+          sessionId: id,
+          title: id,
+          parentId: 'old',
+          updatedAt: 1,
+          archived: false,
+        ),
+      );
+    }
+    await db.reparentSideChats('a', from: 'old', to: 'bot');
+    expect((await db.loadSideChats('a', 'bot')).single.sessionId, 's1');
+    expect(await db.loadSideChats('a', 'old'), isEmpty);
+    expect(
+      (await db.loadSideChats('a', 'old', profile: 'aya')).single.sessionId,
+      's2',
+    );
+  });
+
   Future<void> seedMessages() async {
     await db.saveInstances([instance('a', 'A')]);
     await db.upsertSession(
@@ -247,27 +271,14 @@ void main() {
           'side',
         );
         expect(await legacy.readSetting('main_session:legacy'), isNull);
-        if (version == 3) {
-          expect(
-            (await legacy.watchActivity('legacy', profile: 'aya').first)
-                .single
-                .tool,
-            'read_file',
-          );
-          expect(await legacy.watchActivity('legacy').first, isEmpty);
-        }
-
-        // Version 3: the activity table.
-        await legacy.addActivity(
-          instanceId: 'a',
-          sessionId: 'side',
-          tool: 'web_search',
-          summary: '',
-          at: DateTime.utc(2026, 10, 2),
-        );
+        // Version 5: the device-local Activity table is gone.
         expect(
-          (await legacy.watchActivity('a').first).single.tool,
-          'web_search',
+          await legacy
+              .customSelect(
+                "SELECT name FROM sqlite_master WHERE name LIKE 'activity%'",
+              )
+              .get(),
+          isEmpty,
         );
       },
     );
@@ -299,14 +310,6 @@ void main() {
             createdAt: 1,
           ),
         ], profile: profile);
-        await db.addActivity(
-          instanceId: 'a',
-          profile: profile,
-          sessionId: 'same',
-          tool: profile,
-          summary: '$profile private',
-          at: DateTime.utc(2026, 10, 2),
-        );
       }
       await db.renameSession('a', 'same', 'Renamed', profile: 'aya');
       await db.setSessionPinned('a', 'same', 10, profile: 'aya');
@@ -341,11 +344,6 @@ void main() {
         )).single.bodyText,
         'aya private',
       );
-      expect((await db.watchActivity('a').first).single.tool, 'default');
-      expect(
-        (await db.watchActivity('a', profile: 'aya').first).single.tool,
-        'aya',
-      );
       await db.deleteSession('a', 'same', profile: 'aya');
       expect(await db.loadMessages('a', 'same', profile: 'aya'), isEmpty);
       expect(
@@ -362,34 +360,5 @@ void main() {
         isEmpty,
       );
     });
-  });
-
-  test('activity: newest first, capped per instance, gone with it', () async {
-    await db.saveInstances([instance('a', 'A'), instance('b', 'B')]);
-    final start = DateTime.utc(2026, 10, 1);
-    for (var i = 0; i < HermuseDatabase.activityKept + 2; i++) {
-      await db.addActivity(
-        instanceId: 'a',
-        sessionId: 's',
-        tool: 'tool$i',
-        summary: '',
-        at: start.add(Duration(minutes: i)),
-      );
-    }
-    await db.addActivity(
-      instanceId: 'b',
-      sessionId: 's',
-      tool: 'other',
-      summary: 'kept',
-      at: start,
-    );
-    final rows = await db.watchActivity('a', limit: 1000).first;
-    expect(rows, hasLength(HermuseDatabase.activityKept));
-    expect(rows.first.tool, 'tool${HermuseDatabase.activityKept + 1}');
-    expect(rows.last.tool, 'tool2');
-    expect((await db.watchActivity('b').first).single.summary, 'kept');
-
-    await db.saveInstances([instance('b', 'B')]);
-    expect(await db.watchActivity('a').first, isEmpty);
   });
 }

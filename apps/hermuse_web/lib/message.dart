@@ -62,6 +62,21 @@ class MessageRow extends StatelessComponent {
   @override
   Component build(BuildContext context) {
     final isUser = message.author == Author.user;
+    // A notice-only agent row (a scheduled job's brief, "Scheduled: …") is
+    // a status line between the turns, not a bubble.
+    if (!isUser &&
+        message.blocks.isNotEmpty &&
+        message.blocks.every(
+          (block) => block is NoticeBlock && !block.isError,
+        )) {
+      return div(classes: 'hermuse-msg hermuse-msg-status', [
+        for (final block in message.blocks.cast<NoticeBlock>())
+          p(classes: 'hermuse-msg-status-line', [
+            YsIconView(YsIcon.upcoming, size: YsLayout.inlineIcon),
+            span([.text(block.text)]),
+          ]),
+      ]);
+    }
     // The browser card is a bubble of its own above the turn's other
     // blocks, joined to them like grouped messages.
     final card = message.blocks.whereType<BrowserBlock>().firstOrNull;
@@ -251,6 +266,22 @@ class MessageRow extends StatelessComponent {
       css('.hermuse-msg-inner')
           .styles(display: .flex, flexDirection: .row, alignItems: .center),
       css('&.hermuse-msg-user .hermuse-msg-inner').styles(justifyContent: .end),
+      css('&.hermuse-msg-status').styles(
+        padding: .symmetric(vertical: YsSpace.xs.px),
+        alignItems: .center,
+        gap: .all(2.px),
+      ),
+      css('.hermuse-msg-status-line').styles(
+        margin: .zero,
+        fontSize: 12.px,
+        lineHeight: 16.px,
+        display: .flex,
+        alignItems: .center,
+        gap: .all(YsSpace.xs.px),
+        color: .variable('--content-subtle'),
+        textAlign: .center,
+        raw: {'overflow-wrap': 'anywhere'},
+      ),
       css('.hermuse-bubble').styles(
         padding: .symmetric(vertical: 11.px, horizontal: 15.px),
         display: .flex,

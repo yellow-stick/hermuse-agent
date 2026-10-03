@@ -8,63 +8,51 @@ part of 'activity.dart';
 
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint, type=warning
-/// Tools the agent finished on [instanceId], newest first, as kept on this
-/// device across launches.
+/// Tasks the agent ran on [instanceId] for [profile], newest first, across
+/// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+/// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+/// written elsewhere (`sessions.changed`: scheduled runs, other clients).
 
-@ProviderFor(activity)
-final activityProvider = ActivityFamily._();
+@ProviderFor(Tasks)
+final tasksProvider = TasksFamily._();
 
-/// Tools the agent finished on [instanceId], newest first, as kept on this
-/// device across launches.
-
-final class ActivityProvider
-    extends
-        $FunctionalProvider<
-          AsyncValue<List<ActivityItem>>,
-          List<ActivityItem>,
-          Stream<List<ActivityItem>>
-        >
-    with
-        $FutureModifier<List<ActivityItem>>,
-        $StreamProvider<List<ActivityItem>> {
-  /// Tools the agent finished on [instanceId], newest first, as kept on this
-  /// device across launches.
-  ActivityProvider._({
-    required ActivityFamily super.from,
+/// Tasks the agent ran on [instanceId] for [profile], newest first, across
+/// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+/// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+/// written elsewhere (`sessions.changed`: scheduled runs, other clients).
+final class TasksProvider extends $AsyncNotifierProvider<Tasks, List<Task>> {
+  /// Tasks the agent ran on [instanceId] for [profile], newest first, across
+  /// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+  /// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+  /// written elsewhere (`sessions.changed`: scheduled runs, other clients).
+  TasksProvider._({
+    required TasksFamily super.from,
     required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
-         name: r'activityProvider',
+         name: r'tasksProvider',
          isAutoDispose: true,
          dependencies: null,
          $allTransitiveDependencies: null,
        );
 
   @override
-  String debugGetCreateSourceHash() => _$activityHash();
+  String debugGetCreateSourceHash() => _$tasksHash();
 
   @override
   String toString() {
-    return r'activityProvider'
+    return r'tasksProvider'
         ''
         '$argument';
   }
 
   @$internal
   @override
-  $StreamProviderElement<List<ActivityItem>> $createElement(
-    $ProviderPointer pointer,
-  ) => $StreamProviderElement(pointer);
-
-  @override
-  Stream<List<ActivityItem>> create(Ref ref) {
-    final argument = this.argument as (String, {String profile});
-    return activity(ref, argument.$1, profile: argument.profile);
-  }
+  Tasks create() => Tasks();
 
   @override
   bool operator ==(Object other) {
-    return other is ActivityProvider && other.argument == argument;
+    return other is TasksProvider && other.argument == argument;
   }
 
   @override
@@ -73,32 +61,69 @@ final class ActivityProvider
   }
 }
 
-String _$activityHash() => r'27bff9dd2782a3aff21591e74e9c9f3b9462fcc2';
+String _$tasksHash() => r'bcd46bb69ca2314efd1d36d8212e63dd2b824f19';
 
-/// Tools the agent finished on [instanceId], newest first, as kept on this
-/// device across launches.
+/// Tasks the agent ran on [instanceId] for [profile], newest first, across
+/// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+/// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+/// written elsewhere (`sessions.changed`: scheduled runs, other clients).
 
-final class ActivityFamily extends $Family
+final class TasksFamily extends $Family
     with
-        $FunctionalFamilyOverride<
-          Stream<List<ActivityItem>>,
+        $ClassFamilyOverride<
+          Tasks,
+          AsyncValue<List<Task>>,
+          List<Task>,
+          FutureOr<List<Task>>,
           (String, {String profile})
         > {
-  ActivityFamily._()
+  TasksFamily._()
     : super(
         retry: null,
-        name: r'activityProvider',
+        name: r'tasksProvider',
         dependencies: null,
         $allTransitiveDependencies: null,
         isAutoDispose: true,
       );
 
-  /// Tools the agent finished on [instanceId], newest first, as kept on this
-  /// device across launches.
+  /// Tasks the agent ran on [instanceId] for [profile], newest first, across
+  /// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+  /// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+  /// written elsewhere (`sessions.changed`: scheduled runs, other clients).
 
-  ActivityProvider call(String instanceId, {String profile = 'default'}) =>
-      ActivityProvider._(argument: (instanceId, profile: profile), from: this);
+  TasksProvider call(String instanceId, {String profile = 'default'}) =>
+      TasksProvider._(argument: (instanceId, profile: profile), from: this);
 
   @override
-  String toString() => r'activityProvider';
+  String toString() => r'tasksProvider';
+}
+
+/// Tasks the agent ran on [instanceId] for [profile], newest first, across
+/// every surface (`GET /api/plugins/hermuse/tasks`). Reloads when a chat
+/// turn ends ([turnEnded], from the chat) and when Hermes reports sessions
+/// written elsewhere (`sessions.changed`: scheduled runs, other clients).
+
+abstract class _$Tasks extends $AsyncNotifier<List<Task>> {
+  late final _$args = ref.$arg as (String, {String profile});
+  String get instanceId => _$args.$1;
+  String get profile => _$args.profile;
+
+  FutureOr<List<Task>> build(String instanceId, {String profile = 'default'});
+  @$mustCallSuper
+  @override
+  WhenComplete runBuild() {
+    final ref = this.ref as $Ref<AsyncValue<List<Task>>, List<Task>>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<AsyncValue<List<Task>>, List<Task>>,
+              AsyncValue<List<Task>>,
+              Object?,
+              Object?
+            >;
+    return element.handleCreate(
+      ref,
+      () => build(_$args.$1, profile: _$args.profile),
+    );
+  }
 }

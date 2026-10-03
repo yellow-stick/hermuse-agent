@@ -7,6 +7,7 @@ import 'package:hermuse_data/hermuse_data.dart';
 import 'package:http/http.dart' as http;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import 'activity.dart';
 import 'agents.dart';
 import 'automations.dart';
 import 'onboarding.dart' show setupChatTitle;
@@ -424,6 +425,14 @@ Future<ChatController> chatSession(Ref ref, ThreadRef thread) async {
       },
       (changed, tool) {
         if (!ref.mounted) return;
+        if (tool == null) {
+          // A finished turn is a new task row.
+          final tasks = tasksProvider(
+            changed.instanceId,
+            profile: changed.profile,
+          );
+          if (ref.exists(tasks)) ref.read(tasks.notifier).turnEnded();
+        }
         if (tool == null || tool == 'feed_post') {
           ref.invalidate(
             feedProvider(changed.instanceId, profile: changed.profile),
@@ -800,16 +809,40 @@ final class _DatabaseObserver implements ChatObserver {
   }
 
   @override
-  void toolCompleted(ThreadRef ref, ActivityItem item) {
-    _productsChanged(ref, item.tool);
-    unawaited(
-      _db.addActivity(
-        instanceId: ref.instanceId,
-        profile: ref.profile,
-        sessionId: item.sessionId,
-        tool: item.tool,
-        summary: item.summary,
-        at: item.at,
+  void toolCompleted(ThreadRef ref, String tool) => _productsChanged(ref, tool);
+
+  @override
+  void mainSessionChanged(ThreadRef main, {String? previousId}) {
+    _mainCreated(main);
+    if (previousId != null) unawaited(_fileUnder(main, previousId));
+  }
+
+  /// The main chat [previousId] gave way to [main]: it and its side chats
+  /// become side chats of [main].
+  Future<void> _fileUnder(ThreadRef main, String previousId) async {
+    final previous = await _db.loadSession(
+      main.instanceId,
+      previousId,
+      profile: main.profile,
+    );
+    await _db.reparentSideChats(
+      main.instanceId,
+      from: previousId,
+      to: main.sessionId,
+      profile: main.profile,
+    );
+    await _db.upsertSession(
+      SessionRow(
+        instanceId: main.instanceId,
+        profile: main.profile,
+        sessionId: previousId,
+        title: previous == null || previous.title == mainThreadTitle
+            ? ''
+            : previous.title,
+        parentId: main.sessionId,
+        updatedAt: previous?.updatedAt ?? _now(),
+        archived: false,
+        pinnedAt: previous?.pinnedAt,
       ),
     );
   }

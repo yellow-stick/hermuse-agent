@@ -29,23 +29,44 @@ def _hermuse_jobs():
     ]
 
 
-def test_register_all_creates_four_scheduler_valid_jobs(cron_home):
+def test_register_all_creates_five_scheduler_valid_jobs(cron_home):
     results = cron_specs.register_all(cron_jobs)
-    assert set(results) == {"feed", "ideas", "goals", "reflection"}
+    assert set(results) == {"feed", "ideas", "goals", "reflection", "heartbeat"}
     for key, (record, created) in results.items():
         assert created is True
         assert cron_jobs.is_job_runnable(record), key
         assert record["next_run_at"], key
         assert record["schedule"]["kind"] == "cron", key
         assert record["skills"] == [cron_specs.SKILL_REF], key
-        assert record["deliver"] == "local", key
-    assert len(_hermuse_jobs()) == 4
+        assert record["deliver"] == ("bot-chat" if key == "heartbeat" else "local"), key
+    assert len(_hermuse_jobs()) == 5
+
+
+def test_heartbeat_spec_delivers_to_bot_chat_every_30_minutes(cron_home):
+    spec = cron_specs.spec_by_key("heartbeat")
+    assert spec.deliver == "bot-chat" and spec.hidden is False
+    assert spec.schedule == "*/30 * * * *"
+    assert "NO_REPLY" in spec.prompt and "clarify" in spec.prompt
+    for needle in ("Ask the user:", "Offer these choices with clarify:",
+                   "Do not act before the user answers."):
+        assert needle in spec.prompt, needle
+    for key in ("feed", "ideas", "goals", "reflection"):
+        assert cron_specs.spec_by_key(key).deliver == "local"
+        assert cron_specs.spec_by_key(key).hidden is True
+
+    (record, _) = cron_specs.register_job(cron_jobs, "heartbeat")
+    assert record["name"] == cron_specs.HEARTBEAT_NAME
+    assert record["deliver"] == "bot-chat"
+    # A diverged deliver value is healed back to the spec's on refresh.
+    cron_jobs.update_job(record["id"], {"deliver": "local"})
+    (refreshed, created) = cron_specs.register_job(cron_jobs, "heartbeat")
+    assert created is False and refreshed["deliver"] == "bot-chat"
 
 
 def test_register_all_is_idempotent(cron_home):
     first = cron_specs.register_all(cron_jobs)
     second = cron_specs.register_all(cron_jobs)
-    assert len(_hermuse_jobs()) == 4
+    assert len(_hermuse_jobs()) == 5
     for key in first:
         assert second[key][0]["id"] == first[key][0]["id"]
         assert second[key][1] is False
@@ -81,7 +102,7 @@ def test_remove_all_only_touches_hermuse_jobs(cron_home):
         prompt="Someone else's job", schedule="0 6 * * *",
         name="Unrelated", deliver="local")
     removed = cron_specs.remove_all(cron_jobs)
-    assert len(removed) == 4
+    assert len(removed) == 5
     assert _hermuse_jobs() == []
     assert cron_jobs.get_job(other["id"]) is not None
     # Second removal is a no-op.

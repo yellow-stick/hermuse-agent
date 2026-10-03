@@ -168,6 +168,12 @@ abstract final class YsLayout {
   /// Initial-letter disc of an instance (instance rows).
   static const monogram = 32.0;
 
+  /// Height of the SOUL and MEMORY cards in the Identity tab.
+  static const identityCardHeight = 176.0;
+
+  /// Tallest a feed post's image is drawn.
+  static const feedImageMaxHeight = 320.0;
+
   /// At or above this width the panel docks beside the thread.
   static const wideMin = 768.0;
 

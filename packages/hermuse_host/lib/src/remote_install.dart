@@ -25,6 +25,9 @@ enum RemoteInstallStep {
   plugin,
   computer,
   dashboard,
+
+  /// The Hermes gateway service that runs scheduled jobs (cron ticker).
+  scheduler,
   web,
   https,
   verify,
@@ -490,6 +493,16 @@ final class _RemoteAttempt {
     }
     _step = RemoteInstallStep.computer;
     await _run(computerOwnershipScript, log: false);
+    // A repaired runtime or plugin needs the scheduler restarted on it.
+    if (_healthy.containsAll({
+      RemoteInstallStep.hermes,
+      RemoteInstallStep.plugin,
+    })) {
+      _step = RemoteInstallStep.scheduler;
+      if (await _health(schedulerHealthScript) == _RemoteHealth.ready) {
+        _healthy.add(RemoteInstallStep.scheduler);
+      }
+    }
     _step = RemoteInstallStep.dashboard;
     if (!_local) {
       await _resolveDomain();
@@ -579,6 +592,12 @@ final class _RemoteAttempt {
     }
     await _run(configureDashboardScript());
     await _prove(dashboardHealthScript(_domain!), stdin: _dashboardPassword);
+    await _run(_ownershipCheckpoint, log: false);
+  }
+
+  Future<void> _scheduler() async {
+    await _run(configureSchedulerScript(), timeout: const Duration(minutes: 4));
+    await _prove(schedulerHealthScript);
     await _run(_ownershipCheckpoint, log: false);
   }
 
@@ -744,6 +763,7 @@ final class _RemoteAttempt {
       await _stage(RemoteInstallStep.plugin, _installPlugin);
       await _stage(RemoteInstallStep.computer, _installComputer);
       await _stage(RemoteInstallStep.dashboard, _dashboard);
+      await _stage(RemoteInstallStep.scheduler, _scheduler);
       final domain = _domain;
       final webDomain = domain == null ? null : webAppDomain(domain);
       if (!_local) {

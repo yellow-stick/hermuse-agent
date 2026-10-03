@@ -1,7 +1,10 @@
 """Hermuse agent-plugin entry point (``register(ctx)`` called by the loader).
 
 Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, conversational
-system-prompt guidance, the ``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
+and proactive-behaviour system-prompt sections, the Activity task recorder
+(``pre_llm_call`` / ``post_llm_call`` / ``on_session_end`` hooks and the
+``hermuse_task_summary`` auxiliary task, see :mod:`task_recorder`), the
+``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
 and its ``pre_tool_call`` / ``transform_tool_result`` hooks, restarts the
 subscription bridge when it was set up and does not run (see
 :func:`subscription_bridge.start_if_configured`), and — inside a running
@@ -19,7 +22,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent_tools, plugin_cli, subscription_bridge
+from . import agent_tools, plugin_cli, subscription_bridge, task_recorder
 from .computer import hooks as computer_hooks
 from .computer.provider import make_provider
 
@@ -28,8 +31,9 @@ logger = logging.getLogger(__name__)
 SKILL_NAME = "hermuse"
 SKILL_DESCRIPTION = (
     "Hermuse feed and automations during chat: publish useful grounded updates "
-    "with feed_post, schedule requested work with Hermes cronjob_manage, and "
-    "use Ideas, Goals, Library and Reflections, honouring PREFERENCES.md."
+    "with feed_post, schedule reminders and recurring work with Hermes "
+    "cronjob_manage into the main chat, track commitments as goals, and use "
+    "Ideas, Library and Reflections, honouring PREFERENCES.md."
 )
 
 CONVERSATION_GUIDANCE = (
@@ -58,6 +62,26 @@ CONVERSATION_GUIDANCE = (
     "bypass approval requirements or approve actions on the user's behalf."
 )
 
+BEHAVIOUR_SECTION_ID = "hermuse_behaviour"
+BEHAVIOUR_GUIDANCE = (
+    "You are a proactive personal agent; the user's main chat is the session "
+    "\"Bot Chat\".\n"
+    "- Every reminder or later/recurring action, even 1 minute away, MUST be "
+    "cronjob_manage action=\"create\", deliver=\"bot-chat\"; schedule \"in 2m\", "
+    "\"in 2h\" or an ISO time once, \"every day 8am\" or cron to recur. Its prompt "
+    "is self-contained; its final response is the message to the user (\"Rappel : "
+    "boire un verre d'eau.\"). Never wait, sleep or poll in a turn to emulate a "
+    "timer. Confirm in one short line with the fire time. Never ask which "
+    "platform or channel.\n"
+    "- Track multi-day commitments and things to keep in mind with goal_track "
+    "(source=\"agent\" on your initiative, cron_job_id of its job, parent_id for "
+    "a step); keep status_line current with goal_update.\n"
+    "- Offer 2-4 choices with clarify. Every feed_post needs why.\n"
+    "- [Cronjob \"...\" output messages are scheduled output, not the user: tell "
+    "the user what matters, else reply exactly NO_REPLY. If it says \"Ask the "
+    "user\", ask with clarify and wait; do not act on it yourself."
+)
+
 PLUGIN_NAME = "hermuse"
 API_PREFIX = f"/api/plugins/{PLUGIN_NAME}"
 # Same module name as Hermes' startup mount (web_server_dashboard._mount_plugin_api_routes).
@@ -69,6 +93,8 @@ SPA_CATCH_ALL = "/{full_path:path}"
 def register(ctx) -> None:
     agent_tools.register_tools(ctx)
     ctx.register_system_prompt_section("hermuse.conversation", CONVERSATION_GUIDANCE)
+    ctx.register_system_prompt_section(BEHAVIOUR_SECTION_ID, BEHAVIOUR_GUIDANCE)
+    task_recorder.register(ctx)
     try:
         skill_md = Path(__file__).parent / "skills" / "hermuse" / "SKILL.md"
         ctx.register_skill(SKILL_NAME, skill_md, SKILL_DESCRIPTION)

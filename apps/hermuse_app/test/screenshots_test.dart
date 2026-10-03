@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermes_client/testing.dart';
 import 'package:hermuse_app/computer/browser_parts.dart' show FrameImage;
+import 'package:hermuse_app/panel/identity.dart' show MemoryEditor;
 import 'package:hermuse_app/panel/profile_panel.dart' show ProfilePanel;
 import 'package:hermuse_app/shell/app.dart';
 import 'package:hermuse_app/shell/agents.dart';
@@ -275,7 +276,14 @@ Future<void> main() async {
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
 
-      expect(find.text('hello from the test'), findsOneWidget);
+      // In the thread (the panel's Now row repeats the request).
+      expect(
+        find.descendant(
+          of: find.byType(ThreadView),
+          matching: find.text('hello from the test'),
+        ),
+        findsOneWidget,
+      );
       final field = tester.widget<EditableText>(
         find.byType(EditableText).first,
       );
@@ -497,14 +505,16 @@ Future<void> main() async {
 
       await tester.tap(find.bySemanticsLabel('Approvals'));
       await tester.pumpAndSettle();
-      expect(find.text('No approvals waiting'), findsOneWidget);
+      expect(find.text('No approvals yet'), findsOneWidget);
       expect(find.text('Nothing yet'), findsNothing);
 
-      // Connectors: an explicit "Coming soon", nothing to press.
-      await tester.tap(find.bySemanticsLabel('Connectors'));
+      // Identity: the name with Edit, then the SOUL and MEMORY cards.
+      await tester.tap(find.bySemanticsLabel('Identity'));
       await tester.pumpAndSettle();
-      expect(find.text('Coming soon'), findsOneWidget);
-      await _capture(tester, 'proof-panel-connectors.png');
+      expect(find.text('SOUL'), findsOneWidget);
+      expect(find.text('MEMORY'), findsOneWidget);
+      expect(find.text('ACCESS WITH CARE'), findsNWidgets(2));
+      expect(find.bySemanticsLabel('Connectors'), findsNothing);
     });
 
     testWidgets('Activity groups by day and opens rows of this chat', (
@@ -514,65 +524,150 @@ Future<void> main() async {
       addTearDown(harness.dispose);
       final now = DateTime.now();
       final yesterday = now.subtract(const Duration(days: 1));
-      Future<void> add(
+      Map<String, Object?> task(
+        String id,
         String sessionId,
-        String tool,
+        String title,
         String summary,
+        String tool,
         DateTime at,
-      ) => harness.db.addActivity(
-        instanceId: _Harness.instanceId,
-        sessionId: sessionId,
-        tool: tool,
-        summary: summary,
-        at: at,
+      ) => {
+        'id': id,
+        'session_id': sessionId,
+        'turn_id': 't-$id',
+        'title': title,
+        'summary': summary,
+        'status': 'completed',
+        'source': 'chat',
+        'started_at': at.subtract(const Duration(minutes: 1)).toIso8601String(),
+        'finished_at': at.toIso8601String(),
+        'tools': [tool],
+      };
+      // Newest first, as the plugin serves them.
+      final tasks = [
+        task(
+          't4',
+          'side-fjord',
+          'Find direct flights to Oslo',
+          'Direct flights Lisbon → Oslo: 2 daily, from €89',
+          'web_search',
+          now,
+        ),
+        task(
+          't3',
+          'other-surface',
+          'Check Lisbon to Oslo fares',
+          'Opened norwegian.com — fares from €89',
+          'browser_navigate',
+          now.subtract(const Duration(minutes: 2)),
+        ),
+        task(
+          't2',
+          'side-fjord',
+          'Open the Flåm railway timetable',
+          'Opened fjordtours.com — Flåm railway timetable',
+          'browser_navigate',
+          yesterday.add(const Duration(minutes: 4)),
+        ),
+        task(
+          't1',
+          'side-fjord',
+          'Plan a fjord day trip',
+          'Norway in a Nutshell: 3 day-trip options from Bergen',
+          'web_search',
+          yesterday,
+        ),
+      ];
+      await _pumpApp(
+        tester,
+        const Size(1938, 1062),
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/files': (_) => {'files': <Object?>[]},
+          'GET /api/plugins/hermuse/tasks': (_) => {'tasks': tasks},
+        },
       );
-      await add(
-        'side-fjord',
-        'web_search',
-        'Norway in a Nutshell: 3 day-trip options from Bergen',
-        yesterday,
-      );
-      await add(
-        'side-fjord',
-        'browser_navigate',
-        'Opened fjordtours.com — Flåm railway timetable',
-        yesterday.add(const Duration(minutes: 4)),
-      );
-      await add(
-        'other-surface',
-        'browser_navigate',
-        'Opened norwegian.com — Lisbon to Oslo fares',
-        now.subtract(const Duration(minutes: 2)),
-      );
-      await add(
-        'side-fjord',
-        'web_search',
-        'Direct flights Lisbon → Oslo: 2 daily, from €89',
-        now,
-      );
-      await _pumpApp(tester, const Size(1938, 1062), harness);
       final controller = await harness.controller(tester);
 
-      // The chat's own tool rows carry the same names: look in the panel.
       Finder inPanel(String text) => find.descendant(
         of: find.byType(ProfilePanel),
         matching: find.text(text),
       );
-      expect(find.text('Today'), findsOneWidget);
-      expect(find.text('Yesterday'), findsOneWidget);
-      expect(inPanel('Web search'), findsNWidgets(2));
-      expect(inPanel('Browser navigate'), findsNWidgets(2));
+      expect(inPanel('Today'), findsOneWidget);
+      expect(inPanel('Yesterday'), findsOneWidget);
+      expect(inPanel('Find direct flights to Oslo'), findsOneWidget);
+      expect(
+        inPanel('Direct flights Lisbon → Oslo: 2 daily, from €89'),
+        findsOneWidget,
+      );
+      expect(inPanel('Plan a fjord day trip'), findsOneWidget);
+      // Newest first.
+      expect(
+        _top(tester, 'Find direct flights to Oslo'),
+        lessThan(_top(tester, 'Check Lisbon to Oslo fares')),
+      );
       await _capture(tester, 'proof-panel-activity.png');
 
-      // Ran elsewhere (CLI, Telegram, …): shown, nothing to open. Rows are
-      // newest first.
-      await tester.tap(inPanel('Browser navigate').first);
+      // Ran elsewhere (CLI, Telegram, …): shown, nothing to open.
+      await tester.tap(inPanel('Check Lisbon to Oslo fares'));
       await tester.pumpAndSettle();
       expect(controller.state.activeThreadId, 'stored-1');
 
-      await tester.tap(inPanel('Web search').first);
+      await tester.tap(inPanel('Find direct flights to Oslo'));
       await tester.pumpAndSettle();
       expect(controller.state.activeThreadId, 'side-fjord');
+    });
+
+    testWidgets('Activity shows the running turn under Now; Stop interrupts', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      await _pumpApp(
+        tester,
+        const Size(1938, 1062),
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/files': (_) => {'files': <Object?>[]},
+          'GET /api/plugins/hermuse/tasks': (_) => {'tasks': <Object?>[]},
+        },
+      );
+      final controller = await harness.controller(tester);
+      Finder inPanel(String text) => find.descendant(
+        of: find.byType(ProfilePanel),
+        matching: find.text(text),
+      );
+      expect(inPanel('Now'), findsNothing);
+      expect(inPanel('Connected'), findsOneWidget);
+
+      await tester.enterText(
+        find.byType(EditableText).first,
+        'Book the night train to Bergen',
+      );
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final step = controller.state.agentStep;
+      expect(step, isNotNull);
+      expect(inPanel('Now'), findsOneWidget);
+      expect(inPanel('Book the night train to Bergen'), findsOneWidget);
+      // The live step shows under the name and on the row.
+      expect(inPanel(step!), findsNWidgets(2));
+      expect(inPanel('Connected'), findsNothing);
+      await _capture(tester, 'proof-panel-activity-now.png');
+
+      await tester.tap(
+        find.bySemanticsLabel('Stop Book the night train to Bergen'),
+      );
+      await tester.pump();
+      expect(
+        harness.fake.calls
+            .where((c) => c.method == 'session.interrupt')
+            .single
+            .params['session_id'],
+        'live-1',
+      );
     });
 
     testWidgets('pending approval lists in Approvals until answered', (
@@ -602,10 +697,10 @@ Future<void> main() async {
       await tester.runAsync(pumpEventQueue);
       await tester.pumpAndSettle();
       expect(command, findsNothing);
-      expect(find.text('No approvals waiting'), findsOneWidget);
+      expect(find.text('No approvals yet'), findsOneWidget);
     });
 
-    testWidgets('Automations tab lists Hermes jobs and their actions', (
+    testWidgets('Upcoming groups jobs; the sheet shows run history and acts', (
       tester,
     ) async {
       final harness = await _Harness.open();
@@ -623,11 +718,13 @@ Future<void> main() async {
 
       DateTime daysBefore(DateTime t, int days) =>
           DateTime(t.year, t.month, t.day - days, t.hour);
+      final reminderAt = DateTime(now.year, now.month, now.day + 2, 9, 15);
       // Hermes 0.21.5 rows; no scheduler heartbeat: the gateway is not up.
       Map<String, Object?> job(
         String id,
         String name,
         String expr, {
+        Map<String, Object?>? schedule,
         DateTime? next,
         DateTime? last,
         String? lastStatus,
@@ -636,7 +733,7 @@ Future<void> main() async {
       }) => {
         'id': id,
         'name': name,
-        'schedule': {'kind': 'cron', 'expr': expr, 'display': expr},
+        'schedule': schedule ?? {'kind': 'cron', 'expr': expr, 'display': expr},
         'enabled': !paused,
         'state': paused ? 'paused' : 'scheduled',
         'next_run_at': paused ? null : next?.toIso8601String(),
@@ -648,6 +745,8 @@ Future<void> main() async {
         'origin': origin == null ? null : {'source': origin, 'key': id},
         'scheduler_heartbeat_age_s': null,
       };
+      final lastDigest = daysBefore(nextAt(7, {1, 2, 3, 4, 5}), 1);
+      int epoch(DateTime t) => t.millisecondsSinceEpoch ~/ 1000;
       await _pumpApp(
         tester,
         const Size(1938, 1062),
@@ -655,48 +754,75 @@ Future<void> main() async {
         plugin: {
           'GET /api/cron/jobs': (_) => {
             'data': [
+              // Hermuse maintenance: hidden.
               job(
                 'feed',
                 'Hermuse feed (daily)',
                 '0 8 * * *',
                 next: nextAt(8),
-                last: daysBefore(nextAt(8), 1),
-                lastStatus: 'ok',
                 origin: 'hermuse',
               ),
               job(
-                'ideas',
-                'Hermuse ideas (weekly)',
-                '0 9 * * 1',
-                next: nextAt(9, {DateTime.monday}),
+                'heartbeat',
+                'Hermuse heartbeat',
+                '',
+                schedule: {
+                  'kind': 'interval',
+                  'minutes': 30,
+                  'display': 'every 30m',
+                },
+                next: now.add(const Duration(minutes: 12)),
                 origin: 'hermuse',
               ),
               job(
-                'goals',
-                'Hermuse goals check-in (weekly)',
-                '0 9 * * 0',
-                next: nextAt(9, {DateTime.sunday}),
-                last: daysBefore(nextAt(9, {DateTime.sunday}), 7),
-                lastStatus: 'error',
-                origin: 'hermuse',
+                'passport',
+                'Renew the passport',
+                '',
+                schedule: {
+                  'kind': 'once',
+                  'run_at': reminderAt.toIso8601String(),
+                  'display': 'once',
+                },
+                next: reminderAt,
               ),
-              job(
-                'reflection',
-                'Hermuse reflection (nightly)',
-                '0 2 * * *',
-                last: daysBefore(nextAt(2), 1),
-                lastStatus: 'ok',
-                origin: 'hermuse',
-                paused: true,
-              ),
+              job('plants', 'Water the plants', '0 18 * * *', paused: true),
               job(
                 'digest',
                 'News digest',
                 '0 7 * * 1-5',
                 next: nextAt(7, {1, 2, 3, 4, 5}),
+                last: lastDigest,
+                lastStatus: 'ok',
               ),
             ],
           },
+          'GET /api/cron/jobs/digest/runs': (_) => {
+            'runs': [
+              {
+                'id': 'cron_digest_2',
+                'started_at': epoch(lastDigest),
+                'ended_at': epoch(lastDigest) + 40,
+                'end_reason': 'cron_complete',
+                'is_active': false,
+              },
+              {
+                'id': 'cron_digest_1',
+                'started_at': epoch(daysBefore(lastDigest, 1)),
+                'ended_at': epoch(daysBefore(lastDigest, 1)) + 5,
+                'end_reason': 'error',
+                'is_active': false,
+              },
+            ],
+          },
+          'GET /api/sessions/cron_digest_2/messages': (_) => {
+            'messages': [
+              {
+                'role': 'assistant',
+                'content': 'Top stories: the Bergen line reopens next week.',
+              },
+            ],
+          },
+          'GET /api/cron/jobs/heartbeat/runs': (_) => {'runs': <Object?>[]},
           'DELETE /api/cron/jobs/digest': (_) {
             deleted.add('digest');
             return {'ok': true};
@@ -704,50 +830,403 @@ Future<void> main() async {
         },
       );
 
-      await tester.tap(find.bySemanticsLabel('Automations'));
+      await tester.tap(find.bySemanticsLabel('Upcoming'));
       await tester.pumpAndSettle();
-      expect(find.text('Every day at 8:00 AM'), findsOneWidget);
+      Finder inPanel(String text) => find.descendant(
+        of: find.byType(ProfilePanel),
+        matching: find.text(text),
+      );
+      for (final heading in ['Reminders', 'Daily', 'Weekly', 'Heartbeat']) {
+        expect(inPanel(heading), findsOneWidget, reason: heading);
+      }
+      expect(inPanel('Other recurring'), findsNothing);
+      expect(find.text('Hermuse feed (daily)'), findsNothing);
       expect(
-        find.text('Next: ${formatAutomationTime(nextAt(8))}'),
+        _top(tester, 'Renew the passport'),
+        lessThan(_top(tester, 'Water the plants')),
+      );
+      expect(
+        inPanel(
+          '${const ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][reminderAt.month - 1]} '
+          '${reminderAt.day}, 9:15 AM',
+        ),
         findsOneWidget,
       );
-      expect(find.text('Paused'), findsOneWidget);
-      expect(
-        find.text('Provider returned 429: rate limit reached'),
-        findsOneWidget,
-      );
+      expect(inPanel('Every day at 6:00 PM · Paused'), findsOneWidget);
       expect(find.textContaining("scheduler isn't running"), findsOneWidget);
-      // Only the user's own job can be deleted; the plugin's comes back.
+      await _capture(tester, 'proof-panel-upcoming.png');
+
+      // The sheet: schedule, next run, history; the heartbeat has no Delete.
+      await tester.tap(find.text('News digest'));
+      await tester.pumpAndSettle();
+      expect(find.text('Run history'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('Delete Hermuse feed (daily)'),
-        findsNothing,
-      );
-      expect(
-        find.bySemanticsLabel('Pause Hermuse feed (daily)'),
+        find.text('Top stories: the Bergen line reopens next week.'),
         findsOneWidget,
       );
-      await _capture(tester, 'proof-panel-automations.png');
-
-      await tester.ensureVisible(find.bySemanticsLabel('Delete News digest'));
-      await tester.pumpAndSettle();
+      expect(find.textContaining('Done'), findsOneWidget);
+      expect(find.textContaining('Failed'), findsOneWidget);
+      expect(find.widgetWithText(YsButton, 'Run now'), findsOneWidget);
+      await _capture(tester, 'proof-upcoming-sheet.png');
 
       // Delete asks first; Cancel keeps the job.
-      await tester.tap(find.bySemanticsLabel('Delete News digest'));
+      await tester.tap(find.widgetWithText(YsButton, 'Delete'));
       await tester.pumpAndSettle();
-      expect(find.text('Delete automation?'), findsOneWidget);
+      expect(find.text('Delete this item?'), findsOneWidget);
       await tester.tap(find.widgetWithText(YsButton, 'Cancel'));
       await tester.pumpAndSettle();
       expect(deleted, isEmpty);
-      expect(find.text('News digest'), findsOneWidget);
+      expect(find.text('Run history'), findsOneWidget);
 
-      await tester.tap(find.bySemanticsLabel('Delete News digest'));
+      await tester.tap(find.widgetWithText(YsButton, 'Delete'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(YsButton, 'Delete'));
       await tester.runAsync(pumpEventQueue);
       await tester.pumpAndSettle();
       expect(deleted, ['digest']);
+      expect(find.text('Run history'), findsNothing);
       expect(find.text('News digest'), findsNothing);
-      expect(find.text('Hermuse feed (daily)'), findsOneWidget);
+
+      // A heartbeat sheet: pause and run now only.
+      await tester.tap(find.text('Hermuse heartbeat'));
+      await tester.pumpAndSettle();
+      expect(find.text('Has not run yet'), findsOneWidget);
+      expect(find.widgetWithText(YsButton, 'Pause'), findsOneWidget);
+      expect(find.widgetWithText(YsButton, 'Delete'), findsNothing);
+    });
+
+    testWidgets('Identity memory editor saves edited entries', (tester) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final puts = <String, Object?>{};
+      await _pumpApp(
+        tester,
+        const Size(1938, 1062),
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/files': (_) => {'files': <Object?>[]},
+          'GET /api/plugins/hermuse/tasks': (_) => {'tasks': <Object?>[]},
+          'GET /api/plugins/hermuse/memory/memory': (_) => {
+            'target': 'memory',
+            'entries': ['Trip to Oslo in May', 'Prefers trains over flights'],
+            'updated_at': '2026-10-01T09:00:00Z',
+          },
+          'GET /api/plugins/hermuse/memory/user': (_) => {
+            'target': 'user',
+            'entries': ['Name: Sam, lives in Nantes'],
+            'updated_at': '2026-09-28T09:00:00Z',
+          },
+          'PUT /api/plugins/hermuse/memory/memory': (request) {
+            puts['memory'] = jsonDecode(request.body);
+            return {'ok': true};
+          },
+          'PUT /api/plugins/hermuse/memory/user': (request) {
+            puts['user'] = jsonDecode(request.body);
+            return {'ok': true};
+          },
+        },
+      );
+      await tester.tap(find.bySemanticsLabel('Identity'));
+      await tester.pumpAndSettle();
+      expect(find.text('10.01.26'), findsOneWidget);
+      await _capture(tester, 'proof-panel-identity.png');
+
+      await tester.tap(find.bySemanticsLabel(RegExp('^Open memory')));
+      await tester.pumpAndSettle();
+      expect(find.text('MEMORY.md'), findsOneWidget);
+      expect(find.text('USER.md'), findsOneWidget);
+      expect(find.textContaining('long-term memory'), findsOneWidget);
+      await _capture(tester, 'proof-identity-memory.png');
+
+      Finder field(String text) => find.descendant(
+        of: find.byType(MemoryEditor),
+        matching: find.byWidgetPredicate(
+          (w) => w is EditableText && w.controller.text == text,
+        ),
+      );
+      await tester.enterText(
+        field('Prefers trains over flights'),
+        'Prefers night trains',
+      );
+      await tester.tap(find.bySemanticsLabel('Delete MEMORY.md entry 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Add MEMORY.md entry'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field(''), 'Allergic to peanuts');
+      await tester.tap(find.widgetWithText(YsButton, 'Save'));
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(puts, {
+        'memory': {
+          'entries': ['Prefers night trains', 'Allergic to peanuts'],
+        },
+      });
+      // Saved: the editor closes back to the Identity tab.
+      expect(find.text('MEMORY.md'), findsNothing);
+      expect(find.text('SOUL'), findsOneWidget);
+    });
+
+    testWidgets('Settings → Permissions sets the approvals mode', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final sets = <Map<String, Object?>>[];
+      var mode = 'smart';
+      harness.fake
+        ..on('config.get', (_) => {'value': mode})
+        ..on('config.set', (params) {
+          sets.add(params);
+          mode = '${params['value']}';
+          return {'key': params['key'], 'value': mode};
+        });
+      await _pumpApp(tester, const Size(1938, 1062), harness);
+      await tester.tap(find.bySemanticsLabel('Settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Permissions'), findsOneWidget);
+      expect(find.text('No connectors yet'), findsOneWidget);
+      for (final mode in ApprovalsMode.values) {
+        expect(find.text(mode.label), findsOneWidget);
+      }
+      final manual = find.text(ApprovalsMode.manual.label);
+      await tester.ensureVisible(manual);
+      await tester.pumpAndSettle();
+      await _capture(tester, 'proof-settings-permissions.png');
+
+      await tester.tap(manual);
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(sets, hasLength(1));
+      expect(sets.single, containsPair('key', approvalsModeKey));
+      expect(sets.single, containsPair('value', 'manual'));
+      expect(tester.getSemantics(manual), isSemantics(isChecked: true));
+      expect(find.textContaining('Not saved'), findsNothing);
+    });
+
+    testWidgets('Identity SOUL editor saves SOUL.md', (tester) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final profiles = _ProfilesFixture(harness.fake);
+      await _pumpApp(tester, const Size(1938, 1062), harness);
+      await tester.tap(find.bySemanticsLabel('Identity'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel(RegExp('^Open SOUL.md')));
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(find.text('SOUL.md'), findsOneWidget);
+      expect(find.text('About this file'), findsOneWidget);
+      final soul = find.byWidgetPredicate(
+        (w) =>
+            w is EditableText &&
+            w.controller.text == 'Original independent SOUL',
+      );
+      expect(soul, findsOneWidget);
+      await _capture(tester, 'proof-identity-soul.png');
+
+      await tester.enterText(soul, 'Warm, brief, plans trips by train.');
+      await tester.tap(find.widgetWithText(YsButton, 'Save'));
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      expect(profiles.prompts['default'], 'Warm, brief, plans trips by train.');
+      expect(find.text('About this file'), findsNothing);
+    });
+
+    testWidgets('a scheduled brief shows as a status line, not a bubble', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      harness.fake.on(
+        'session.resume',
+        (_) => {
+          'session_id': 'live-1',
+          'message_count': 2,
+          'info': {'title': 'Trip planning'},
+          'messages': [
+            {
+              'role': 'user',
+              'text':
+                  '[Cronjob "Morning briefing" output — deliver this to '
+                  'the user]\n\nOslo: 9°C, light rain.',
+              'row_id': 1,
+            },
+            {
+              'role': 'assistant',
+              'text': 'Good morning! Oslo is 9°C with light rain today.',
+              'row_id': 2,
+            },
+          ],
+        },
+      );
+      await _pumpApp(tester, const Size(1938, 1062), harness);
+      expect(find.text('Scheduled: Morning briefing'), findsOneWidget);
+      expect(find.textContaining('[Cronjob'), findsNothing);
+      expect(
+        find.text('Good morning! Oslo is 9°C with light rain today.'),
+        findsOneWidget,
+      );
+      await _capture(tester, 'proof-chat-scheduled-notice.png');
+    });
+
+    testWidgets('Goals, Feed and Ideas show their sections and menus', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      Map<String, Object?> goal(
+        String id,
+        String title, {
+        String source = 'user',
+        String statusLine = '',
+        String? parent,
+        bool done = false,
+      }) => {
+        'id': id,
+        'title': title,
+        'category': 'travel',
+        'why': '',
+        'target_date': '',
+        'status': done ? 'done' : 'tracking',
+        'file': 'goals/$id.md',
+        'created_at': '',
+        'timeline': <Object?>[],
+        'source': source,
+        'status_line': statusLine,
+        'done': done,
+        'parent_id': parent,
+      };
+      Map<String, Object?> idea(
+        String id,
+        String title,
+        String pitch,
+        String group,
+        String icon,
+      ) => {
+        'id': id,
+        'title': title,
+        'pitch': pitch,
+        'group': group,
+        'first_step': '',
+        'file': '',
+        'created_at': '',
+        'feedback': <Object?>[],
+        'icon': icon,
+        'seeded': id.startsWith('seed-'),
+      };
+      await _pumpApp(
+        tester,
+        _desktop,
+        harness,
+        plugin: {
+          ..._feedRoutes(),
+          'GET /api/plugins/hermuse/feed': (_) => {
+            'posts': [
+              {
+                'id': 'p1',
+                'title': 'Oslo in May',
+                'topic': 'travel',
+                'body':
+                    'Fjords are thawing and the **coastal ferries** are back '
+                    'on their summer timetable.\n\n- Flåm railway: daily\n'
+                    '- Hurtigruten: from May 2',
+                'sources': ['https://www.visitnorway.com/'],
+                'file': 'feed/p1.md',
+                'created_at': '2026-09-27T08:05:00',
+                'reactions': <String, String>{},
+                'why': 'You are planning an Oslo trip for May.',
+              },
+            ],
+          },
+          'GET /api/plugins/hermuse/goals': (_) => {
+            'goals': [
+              goal(
+                'g1',
+                'Oslo trip in May',
+                source: 'agent',
+                statusLine: 'Flights booked; hotel still open',
+              ),
+              goal(
+                'g2',
+                'Book the Oslo hotel',
+                source: 'agent',
+                parent: 'g1',
+                statusLine: 'Three options shortlisted',
+              ),
+              goal('g3', 'Run a 10k', statusLine: '6k last Sunday'),
+            ],
+          },
+          'GET /api/plugins/hermuse/ideas': (_) => {
+            'ideas': [
+              idea(
+                'i1',
+                'Pack list for Oslo',
+                'A list tuned to May weather in Norway.',
+                'Travel',
+                'travel',
+              ),
+              idea(
+                'seed-returns',
+                'Track my returns',
+                'I follow refunds until the money is back.',
+                'Errands',
+                'returns',
+              ),
+              idea(
+                'seed-workout',
+                'Plan my workouts',
+                'A weekly plan that fits your calendar.',
+                'Health',
+                'workout',
+              ),
+            ],
+          },
+        },
+      );
+      await tester.tap(find.bySemanticsLabel('Close panel'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.bySemanticsLabel('Goals'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tracking'), findsOneWidget);
+      expect(find.text('Flights booked; hotel still open'), findsOneWidget);
+      expect(
+        _top(tester, 'Oslo trip in May'),
+        lessThan(_top(tester, 'Run a 10k')),
+      );
+      await _capture(tester, 'proof-goals.png');
+
+      await tester.tap(find.bySemanticsLabel('Feed'));
+      await tester.pumpAndSettle();
+      expect(find.text('YOUR FEED PROMPT'), findsOneWidget);
+      expect(find.widgetWithText(YsButton, 'Generate'), findsOneWidget);
+      await _capture(tester, 'proof-feed.png');
+      await tester.tap(find.bySemanticsLabel('More actions for Oslo in May'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Why I created this'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('You are planning an Oslo trip for May.'),
+        findsOneWidget,
+      );
+      await _capture(tester, 'proof-feed-why.png');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.bySemanticsLabel('Ideas'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          "I'm always thinking about new ways to help. My favorites land "
+          'here.',
+        ),
+        findsOneWidget,
+      );
+      for (final group in ['Travel', 'Errands', 'Health']) {
+        expect(find.text(group), findsOneWidget, reason: group);
+      }
+      await _capture(tester, 'proof-ideas.png');
     });
 
     testWidgets('close panel then avatar button reopens it', (tester) async {
@@ -961,6 +1440,11 @@ Future<void> main() async {
         );
       }
 
+      // Renames of side chats (connecting titles the main chat "Bot Chat").
+      Iterable<Map<String, Object?>> renames() => harness
+          .calls('session.title')
+          .where((c) => c['title'] != botChatTitle);
+
       var field = await rename();
       final editing = tester.widget<EditableText>(field);
       expect(editing.focusNode.hasFocus, isTrue);
@@ -974,13 +1458,13 @@ Future<void> main() async {
       await tester.pumpAndSettle();
       expect(field, findsNothing);
       expect(find.text('Oslo hotels'), findsOneWidget);
-      expect(harness.calls('session.title'), isEmpty);
+      expect(renames(), isEmpty);
 
       field = await rename();
       await tester.enterText(field, 'Oslo stays');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(harness.calls('session.title'), [
+      expect(renames(), [
         {'session_id': 'live-side-oslo', 'title': 'Oslo stays'},
       ]);
       expect(field, findsNothing);

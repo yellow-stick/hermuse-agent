@@ -911,10 +911,9 @@ void main() {
       // (`/model … --provider`, `/api/model/set`); it runs the main model.
       expect(meta.hermesProvider, 'meta-bridge');
       expect(meta.isDefault, isTrue);
-      expect(
-        state.cards.where((c) => c.isDefault).map((c) => c.id),
-        ['bridge:meta'],
-      );
+      expect(state.cards.where((c) => c.isDefault).map((c) => c.id), [
+        'bridge:meta',
+      ]);
       // Credentials without registration: disconnected with a nudge.
       rest.routes['GET /api/providers/custom-endpoints'] = ScriptedRest.json({
         'endpoints': [],

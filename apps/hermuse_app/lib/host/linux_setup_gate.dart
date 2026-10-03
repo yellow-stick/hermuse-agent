@@ -44,6 +44,8 @@ final class LinuxSetupView extends StatelessWidget {
     }
     final review = phase is SetupReview ? phase : null;
     final dashboardLogin = setup.purpose == LinuxSetupPurpose.dashboardLogin;
+    // The existing service's scheduler unit is missing, stopped or stale.
+    final schedulerBroken = review?.inspection.schedulerReady == false;
     final connecting =
         setup.purpose == LinuxSetupPurpose.connect || dashboardLogin;
     final migration = review?.inspection.canonicalPresent == false
@@ -117,6 +119,14 @@ final class LinuxSetupView extends StatelessWidget {
               ? 'Verified'
               : 'Required for saved credentials',
         ),
+        if (schedulerBroken)
+          const YsChecklistItem(
+            id: 'scheduler-repair',
+            icon: YsIcon.upcoming,
+            title: 'Scheduler — needs repair',
+            state: YsStepState.failed,
+            status: 'Scheduled jobs, reminders and the heartbeat do not run',
+          ),
         if (setup.goal == LinuxSetupGoal.local ||
             setup.goal == LinuxSetupGoal.computer)
           for (final step
@@ -135,6 +145,7 @@ final class LinuxSetupView extends StatelessWidget {
                       RemoteInstallStep.plugin,
                       RemoteInstallStep.computer,
                       RemoteInstallStep.dashboard,
+                      RemoteInstallStep.scheduler,
                       RemoteInstallStep.verify,
                     ])
             YsChecklistItem(
@@ -151,6 +162,7 @@ final class LinuxSetupView extends StatelessWidget {
                   connecting
                       ? 'Private desktop credential'
                       : 'Private dashboard service',
+                RemoteInstallStep.scheduler => 'Scheduler',
                 _ =>
                   connecting
                       ? 'Authenticated desktop access'
@@ -171,7 +183,17 @@ final class LinuxSetupView extends StatelessWidget {
             ),
       ],
       actions: [
-        if (review != null)
+        if (review != null && schedulerBroken)
+          YsButton.primary(
+            label: 'Repair scheduler',
+            onPressed: () => controller.repairScheduler(),
+          ),
+        if (review != null && schedulerBroken && dashboardLogin)
+          YsButton.neutral(
+            label: 'Sign in without repair',
+            onPressed: controller.skipSchedulerRepair,
+          )
+        else if (review != null)
           YsButton.primary(
             label: migration != null
                 ? 'Approve backed-up migration'

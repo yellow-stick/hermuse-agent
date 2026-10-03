@@ -1,11 +1,14 @@
 """Hermuse cron jobs: feed (daily), ideas (weekly), goals check-in (weekly),
-reflection (nightly). Job authorship goes through ``cron.jobs.create_job`` /
-``update_job`` — the same API the ``cronjob`` agent tool uses — so records are
-always scheduler-valid. Hermuse jobs are tagged
-``origin={"source": "hermuse", "key": <spec key>}`` for idempotent registration;
-the delivery layer ignores marker origins without platform/chat_id
-(``cron/scheduler_delivery.py::_resolve_origin`` requires both), and jobs
-deliver ``local`` (persist only; surfaces render from the files).
+reflection (nightly) and the heartbeat (every 30 minutes). Job authorship goes
+through ``cron.jobs.create_job`` / ``update_job`` — the same API the
+``cronjob_manage`` agent tool uses — so records are always scheduler-valid.
+Hermuse jobs are tagged ``origin={"source": "hermuse", "key": <spec key>}`` for
+idempotent registration; the delivery layer ignores marker origins without
+platform/chat_id (``cron/scheduler_delivery.py::_resolve_origin`` requires both).
+Maintenance jobs deliver ``local`` (persist only; surfaces render from the files)
+and are hidden from the app's Upcoming list; the heartbeat delivers
+``bot-chat`` (the profile's "Bot Chat" session, the app's main chat) and stays
+silent with ``NO_REPLY`` when nothing needs the user.
 """
 
 from __future__ import annotations
@@ -25,6 +28,9 @@ class CronSpec:
     schedule: str
     skill_ref: str
     prompt: str
+    deliver: str = "local"
+    # Maintenance jobs the app keeps out of its Upcoming list.
+    hidden: bool = True
 
 
 def _prompt(intro: str, task: str) -> str:
@@ -39,6 +45,35 @@ def _prompt(intro: str, task: str) -> str:
         "goal_update, artifact_save, reflection_write."
     )
 
+
+HEARTBEAT_KEY = "heartbeat"
+HEARTBEAT_NAME = "Hermuse heartbeat"
+
+HEARTBEAT_PROMPT = (
+    "You are the Hermuse heartbeat: a quiet check-in on the user's behalf. You "
+    "only review and report; you never book, buy, send or change anything for "
+    "the user.\n\n"
+    "Review, in this order: durable memory (HERMES_HOME/memories/MEMORY.md and "
+    "USER.md), the tracked goals under HERMES_HOME/hermuse/goals/ (index.json "
+    "holds each goal with its status_line), the checklist in "
+    "HERMES_HOME/hermuse/HEARTBEAT.md, and the upcoming scheduled jobs "
+    "(cronjob_manage action=list). Honour HERMES_HOME/hermuse/PREFERENCES.md "
+    "(what never to bring up, when and how to write). Update a goal's "
+    "status_line with goal_update when you learn something new about it.\n\n"
+    "Something needs the user when it needs them now or soon: a deadline "
+    "approaching with a step still open (e.g. a trip in 4 days with the flight "
+    "unbooked), a commitment drifting, a decision only they can make. Your "
+    "final answer is then a brief for the agent of the user's main chat (not "
+    "a message to the user), in exactly this form:\n\n"
+    "Ask the user: <one or two sentences: what you noticed and why it matters "
+    "now>\n"
+    "Offer these choices with clarify: <choice A> | <choice B> | <choice C>\n"
+    "Do not act before the user answers.\n\n"
+    "Use 2-4 short choices (a few words each, e.g. \"Search flights now | "
+    "Remind me tomorrow | Already booked\"). Do not repeat a nudge you already "
+    "sent unless something changed. When nothing needs the user, reply exactly "
+    "NO_REPLY and nothing else."
+)
 
 SPECS: tuple[CronSpec, ...] = (
     CronSpec(
@@ -94,6 +129,15 @@ SPECS: tuple[CronSpec, ...] = (
             "update MEMORY.md-style durable memory as usual.",
         ),
     ),
+    CronSpec(
+        key=HEARTBEAT_KEY,
+        name=HEARTBEAT_NAME,
+        schedule="*/30 * * * *",
+        skill_ref=SKILL_REF,
+        prompt=HEARTBEAT_PROMPT,
+        deliver="bot-chat",
+        hidden=False,
+    ),
 )
 
 
@@ -133,7 +177,7 @@ def _desired(spec: CronSpec) -> dict[str, Any]:
         "prompt": spec.prompt,
         "schedule": spec.schedule,
         "skills": [spec.skill_ref],
-        "deliver": "local",
+        "deliver": spec.deliver,
         "origin": _marker_origin(spec.key),
     }
 
@@ -155,7 +199,7 @@ def register_job(jobs_module: Any, key: str) -> tuple[dict[str, Any], bool]:
             schedule=spec.schedule,
             name=spec.name,
             skills=[spec.skill_ref],
-            deliver="local",
+            deliver=spec.deliver,
             origin=_marker_origin(spec.key),
         )
         return record, True

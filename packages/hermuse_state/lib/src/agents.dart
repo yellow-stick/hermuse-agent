@@ -167,6 +167,28 @@ class AgentProfiles extends _$AgentProfiles {
     }
   }
 
+  /// Saves [profile]'s SOUL.md (the Identity tab's SOUL editor; read it
+  /// with [agentDetailsProvider], which reloads afterwards).
+  Future<void> saveSoul(String profile, String soul) async {
+    if (soul.trim().isEmpty) {
+      throw ArgumentError('Enter a prompt for this agent.');
+    }
+    final link = ref.keepAlive();
+    try {
+      final connection = await ref.read(connectionProvider(instanceId).future);
+      final result = await connection.transport.call(
+        HermesMethods.profilesConfigure,
+        ProfilesConfigureParams(name: profile, soul: soul),
+      );
+      if (!result.ok || result.applied.soul != true) {
+        throw const AgentWriteException('Could not save the SOUL.');
+      }
+    } finally {
+      ref.invalidate(agentDetailsProvider(instanceId, profile));
+      link.close();
+    }
+  }
+
   AgentProfile? _loaded(String profile) =>
       state.value?.where((agent) => agent.profile == profile).firstOrNull;
 

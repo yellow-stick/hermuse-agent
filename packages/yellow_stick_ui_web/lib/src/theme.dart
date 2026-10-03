@@ -89,5 +89,10 @@ abstract final class YsTheme {
   static Color get errorContent => .variable('--error-content');
   static Color get logoSurface => .variable('--logo-surface');
   static Color get avatarSurface => .variable('--avatar-surface');
+  static Color get soulStart => .variable('--soul-start');
+  static Color get soulEnd => .variable('--soul-end');
+  static Color get memoryStart => .variable('--memory-start');
+  static Color get memoryEnd => .variable('--memory-end');
+  static Color get identityContent => .variable('--identity-content');
   static Color get shadow => .variable('--shadow');
 }

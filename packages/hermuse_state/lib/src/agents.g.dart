@@ -50,7 +50,7 @@ final class AgentProfilesProvider
   }
 }
 
-String _$agentProfilesHash() => r'1e74d2847e4a137900065db0dbcb685ee5224609';
+String _$agentProfilesHash() => r'e1f2b317c6dfa67cb2d8c158be40da9ec6ab25bd';
 
 final class AgentProfilesFamily extends $Family
     with

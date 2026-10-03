@@ -54,8 +54,18 @@ final class _MessageRowState extends State<MessageRow> {
     }
   }
 
+  /// An agent message made only of status notices (a scheduled job's brief,
+  /// "Scheduled: Morning briefing"): a compact centred line, not a bubble.
+  bool get _isStatusLine {
+    final blocks = widget.message.blocks;
+    return !_isUser &&
+        blocks.isNotEmpty &&
+        blocks.every((b) => b is NoticeBlock && !b.isError);
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isStatusLine) return _StatusLine(message: widget.message);
     final isCard = widget.message.blocks.any((b) => b is FlightResultsBlock);
     final bubble = isCard
         ? FlightCard(
@@ -622,6 +632,47 @@ final class _NoticeView extends StatelessWidget {
       block.text,
       style: YsType.small.flutter.copyWith(
         color: block.isError ? palette.errorColor : palette.contentMutedColor,
+      ),
+    );
+  }
+}
+
+/// A notice-only agent message, centred and muted between the bubbles.
+final class _StatusLine extends StatelessWidget {
+  const _StatusLine({required this.message});
+
+  final Message message;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final text = [
+      for (final block in message.blocks.whereType<NoticeBlock>()) block.text,
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: YsSpace.xs),
+      child: Semantics(
+        container: true,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            YsIconWidget(
+              YsIcon.upcoming,
+              size: YsLayout.inlineIcon,
+              color: palette.contentMutedColor,
+            ),
+            const SizedBox(width: YsSpace.xs),
+            Flexible(
+              child: Text(
+                text,
+                style: YsType.caption.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

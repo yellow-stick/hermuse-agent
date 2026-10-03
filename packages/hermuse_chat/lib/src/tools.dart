@@ -24,6 +24,83 @@ String toolTitle(String name) {
   return '${words[0].toUpperCase()}${words.substring(1)}';
 }
 
+/// Host of a tool's `url` argument (`https://` assumed without a scheme),
+/// or '' when there is none. A [toolDetail] line works too: its first word.
+String urlHost(Object? url) {
+  if (url is! String || url.trim().isEmpty) return '';
+  final first = url.trim().split(RegExp(r'\s+')).first;
+  return Uri.tryParse(first.contains('://') ? first : 'https://$first')?.host ??
+      '';
+}
+
+/// What the agent is doing while it runs the tool [name] on [detail] (its
+/// [toolDetail]), in a few words for the panel under the agent's name:
+/// "Searching the web", "Browsing example.com", "Running a command".
+String toolStepLabel(String name, {String detail = ''}) {
+  switch (toolKindOf(name)) {
+    case ToolKind.terminal:
+      return 'Running a command';
+    case ToolKind.code:
+      return 'Running code';
+    case ToolKind.file:
+      return switch (name) {
+        'read_file' => 'Reading a file',
+        'search_files' => 'Searching files',
+        _ => 'Editing a file',
+      };
+    case ToolKind.web:
+      if (name == 'web_search') return 'Searching the web';
+      final host = urlHost(detail);
+      return host.isEmpty ? 'Reading the web' : 'Reading $host';
+    case ToolKind.browser:
+      final host = urlHost(detail);
+      return host.isEmpty ? 'Using the browser' : 'Browsing $host';
+    case ToolKind.other:
+      return switch (name) {
+        'memory' => 'Updating memory',
+        'session_search' => 'Searching past chats',
+        'cronjob' => 'Scheduling',
+        'delegate_task' => 'Delegating a task',
+        'vision_analyze' => 'Looking at an image',
+        'image_generate' => 'Creating an image',
+        'todo' => 'Planning',
+        'clarify' => 'Asking you',
+        'skill_view' || 'skills_list' || 'skill_manage' => 'Reading skills',
+        'send_message' => 'Sending a message',
+        _ => 'Working',
+      };
+  }
+}
+
+/// What the agent is doing in a running turn whose bubble holds [blocks]:
+/// its running tool ([toolStepLabel]), an explained wait, the browser,
+/// "Writing" while the answer streams, else "Thinking".
+String agentStepLabel(List<Block> blocks) {
+  final tool = blocks
+      .whereType<ToolCallBlock>()
+      .where((b) => b.running)
+      .lastOrNull;
+  if (tool != null) return toolStepLabel(tool.name, detail: tool.detail);
+  if (blocks.whereType<WaitBlock>().lastOrNull case final wait?) {
+    return wait.text;
+  }
+  final shown = [
+    for (final b in blocks)
+      if (b is! ReasoningBlock && b is! BrowserBlock) b,
+  ];
+  if (shown.lastOrNull is TextBlock) return 'Writing';
+  final browser = blocks
+      .whereType<BrowserBlock>()
+      .where((b) => b.running && b.step.isNotEmpty)
+      .firstOrNull;
+  if (browser != null) {
+    return browser.host.isEmpty
+        ? 'Using the browser'
+        : 'Browsing ${browser.host}';
+  }
+  return 'Thinking';
+}
+
 /// Arguments that say what a call works on, most telling first.
 const _detailKeys = [
   'command',

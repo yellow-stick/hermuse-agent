@@ -16,6 +16,7 @@ import 'package:hermuse_web/connections.dart' as _connections;
 import 'package:hermuse_web/feed.dart' as _feed;
 import 'package:hermuse_web/goals.dart' as _goals;
 import 'package:hermuse_web/ideas.dart' as _ideas;
+import 'package:hermuse_web/identity.dart' as _identity;
 import 'package:hermuse_web/instances.dart' as _instances;
 import 'package:hermuse_web/library.dart' as _library;
 import 'package:hermuse_web/markdown_view.dart' as _markdown_view;
@@ -30,6 +31,7 @@ import 'package:hermuse_web/screens.dart' as _screens;
 import 'package:hermuse_web/settings.dart' as _settings;
 import 'package:hermuse_web/sidebar.dart' as _sidebar;
 import 'package:hermuse_web/thread.dart' as _thread;
+import 'package:hermuse_web/upcoming.dart' as _upcoming;
 import 'package:yellow_stick_ui_web/src/art.dart' as _art;
 import 'package:yellow_stick_ui_web/src/avatar.dart' as _avatar;
 import 'package:yellow_stick_ui_web/src/burst.dart' as _burst;
@@ -93,6 +95,7 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._feed.HermusePluginMissing.styles,
     ..._goals.HermuseGoals.styles,
     ..._ideas.HermuseIdeas.styles,
+    ..._identity.HermuseIdentity.styles,
     ..._instances.HermuseInstances.styles,
     ..._instances.HermuseWelcome.styles,
     ..._library.HermuseLibrary.styles,
@@ -113,6 +116,7 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._sidebar.HermuseSidebar.styles,
     ..._thread.HermuseThread.styles,
     ..._thread.HermuseThreadHeader.styles,
+    ..._upcoming.HermuseUpcoming.styles,
     ..._art.YsArtView.styles,
     ..._avatar.YsAvatar.styles,
     ..._burst.YsBurstView.styles,

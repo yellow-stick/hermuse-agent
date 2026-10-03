@@ -139,5 +139,29 @@ void main() {
       );
       expect(requests[2].url.queryParameters['profile'], 'noah');
     });
+
+    test('PATCH sends a scoped JSON body', () async {
+      final requests = <http.Request>[];
+      final client = MockClient((request) async {
+        requests.add(request);
+        return http.Response('{"id":"g1","done":true}', 200);
+      });
+      addTearDown(client.close);
+      final rest = HermesRestClient(
+        client,
+        baseUrl: Uri.parse('https://server.example'),
+        profile: 'aya',
+      );
+      final body = await rest.patchJson('/api/plugins/hermuse/goals/g1', {
+        'done': true,
+      });
+      expect(body, {'id': 'g1', 'done': true});
+      expect(requests.single.method, 'PATCH');
+      expect(requests.single.url.queryParameters['profile'], 'aya');
+      expect(jsonDecode(requests.single.body), {
+        'profile': 'aya',
+        'done': true,
+      });
+    });
   });
 }

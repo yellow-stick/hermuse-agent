@@ -34,7 +34,7 @@ const hermuseGoalCategories = [
 enum FeedReaction { love, discuss }
 
 /// A feed post. Shape: `{id, title, topic, body, sources[], file,
-/// created_at, reactions: {love?: ts, discuss?: ts}}`.
+/// created_at, reactions: {love?: ts, discuss?: ts}, why, image_url}`.
 final class FeedPost {
   const FeedPost({
     required this.id,
@@ -45,6 +45,8 @@ final class FeedPost {
     required this.file,
     required this.createdAt,
     required this.reactions,
+    this.why = '',
+    this.imageUrl,
   });
 
   factory FeedPost.fromJson(Map<String, Object?> json) => FeedPost(
@@ -59,6 +61,11 @@ final class FeedPost {
       for (final e in ((json['reactions'] as Map?) ?? const {}).entries)
         e.key as String: e.value as String? ?? '',
     },
+    why: json['why'] as String? ?? '',
+    imageUrl: switch (json['image_url']) {
+      final String url when url.trim().isNotEmpty => url.trim(),
+      _ => null,
+    },
   );
 
   final String id;
@@ -70,11 +77,28 @@ final class FeedPost {
   final String createdAt;
   final Map<String, String> reactions;
 
+  /// "Why I created this": what in the user's context led to the post;
+  /// '' for posts written before the agent gave reasons.
+  final String why;
+
+  /// The post's image (an absolute URL, or a path on the instance), if any.
+  final String? imageUrl;
+
   bool reacted(FeedReaction reaction) => reactions.containsKey(reaction.name);
 }
 
+/// A feed edition started on demand (`POST /feed/generate`).
+final class FeedGeneration {
+  const FeedGeneration({required this.jobId, required this.started});
+
+  /// The Hermes cron job running it.
+  final String jobId;
+  final bool started;
+}
+
 /// An idea. Shape: `{id, title, pitch, group, first_step, file,
-/// created_at, feedback: [{at, text}]}`.
+/// created_at, feedback: [{at, text}], seeded, icon}`. Starter-catalog
+/// ideas ([seeded], ids `seed-…`) carry no file nor creation time.
 final class Idea {
   const Idea({
     required this.id,
@@ -85,6 +109,8 @@ final class Idea {
     required this.file,
     required this.createdAt,
     required this.feedback,
+    this.seeded = false,
+    this.icon = '',
   });
 
   factory Idea.fromJson(Map<String, Object?> json) => Idea(
@@ -99,6 +125,8 @@ final class Idea {
       for (final e in ((json['feedback'] as List?) ?? const []))
         IdeaFeedback.fromJson(e as Map<String, Object?>),
     ],
+    seeded: json['seeded'] == true,
+    icon: json['icon'] as String? ?? '',
   );
 
   final String id;
@@ -109,6 +137,13 @@ final class Idea {
   final String file;
   final String createdAt;
   final List<IdeaFeedback> feedback;
+
+  /// Part of the starter catalog shipped with the plugin, not the agent's.
+  final bool seeded;
+
+  /// Icon key: `workout`, `shopping`, `people`, `city`, `documents`,
+  /// `returns`, `inbox`, `money`, `health`, `travel`; '' when none.
+  final String icon;
 }
 
 /// One "idea feedback" entry: `{at, text}`.
@@ -127,8 +162,13 @@ final class IdeaFeedback {
 /// Goal status (`tracking` or `done`).
 enum GoalStatus { tracking, done }
 
+/// Who set a goal: the user, or the agent tracking a commitment of its own
+/// (a trip, a scheduled briefing).
+enum GoalSource { user, agent }
+
 /// A goal. Shape: `{id, title, category, why, target_date, status, file,
-/// created_at, timeline: [{at, note, progress}]}`.
+/// created_at, timeline: [{at, note, progress}], source, status_line, done,
+/// parent_id, cron_job_id}`.
 final class Goal {
   const Goal({
     required this.id,
@@ -140,22 +180,37 @@ final class Goal {
     required this.file,
     required this.createdAt,
     required this.timeline,
+    this.source = GoalSource.user,
+    this.statusLine = '',
+    this.done = false,
+    this.parentId,
+    this.cronJobId,
   });
 
-  factory Goal.fromJson(Map<String, Object?> json) => Goal(
-    id: json['id'] as String? ?? '',
-    title: json['title'] as String? ?? '',
-    category: json['category'] as String? ?? '',
-    why: json['why'] as String? ?? '',
-    targetDate: json['target_date'] as String? ?? '',
-    status: json['status'] == 'done' ? GoalStatus.done : GoalStatus.tracking,
-    file: json['file'] as String? ?? '',
-    createdAt: json['created_at'] as String? ?? '',
-    timeline: [
-      for (final e in ((json['timeline'] as List?) ?? const []))
-        GoalEvent.fromJson(e as Map<String, Object?>),
-    ],
-  );
+  factory Goal.fromJson(Map<String, Object?> json) {
+    final status = json['status'] == 'done'
+        ? GoalStatus.done
+        : GoalStatus.tracking;
+    return Goal(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      category: json['category'] as String? ?? '',
+      why: json['why'] as String? ?? '',
+      targetDate: json['target_date'] as String? ?? '',
+      status: status,
+      file: json['file'] as String? ?? '',
+      createdAt: json['created_at'] as String? ?? '',
+      timeline: [
+        for (final e in ((json['timeline'] as List?) ?? const []))
+          GoalEvent.fromJson(e as Map<String, Object?>),
+      ],
+      source: json['source'] == 'agent' ? GoalSource.agent : GoalSource.user,
+      statusLine: json['status_line'] as String? ?? '',
+      done: json['done'] as bool? ?? status == GoalStatus.done,
+      parentId: _id(json['parent_id']),
+      cronJobId: _id(json['cron_job_id']),
+    );
+  }
 
   final String id;
   final String title;
@@ -166,6 +221,57 @@ final class Goal {
   final String file;
   final String createdAt;
   final List<GoalEvent> timeline;
+  final GoalSource source;
+
+  /// Latest progress, shown under the title; '' when none was written.
+  final String statusLine;
+  final bool done;
+
+  /// The goal this one is a subgoal of.
+  final String? parentId;
+
+  /// The scheduled job working towards it (a briefing the agent set up).
+  final String? cronJobId;
+}
+
+String? _id(Object? value) =>
+    value is String && value.isNotEmpty ? value : null;
+
+/// The Goals surface: "Tracking" (goals the agent set itself) above
+/// "Goals" (set by the user), top-level goals in list order, each with its
+/// subgoals.
+final class GoalSections {
+  const GoalSections({
+    required this.tracking,
+    required this.goals,
+    required this.subgoals,
+  });
+
+  final List<Goal> tracking;
+  final List<Goal> goals;
+
+  /// Subgoals by parent goal id, in list order.
+  final Map<String, List<Goal>> subgoals;
+
+  List<Goal> subgoalsOf(Goal goal) => subgoals[goal.id] ?? const [];
+}
+
+/// [goals] split into [GoalSections]; a subgoal whose parent is not in the
+/// list stands as a top-level goal.
+GoalSections goalSections(List<Goal> goals) {
+  final ids = {for (final g in goals) g.id};
+  final subgoals = <String, List<Goal>>{};
+  final tracking = <Goal>[];
+  final own = <Goal>[];
+  for (final goal in goals) {
+    final parent = goal.parentId;
+    if (parent != null && parent != goal.id && ids.contains(parent)) {
+      subgoals.putIfAbsent(parent, () => []).add(goal);
+    } else {
+      (goal.source == GoalSource.agent ? tracking : own).add(goal);
+    }
+  }
+  return GoalSections(tracking: tracking, goals: own, subgoals: subgoals);
 }
 
 /// One goal timeline entry: `{at, note, progress}`.
@@ -299,7 +405,7 @@ const hermusePluginByHandGuide =
 /// Version of the Hermuse plugin these apps are built with: the desktop app
 /// bundles it (`plugin.yaml`), and a remote Hermes running an older one is
 /// offered the update.
-const hermusePluginVersion = '0.4.0';
+const hermusePluginVersion = '0.5.0';
 
 /// Hermes' agent-plugin management API.
 const _pluginsApi = '/api/dashboard/agent-plugins';
@@ -595,6 +701,41 @@ class Feed extends _$Feed {
     return post;
   }
 
+  /// Deletes a post.
+  Future<void> delete(String postId) async {
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
+    await rest.delete(
+      '$hermusePluginRoute/feed/${Uri.encodeComponent(postId)}',
+    );
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData([
+        for (final p in current)
+          if (p.id != postId) p,
+      ]);
+    }
+  }
+
+  /// Runs a feed edition now: the plugin marks its feed job due and the
+  /// Hermes scheduler fires it; new posts arrive when the agent wrote them
+  /// (reload then). Throws [HermesHttpError] 409 when the feed job is not
+  /// registered (the plugin's schedule is off).
+  Future<FeedGeneration> generate() async {
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
+    final body = await rest.postJson(
+      '$hermusePluginRoute/feed/generate',
+      const {},
+    );
+    return FeedGeneration(
+      jobId: '${body['job_id'] ?? ''}',
+      started: body['started'] == true,
+    );
+  }
+
   /// Publishes a post (used by tests/smoke; the agent usually writes).
   Future<FeedPost> publish({
     required String title,
@@ -638,6 +779,24 @@ class Ideas extends _$Ideas {
       for (final e in ((body['ideas'] as List?) ?? const []))
         Idea.fromJson(e as Map<String, Object?>),
     ];
+  }
+
+  /// Hides an idea (a starter one or the agent's) from the list.
+  Future<void> dismiss(String ideaId) async {
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
+    await rest.postJson(
+      '$hermusePluginRoute/ideas/${Uri.encodeComponent(ideaId)}/dismiss',
+      const {},
+    );
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData([
+        for (final i in current)
+          if (i.id != ideaId) i,
+      ]);
+    }
   }
 
   /// Appends user feedback to an idea; returns the updated idea.
@@ -685,12 +844,15 @@ class Goals extends _$Goals {
   }
 
   /// Tracks a new goal; returns it. [category] must be a
-  /// [hermuseGoalCategories] value (the server 422s otherwise).
+  /// [hermuseGoalCategories] value (the server 422s otherwise); a
+  /// [parentId] files it as a subgoal.
   Future<Goal> create({
     required String title,
     required String category,
     required String why,
     String targetDate = '',
+    GoalSource source = GoalSource.user,
+    String? parentId,
   }) async {
     final rest = await ref.read(
       restClientProvider(instanceId, profile: profile).future,
@@ -701,9 +863,71 @@ class Goals extends _$Goals {
         'category': category,
         'why': why,
         if (targetDate.isNotEmpty) 'target_date': targetDate,
+        'source': source.name,
+        'parent_id': ?parentId,
       }),
     );
     ref.invalidateSelf();
+    return goal;
+  }
+
+  /// "Add subgoal": a goal under [parent], in its category; [why] defaults
+  /// to naming the parent.
+  Future<Goal> addSubgoal({
+    required Goal parent,
+    required String title,
+    String why = '',
+  }) => create(
+    title: title,
+    category: hermuseGoalCategories.contains(parent.category)
+        ? parent.category
+        : 'something_else',
+    why: why.trim().isEmpty ? 'Part of "${parent.title}"' : why,
+    parentId: parent.id,
+  );
+
+  /// "Rename": a new title (the server refuses a blank one).
+  Future<Goal> rename(String goalId, String title) =>
+      _patch(goalId, {'title': title.trim()});
+
+  /// "Complete" (or reopen with [done] false).
+  Future<Goal> complete(String goalId, {bool done = true}) =>
+      _patch(goalId, {'done': done});
+
+  /// "Delete": the goal and its subgoals.
+  Future<void> delete(String goalId) async {
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
+    await rest.delete(
+      '$hermusePluginRoute/goals/${Uri.encodeComponent(goalId)}',
+    );
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData([
+        for (final g in current)
+          if (g.id != goalId && g.parentId != goalId) g,
+      ]);
+    }
+  }
+
+  Future<Goal> _patch(String goalId, Map<String, Object?> changes) async {
+    final rest = await ref.read(
+      restClientProvider(instanceId, profile: profile).future,
+    );
+    final goal = Goal.fromJson(
+      await rest.patchJson(
+        '$hermusePluginRoute/goals/${Uri.encodeComponent(goalId)}',
+        changes,
+      ),
+    );
+    final current = state.value;
+    if (current != null) {
+      state = AsyncData([
+        for (final g in current)
+          if (g.id == goalId) goal else g,
+      ]);
+    }
     return goal;
   }
 

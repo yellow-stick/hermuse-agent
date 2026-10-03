@@ -97,6 +97,8 @@ class FeedPostBody(BaseModel):
     body: str = Field(min_length=1, max_length=20000)
     topic: str = Field(default="", max_length=120)
     sources: list[str] = Field(default_factory=list, max_length=20)
+    why: str = Field(default="", max_length=1000)
+    image_url: Optional[str] = Field(default=None, max_length=2000, pattern=r"^https?://")
 
 
 class ReactBody(BaseModel):
@@ -124,7 +126,33 @@ def create_feed_post(payload: FeedPostBody):
         body=payload.body,
         topic=payload.topic.strip(),
         sources=[s for s in (s.strip() for s in payload.sources) if s],
+        why=payload.why.strip(),
+        image_url=payload.image_url,
     )
+
+
+@router.post("/feed/generate")
+def generate_feed():
+    """Run the feed job now: ``cron.jobs.trigger_job`` marks it due, the
+    scheduler (Hermes gateway) fires it on its next tick."""
+    cron_jobs, cron_specs = _cron_modules()
+    job = cron_specs.find_job(cron_jobs, "feed")
+    if job is None:
+        raise HTTPException(status_code=409, detail="feed job not registered; enable Hermuse automations first")
+    try:
+        triggered = cron_jobs.trigger_job(job["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if triggered is None:
+        raise _not_found("feed job")
+    return {"job_id": job["id"], "started": True}
+
+
+@router.delete("/feed/{post_id}")
+def delete_feed_post(post_id: str):
+    if not store.delete_feed_post(_root(), post_id):
+        raise _not_found("feed post")
+    return {"ok": True}
 
 
 @router.post("/feed/{post_id}/react")
@@ -143,6 +171,7 @@ class IdeaBody(BaseModel):
     pitch: str = Field(min_length=1, max_length=8000)
     group: str = Field(min_length=1, max_length=80)
     first_step: str = Field(default="", max_length=2000)
+    icon: str = Field(default="", max_length=40)
 
 
 class IdeaFeedbackBody(BaseModel):
@@ -164,13 +193,17 @@ def get_idea(idea_id: str):
 
 @router.post("/ideas", status_code=201)
 def create_idea(payload: IdeaBody):
-    return store.propose_idea(
-        _root(),
-        title=payload.title.strip(),
-        pitch=payload.pitch,
-        group=payload.group.strip(),
-        first_step=payload.first_step,
-    )
+    try:
+        return store.propose_idea(
+            _root(),
+            title=payload.title.strip(),
+            pitch=payload.pitch,
+            group=payload.group.strip(),
+            first_step=payload.first_step,
+            icon=payload.icon.strip(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/ideas/{idea_id}/feedback")
@@ -181,6 +214,13 @@ def add_idea_feedback(idea_id: str, payload: IdeaFeedbackBody):
     return record
 
 
+@router.post("/ideas/{idea_id}/dismiss")
+def dismiss_idea(idea_id: str):
+    if not store.dismiss_idea(_root(), idea_id):
+        raise _not_found("idea")
+    return {"ok": True}
+
+
 # --- Goals -----------------------------------------------------------------
 
 
@@ -189,12 +229,20 @@ class GoalBody(BaseModel):
     category: str = Field(pattern="^(health|relationships|finance|career|interests|productivity|something_else)$")
     why: str = Field(min_length=1, max_length=8000)
     target_date: str = Field(default="", max_length=40)
+    source: str = Field(default="user", pattern="^(user|agent)$")
+    parent_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class GoalPatchBody(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    done: Optional[bool] = None
 
 
 class GoalUpdateBody(BaseModel):
     note: str = Field(min_length=1, max_length=8000)
     progress: str = Field(default="", max_length=500)
     status: str = Field(default="", pattern="^(|tracking|done)$")
+    status_line: Optional[str] = Field(default=None, max_length=300)
 
 
 @router.get("/goals")
@@ -219,19 +267,91 @@ def create_goal(payload: GoalBody):
             category=payload.category,
             why=payload.why,
             target_date=payload.target_date.strip(),
+            source=payload.source,
+            parent_id=(payload.parent_id or "").strip() or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.patch("/goals/{goal_id}")
+def patch_goal(goal_id: str, payload: GoalPatchBody):
+    title = payload.title.strip() if payload.title is not None else None
+    if title == "":
+        raise HTTPException(status_code=422, detail="title cannot be blank")
+    record = store.patch_goal(_root(), goal_id, title=title, done=payload.done)
+    if record is None:
+        raise _not_found("goal")
+    return record
+
+
+@router.delete("/goals/{goal_id}")
+def delete_goal(goal_id: str):
+    if not store.delete_goal(_root(), goal_id):
+        raise _not_found("goal")
+    return {"ok": True}
+
+
 @router.post("/goals/{goal_id}/update")
 def update_goal_route(goal_id: str, payload: GoalUpdateBody):
     record = store.update_goal(
-        _root(), goal_id, payload.note, payload.progress, payload.status
+        _root(), goal_id, payload.note, payload.progress, payload.status,
+        status_line=payload.status_line,
     )
     if record is None:
         raise _not_found("goal")
     return record
+
+
+# --- Tasks (Activity) --------------------------------------------------------
+
+
+@router.get("/tasks")
+def list_tasks(
+    limit: int = Query(default=100, ge=1, le=store.TASKS_CAP),
+    before: Optional[str] = Query(default=None, max_length=64),
+):
+    cutoff = None
+    if before:
+        try:
+            cutoff = store.parse_iso(before)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="before must be an ISO-8601 timestamp") from exc
+    return {"tasks": store.list_tasks(_root(), limit, cutoff)}
+
+
+# --- Memory (Hermes MEMORY.md / USER.md) -------------------------------------
+
+
+class MemoryBody(BaseModel):
+    entries: list[str] = Field(max_length=1000)
+
+
+def _memory_lock() -> Optional[Callable[[Path], Any]]:
+    """Hermes' own cross-process lock for memory files (``MemoryStore._file_lock``)."""
+    try:
+        from tools.memory_tool import MemoryStore
+    except ImportError:
+        return None
+    return MemoryStore._file_lock
+
+
+@router.get("/memory/{target}")
+def get_memory(target: str):
+    if target not in store.MEMORY_TARGETS:
+        raise _not_found("memory target")
+    return store.read_memory(get_hermes_home(), target)
+
+
+@router.put("/memory/{target}")
+def put_memory(target: str, payload: MemoryBody):
+    if target not in store.MEMORY_TARGETS:
+        raise _not_found("memory target")
+    try:
+        store.write_memory(get_hermes_home(), target, payload.entries, lock=_memory_lock())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 # --- Artifacts -------------------------------------------------------------
@@ -321,20 +441,26 @@ def put_managed_file(name: str, payload: MarkdownBody):
 # --- Cron ------------------------------------------------------------------
 
 
-@router.get("/cron")
-def cron_status():
+def _cron_modules() -> tuple[Any, Any]:
     try:
         from cron import jobs as cron_jobs
-        from cron_specs import SPECS, find_job  # noqa: E402 — plugin-root import, see sys.path above
+        import cron_specs  # noqa: E402 — plugin-root import, see sys.path above
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
+    return cron_jobs, cron_specs
+
+
+@router.get("/cron")
+def cron_status():
+    cron_jobs, cron_specs = _cron_modules()
     out: list[dict[str, Any]] = []
-    for spec in SPECS:
-        job = find_job(cron_jobs, spec.key)
+    for spec in cron_specs.SPECS:
+        job = cron_specs.find_job(cron_jobs, spec.key)
         out.append({
             "key": spec.key,
             "name": spec.name,
             "schedule": spec.schedule,
+            "hidden": spec.hidden,
             "registered": job is not None,
             "job_id": job.get("id") if job else None,
             "enabled": bool(job.get("enabled", True)) if job else False,
@@ -345,12 +471,8 @@ def cron_status():
 
 @router.post("/cron/enable")
 def cron_enable():
-    try:
-        from cron import jobs as cron_jobs
-        from cron_specs import register_all  # noqa: E402
-    except ImportError as exc:
-        raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
-    results = register_all(cron_jobs)
+    cron_jobs, cron_specs = _cron_modules()
+    results = cron_specs.register_all(cron_jobs)
     return {
         "jobs": [
             {"key": key, "job_id": record.get("id"), "created": created,
@@ -362,12 +484,8 @@ def cron_enable():
 
 @router.post("/cron/disable")
 def cron_disable():
-    try:
-        from cron import jobs as cron_jobs
-        from cron_specs import remove_all  # noqa: E402
-    except ImportError as exc:
-        raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
-    return {"removed": remove_all(cron_jobs)}
+    cron_jobs, cron_specs = _cron_modules()
+    return {"removed": cron_specs.remove_all(cron_jobs)}
 
 
 # --- Dashboard ---------------------------------------------------------------

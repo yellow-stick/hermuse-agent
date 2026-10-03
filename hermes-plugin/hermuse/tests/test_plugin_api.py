@@ -278,3 +278,138 @@ def test_profile_routes_reject_unknown_and_traversal(client, hermes_home):
     response = client.get("/api/plugins/hermuse/feed?profile=missing")
     assert response.status_code == 404
     assert not (hermes_home / "profiles" / "missing").exists()
+
+
+API = "/api/plugins/hermuse"
+
+
+def test_feed_why_image_and_delete(client):
+    created = client.post(f"{API}/feed", json={
+        "title": "Rain", "body": "**Bring** a coat.", "why": "You bike to work.",
+        "image_url": "https://example.com/rain.png"})
+    assert created.status_code == 201, created.text
+    post = created.json()
+    assert post["why"] == "You bike to work." and post["image_url"] == "https://example.com/rain.png"
+    assert client.get(f"{API}/feed").json()["posts"][0]["why"] == "You bike to work."
+    bad_image = client.post(f"{API}/feed", json={"title": "x", "body": "y", "image_url": "file:///x"})
+    assert bad_image.status_code == 422
+
+    assert client.delete(f"{API}/feed/{post['id']}").json() == {"ok": True}
+    assert client.get(f"{API}/feed").json()["posts"] == []
+    assert client.delete(f"{API}/feed/{post['id']}").status_code == 404
+
+
+def test_feed_generate_triggers_the_registered_feed_job(client, hermes_home):
+    from cron import jobs as cron_jobs
+
+    assert client.post(f"{API}/feed/generate").status_code == 409
+    assert client.post(f"{API}/cron/enable").status_code == 200
+    with cron_jobs.use_cron_store(hermes_home):
+        cron_jobs.pause_job(
+            next(j["id"] for j in cron_jobs.load_jobs() if j["origin"]["key"] == "feed"), "test")
+    response = client.post(f"{API}/feed/generate")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["started"] is True
+    with cron_jobs.use_cron_store(hermes_home):
+        job = cron_jobs.get_job(body["job_id"])
+    assert job["origin"] == {"source": "hermuse", "key": "feed"}
+    assert job["enabled"] is True and job["manual_run_at"]
+    assert job["next_run_at"] == job["manual_run_at"]
+
+
+def test_ideas_merge_seeds_and_dismiss(client):
+    import store
+
+    created = client.post(f"{API}/ideas", json={
+        "title": "Triage", "pitch": "Let me triage.", "group": "Productivity", "icon": "inbox"})
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["id"]
+    ideas = client.get(f"{API}/ideas").json()["ideas"]
+    assert ideas[0]["id"] == agent_id and ideas[0]["seeded"] is False and ideas[0]["icon"] == "inbox"
+    seeds = [i for i in ideas if i["seeded"]]
+    assert [i["id"] for i in seeds] == [s["id"] for s in store.SEED_IDEAS]
+    assert all(i["id"].startswith("seed-") and i["icon"] for i in seeds)
+    assert client.get(f"{API}/ideas/{seeds[0]['id']}").json()["title"] == seeds[0]["title"]
+
+    assert client.post(f"{API}/ideas/{seeds[0]['id']}/dismiss").json() == {"ok": True}
+    assert client.post(f"{API}/ideas/{agent_id}/dismiss").json() == {"ok": True}
+    assert client.post(f"{API}/ideas/nope/dismiss").status_code == 404
+    remaining = [i["id"] for i in client.get(f"{API}/ideas").json()["ideas"]]
+    assert seeds[0]["id"] not in remaining and agent_id not in remaining
+    assert len(remaining) == len(store.SEED_IDEAS) - 1
+    bad_icon = client.post(f"{API}/ideas", json={"title": "t", "pitch": "p", "group": "g", "icon": "rocket"})
+    assert bad_icon.status_code == 422
+
+
+def test_goal_fields_patch_and_cascading_delete(client):
+    parent = client.post(f"{API}/goals", json={
+        "title": "Lisbon trip", "category": "something_else", "why": "May.", "source": "agent"}).json()
+    assert parent["source"] == "agent" and parent["done"] is False
+    assert parent["status_line"] == "" and parent["parent_id"] is None and parent["cron_job_id"] is None
+    child = client.post(f"{API}/goals", json={
+        "title": "Book flight", "category": "something_else", "why": "Trip.",
+        "parent_id": parent["id"]}).json()
+    assert child["source"] == "user" and child["parent_id"] == parent["id"]
+    orphan = client.post(f"{API}/goals", json={
+        "title": "x", "category": "health", "why": "y", "parent_id": "missing"})
+    assert orphan.status_code == 422
+
+    patched = client.patch(f"{API}/goals/{child['id']}", json={"title": "Book flights", "done": True})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["title"] == "Book flights" and patched.json()["done"] is True
+    assert client.patch(f"{API}/goals/{child['id']}", json={"title": "  "}).status_code == 422
+    assert client.patch(f"{API}/goals/missing", json={"done": True}).status_code == 404
+
+    status = client.post(f"{API}/goals/{parent['id']}/update", json={
+        "note": "Flight booked", "status_line": "Hotel still open"})
+    assert status.json()["status_line"] == "Hotel still open"
+
+    assert client.delete(f"{API}/goals/{parent['id']}").json() == {"ok": True}
+    assert client.get(f"{API}/goals").json()["goals"] == []
+    assert client.get(f"{API}/goals/{child['id']}").status_code == 404
+    assert client.delete(f"{API}/goals/{parent['id']}").status_code == 404
+
+
+def test_tasks_route_newest_first_with_before(client, hermes_home):
+    import store
+
+    root = store.hermuse_root(hermes_home)
+    for i, day in enumerate(("01", "02", "03")):
+        store.save_task(root, {
+            "id": f"t{i}", "session_id": "s", "turn_id": f"turn{i}", "title": f"Task {i}",
+            "summary": "Done.", "status": "completed", "source": "chat",
+            "started_at": f"2026-10-{day}T08:00:00+00:00",
+            "finished_at": f"2026-10-{day}T08:01:00+00:00", "tools": []})
+    assert [t["id"] for t in client.get(f"{API}/tasks").json()["tasks"]] == ["t2", "t1", "t0"]
+    page = client.get(f"{API}/tasks", params={"limit": 1, "before": "2026-10-03T00:00:00Z"})
+    assert [t["id"] for t in page.json()["tasks"]] == ["t1"]
+    assert client.get(f"{API}/tasks", params={"before": "yesterday"}).status_code == 422
+    assert client.get(f"{API}/tasks", params={"limit": 0}).status_code == 422
+
+
+def test_memory_routes_round_trip_under_hermes_lock(client, hermes_home):
+    assert client.get(f"{API}/memory/user").json() == {
+        "target": "user", "entries": [], "updated_at": None}
+    put = client.put(f"{API}/memory/memory", json={"entries": ["Prefers trains", " ", "Vegetarian"]})
+    assert put.json() == {"ok": True}
+    raw = (hermes_home / "memories" / "MEMORY.md").read_text(encoding="utf-8")
+    assert raw == "Prefers trains\n§\nVegetarian"
+    # Written under Hermes' MemoryStore lock file.
+    assert (hermes_home / "memories" / "MEMORY.md.lock").exists()
+    got = client.get(f"{API}/memory/memory").json()
+    assert got["entries"] == ["Prefers trains", "Vegetarian"] and got["updated_at"]
+
+    from tools.memory_tool_store import MemoryStore
+
+    assert MemoryStore._read_file(hermes_home / "memories" / "MEMORY.md") == got["entries"]
+    assert client.get(f"{API}/memory/soul").status_code == 404
+    assert client.put(f"{API}/memory/soul", json={"entries": []}).status_code == 404
+    assert client.put(f"{API}/memory/user", json={"entries": ["a\n§\nb"]}).status_code == 422
+
+
+def test_cron_rows_flag_hidden_maintenance_jobs(client):
+    rows = {row["key"]: row for row in client.get(f"{API}/cron").json()["jobs"]}
+    assert set(rows) == {"feed", "ideas", "goals", "reflection", "heartbeat"}
+    assert {key for key, row in rows.items() if row["hidden"]} == {"feed", "ideas", "goals", "reflection"}
+    assert rows["heartbeat"]["hidden"] is False and rows["heartbeat"]["registered"] is False

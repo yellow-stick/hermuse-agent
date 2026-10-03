@@ -62,6 +62,13 @@ def _string_list(args: dict, key: str, limit: int = 20) -> list[str]:
     return out
 
 
+def _image_url(args: dict) -> Optional[str]:
+    value = _optional(args, "image_url", 2000)
+    if value and not value.lower().startswith(("https://", "http://")):
+        raise ValueError("image_url must be an http(s) URL")
+    return value or None
+
+
 def handle_feed_post(args: dict, **kwargs: Any) -> str:
     try:
         record = store.post_feed(
@@ -70,6 +77,8 @@ def handle_feed_post(args: dict, **kwargs: Any) -> str:
             body=_nonblank(args, "body", "body", 20000),
             topic=_optional(args, "topic", 120),
             sources=_string_list(args, "sources"),
+            why=_nonblank(args, "why", "why", 1000),
+            image_url=_image_url(args),
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -84,6 +93,7 @@ def handle_idea_propose(args: dict, **kwargs: Any) -> str:
             pitch=_nonblank(args, "pitch", "pitch", 8000),
             group=_nonblank(args, "group", "group", 80),
             first_step=_optional(args, "first_step", 2000),
+            icon=_optional(args, "icon", 40).lower(),
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -98,6 +108,9 @@ def handle_goal_track(args: dict, **kwargs: Any) -> str:
             category=_nonblank(args, "category", "category", 40).lower(),
             why=_nonblank(args, "why", "why", 8000),
             target_date=_optional(args, "target_date", 40),
+            source=(_optional(args, "source", 10) or "agent").lower(),
+            parent_id=_optional(args, "parent_id", 64) or None,
+            cron_job_id=_optional(args, "cron_job_id", 64) or None,
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -107,11 +120,14 @@ def handle_goal_track(args: dict, **kwargs: Any) -> str:
 def handle_goal_update(args: dict, **kwargs: Any) -> str:
     try:
         goal_id = _nonblank(args, "goal_id", "goal_id", 64)
-        note = _nonblank(args, "note", "note", 8000)
+        note = _optional(args, "note", 8000)
         progress = _optional(args, "progress", 500)
+        status_line = _optional(args, "status_line", 300) if "status_line" in args else None
+        if not note and not status_line:
+            raise ValueError("note or status_line is required")
     except ValueError as exc:
         return _fail(str(exc))
-    record = store.update_goal(_resolve_root(), goal_id, note, progress)
+    record = store.update_goal(_resolve_root(), goal_id, note, progress, status_line=status_line)
     if record is None:
         return _fail(f"unknown goal: {goal_id}")
     return _ok({"ok": True, "id": goal_id})
@@ -173,10 +189,12 @@ FEED_POST_SCHEMA = _schema(
     {
         "title": {**_STR, "description": "Post title (shown on the card)."},
         "body": {**_STR, "description": "Post body in Markdown."},
+        "why": {**_STR, "description": "Why I created this: one sentence on why it matters to the user."},
         "topic": {**_STR, "description": "Short topic label (optional)."},
         "sources": {**_STR_ARRAY, "description": "Source URLs, if any."},
+        "image_url": {**_STR, "description": "http(s) URL of an image illustrating the post (optional)."},
     },
-    ("title", "body"),
+    ("title", "body", "why"),
 )
 
 IDEA_PROPOSE_SCHEMA = _schema(
@@ -187,13 +205,20 @@ IDEA_PROPOSE_SCHEMA = _schema(
         "pitch": {**_STR, "description": "What the agent would do, in Markdown."},
         "group": {**_STR, "description": "Group label (e.g. Productivity, Health & Fitness)."},
         "first_step": {**_STR, "description": "Concrete first step (optional)."},
+        "icon": {
+            "type": "string",
+            "enum": list(store.IDEA_ICONS),
+            "description": "Icon key (optional; derived from the group when omitted).",
+        },
     },
     ("title", "pitch", "group"),
 )
 
 GOAL_TRACK_SCHEMA = _schema(
     "goal_track",
-    "Start tracking a goal on the Hermuse Goals surface (stored under HERMES_HOME/hermuse/goals/).",
+    "Start tracking a goal on the Hermuse Goals surface (stored under HERMES_HOME/hermuse/goals/). "
+    "Use source=\"agent\" for commitments you track on your own initiative (a trip, a deadline, "
+    "a scheduled briefing) and source=\"user\" when the user asked you to track the goal.",
     {
         "title": {**_STR, "description": "Goal title."},
         "category": {
@@ -203,19 +228,28 @@ GOAL_TRACK_SCHEMA = _schema(
         },
         "why": {**_STR, "description": "Why this goal matters / what done looks like."},
         "target_date": {**_STR, "description": "Target date, free text (optional)."},
+        "source": {
+            "type": "string",
+            "enum": list(store.GOAL_SOURCES),
+            "description": "agent (default): you track it on your own; user: the user asked for it.",
+        },
+        "parent_id": {**_STR, "description": "Id of the goal this one is a step of (optional)."},
+        "cron_job_id": {**_STR, "description": "Id of the cron job scheduled for this goal (optional)."},
     },
     ("title", "category", "why"),
 )
 
 GOAL_UPDATE_SCHEMA = _schema(
     "goal_update",
-    "Append a timeline entry to a tracked Hermuse goal.",
+    "Update a tracked Hermuse goal: append a timeline entry (note) and/or replace its "
+    "status line (the latest state shown under its title). Give at least one of note / status_line.",
     {
         "goal_id": {**_STR, "description": "Goal id from goal_track."},
         "note": {**_STR, "description": "What happened / check-in note."},
         "progress": {**_STR, "description": "Short progress summary (optional)."},
+        "status_line": {**_STR, "description": "Current state in one short line, e.g. 'Flight booked, hotel open'."},
     },
-    ("goal_id", "note"),
+    ("goal_id",),
 )
 
 ARTIFACT_SAVE_SCHEMA = _schema(

@@ -69,10 +69,16 @@ final class _Observer implements ChatObserver {
   @override
   void sessionDeleted(ThreadRef ref) => events.add('delete ${ref.sessionId}');
 
-  final activity = <ActivityItem>[];
+  final tools = <String>[];
 
   @override
-  void toolCompleted(ThreadRef ref, ActivityItem item) => activity.add(item);
+  void toolCompleted(ThreadRef ref, String tool) => tools.add(tool);
+
+  final mainChanges = <(ThreadRef, String?)>[];
+
+  @override
+  void mainSessionChanged(ThreadRef main, {String? previousId}) =>
+      mainChanges.add((main, previousId));
 }
 
 void main() {
@@ -137,6 +143,290 @@ void main() {
     return chat;
   }
 
+  /// Client calls past the main chat's Bot Chat lookup made on connect.
+  Iterable<({String method, Map<String, Object?> params})> calls() =>
+      fake.calls.where((c) => c.method != 'session.list');
+
+  Map<String, Object?> transcriptRow(String role, String text, int row) => {
+    'role': role,
+    'text': text,
+    'row_id': row,
+  };
+
+  const brief =
+      '[Cronjob "Morning brief" output — scheduled job, not the user. '
+      'Review it, act on anything that needs action, and summarize for the '
+      'chat.]\n\nRain at 9.';
+
+  group('Bot Chat main session', () {
+    test(
+      'adopts the server session; the cached main chat stays a side chat',
+      () async {
+        fake
+          ..on(
+            'session.list',
+            (_) => {
+              'sessions': [
+                {'id': 'bot-1', 'title': 'Bot Chat'},
+              ],
+            },
+          )
+          ..on(
+            'session.resume',
+            (params) => {
+              'session_id': 'live-${params['session_id']}',
+              'message_count': 0,
+              'info': {'title': 'Bot Chat'},
+              'messages': const [],
+            },
+          );
+        final chat = await open();
+        expect(fake.calls.first.method, 'session.list');
+        expect(fake.calls.first.params['title'], 'Bot Chat');
+        expect(chat.state.mainThread.id, 'bot-1');
+        expect(chat.ref.sessionId, 'bot-1');
+        expect(chat.state.activeThreadId, 'bot-1');
+        expect(chat.state.sideThreads.map((t) => t.id), ['stored-1']);
+        expect(observer.mainChanges.map((c) => (c.$1.sessionId, c.$2)), [
+          ('bot-1', 'stored-1'),
+        ]);
+        expect(calls().map((c) => (c.method, c.params['session_id'])), [
+          ('session.resume', 'bot-1'),
+        ]);
+        // Hermes' address is not a name to show.
+        expect(chat.state.mainThread.title, 'Chat');
+      },
+    );
+
+    test('the stored main chat is renamed when the server has none', () async {
+      fake
+        ..on('session.list', (_) => {'sessions': const []})
+        ..on('session.title', (_) => {'title': 'Bot Chat'});
+      final chat = await open();
+      expect(chat.state.mainThread.id, 'stored-1');
+      expect(observer.mainChanges, isEmpty);
+      expect(calls().map((c) => (c.method, c.params['session_id'])), [
+        ('session.resume', 'stored-1'),
+        ('session.title', 'live-1'),
+      ]);
+      expect(calls().last.params['title'], 'Bot Chat');
+    });
+
+    test('a main chat not created yet is created as Bot Chat', () async {
+      fake.on('session.list', (_) => {'sessions': const []});
+      final chat = await open(sessionId: '');
+      expect(calls().single.method, 'session.create');
+      expect(calls().single.params['title'], 'Bot Chat');
+      expect(chat.state.mainThread.id, 'stored-new');
+      expect(observer.created.single.$2, isNull);
+    });
+
+    test('an unreadable lookup keeps the cached main chat', () async {
+      final chat = await open();
+      expect(chat.state.mainThread.id, 'stored-1');
+      expect(calls().map((c) => c.method), ['session.resume']);
+    });
+  });
+
+  test('a scheduled job brief in the transcript reads as a notice', () async {
+    fake.on(
+      'session.resume',
+      (_) => {
+        'session_id': 'live-1',
+        'message_count': 2,
+        'info': const <String, Object?>{},
+        'messages': [
+          transcriptRow('user', brief, 7),
+          transcriptRow('assistant', 'Take an umbrella.', 8),
+        ],
+      },
+    );
+    final chat = await open();
+    final messages = chat.state.activeThread.messages;
+    expect(messages.map((m) => (m.id, m.author)), [
+      ('row-7', Author.agent),
+      ('row-8', Author.agent),
+    ]);
+    final notice = messages.first.blocks.single as NoticeBlock;
+    expect((notice.text, notice.isError), ('Scheduled: Morning brief', false));
+    expect(
+      (messages.last.blocks.single as TextBlock).text,
+      'Take an umbrella.',
+    );
+    expect(cronBriefJobName(brief), 'Morning brief');
+    expect(cronBriefJobName('[Cronjob] not one'), isNull);
+  });
+
+  test('a turn the server starts streams, then its brief joins from the transcript', () async {
+    fake.on(
+      'session.history',
+      (_) => {
+        'count': 6,
+        'messages': [
+          transcriptRow('user', 'find flights', 1),
+          transcriptRow('assistant', 'Here are three.', 4),
+          transcriptRow('user', brief, 5),
+          transcriptRow('assistant', 'Rain at 9: take an umbrella.', 6),
+        ],
+      },
+    );
+    final chat = await open();
+    fake
+      ..emitEvent('message.start', sessionId: 'live-1')
+      ..emitEvent(
+        'tool.start',
+        sessionId: 'live-1',
+        payload: {'tool_id': 't1', 'name': 'web_search'},
+      );
+    expect(chat.state.busy, isTrue);
+    final task = chat.state.runningTasks.single;
+    expect(
+      (task.isMain, task.request, task.step),
+      (true, '', 'Searching the web'),
+    );
+    fake.emitEvent(
+      'message.complete',
+      sessionId: 'live-1',
+      payload: {
+        'text': 'Rain at 9: take an umbrella.',
+        'status': 'complete',
+        'persisted_turn': {
+          'row_ids': [5, 6],
+          'complete': true,
+          'user_row_id': 5,
+          'final_assistant_row_id': 6,
+        },
+      },
+    );
+    // The earlier user message is not the brief's row.
+    expect(chat.state.activeThread.messages.first.id, 'row-1');
+    await pumpEventQueue();
+    final messages = chat.state.activeThread.messages;
+    expect(messages.map((m) => m.id), ['row-1', 'row-4', 'row-5', 'row-6']);
+    expect(messages[2].blocks.single, isA<NoticeBlock>());
+    expect(chat.state.runningTasks, isEmpty);
+  });
+
+  test(
+    'sessions.changed refetches the idle main chat when rows are new',
+    () async {
+      var history = 0;
+      fake.on('session.history', (_) {
+        history++;
+        return {
+          'count': 4,
+          'messages': [
+            transcriptRow('user', 'find flights', 1),
+            transcriptRow('assistant', 'Here are three.', 4),
+            if (history > 1) transcriptRow('user', brief, 9),
+            if (history > 1) transcriptRow('assistant', 'Umbrella day.', 10),
+          ],
+        };
+      });
+      final chat = await open();
+      final before = chat.state.activeThread.messages;
+      fake.emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+      expect(history, 1);
+      expect(identical(chat.state.activeThread.messages, before), isTrue);
+
+      // Several writes, one fetch.
+      fake
+        ..emitEvent('sessions.changed')
+        ..emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+      expect(history, 2);
+      expect(chat.state.activeThread.messages.map((m) => m.id), [
+        'row-1',
+        'row-4',
+        'row-9',
+        'row-10',
+      ]);
+
+      // A running turn is not replaced under the user.
+      await chat.send('more');
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+      expect(history, 2);
+    },
+  );
+
+  test(
+    'the running task names its request and step; stop targets its thread',
+    () async {
+      final chat = await open();
+      await chat.send('compare hotels\nin Lisbon');
+      expect(chat.state.agentStep, 'Thinking');
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {
+            'tool_id': 't1',
+            'name': 'terminal',
+            'args': {'command': 'ls'},
+          },
+        );
+      expect(chat.state.agentStep, 'Running a command');
+      expect(chat.state.currentTask?.request, 'compare hotels');
+      fake
+        ..emitEvent(
+          'tool.complete',
+          sessionId: 'live-1',
+          payload: {'tool_id': 't1', 'name': 'terminal'},
+        )
+        ..emitEvent(
+          'message.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'A'},
+        );
+      expect(chat.state.agentStep, 'Writing');
+      chat.newSideChat();
+      expect(chat.state.currentTask?.threadId, 'stored-1');
+      await chat.interrupt('stored-1');
+      expect(calls().last.method, 'session.interrupt');
+      expect(calls().last.params, {'session_id': 'live-1'});
+    },
+  );
+
+  test('step labels in words', () {
+    expect(toolStepLabel('web_search'), 'Searching the web');
+    expect(
+      toolStepLabel('web_extract', detail: 'https://example.com/a +1'),
+      'Reading example.com',
+    );
+    expect(
+      toolStepLabel('browser_navigate', detail: 'example.com'),
+      'Browsing example.com',
+    );
+    expect(toolStepLabel('terminal'), 'Running a command');
+    expect(toolStepLabel('read_file'), 'Reading a file');
+    expect(toolStepLabel('patch'), 'Editing a file');
+    expect(toolStepLabel('memory'), 'Updating memory');
+    expect(toolStepLabel('something_new'), 'Working');
+    expect(agentStepLabel(const []), 'Thinking');
+    expect(agentStepLabel(const [ReasoningBlock('hm')]), 'Thinking');
+    expect(
+      agentStepLabel(const [
+        BrowserBlock(lastToolId: 'b', step: 'Opening x.org', host: 'x.org'),
+      ]),
+      'Browsing x.org',
+    );
+    expect(
+      agentStepLabel(const [WaitBlock('Retrying in 10s (attempt 1/3)')]),
+      'Retrying in 10s (attempt 1/3)',
+    );
+  });
+
   test(
     'resume maps the transcript: tool rows join the assistant turn',
     () async {
@@ -153,11 +443,11 @@ void main() {
       // The final answer joins the same bubble, under the last row id.
       expect((agent[3] as TextBlock).text, 'Here are three.');
       expect(thread.messages.last.id, 'row-4');
-      expect(fake.calls.first.params['session_id'], 'stored-1');
+      expect(calls().first.params['session_id'], 'stored-1');
     },
   );
 
-  test('a streamed turn: deltas, tool call, final text, activity', () async {
+  test('a streamed turn: deltas, tool call, final text, tools', () async {
     final chat = await open();
     await chat.send('  book the cheapest  ');
     expect(chat.state.busy, isTrue);
@@ -219,9 +509,7 @@ void main() {
     blocks = chat.state.activeThread.messages.last.blocks;
     expect(blocks.whereType<TextBlock>().single.text, 'Booked: PNR X1');
     expect(chat.state.busy, isFalse);
-    expect(observer.activity.map((a) => (a.tool, a.summary, a.kind)), [
-      ('book', 'PNR X1', ToolKind.other),
-    ]);
+    expect(observer.tools, ['book']);
     expect(observer.settled, isNotEmpty);
   });
 
@@ -272,8 +560,7 @@ void main() {
         true,
       ),
     );
-    // Activity names the command, not Hermes' generic line.
-    expect(observer.activity.single.summary, 'make test\nmake lint');
+    expect(observer.tools, ['terminal']);
   });
 
   test('a denied command reads as the reason, not the instructions', () {
@@ -346,7 +633,7 @@ void main() {
       expect((turn.blocks.last as TextBlock).text, 'Nantes');
       expect(turn.blocks.whereType<ToolCallBlock>(), isEmpty);
       expect(turn.plainText, 'Nantes');
-      expect(observer.activity.single.tool, 'browser_navigate');
+      expect(observer.tools, ['browser_navigate']);
     },
   );
 
@@ -587,7 +874,7 @@ void main() {
       });
 
       await chat.send('/model claude-sonnet-4-6');
-      expect(fake.calls.skip(1).map((c) => [c.method, c.params]), [
+      expect(calls().skip(1).map((c) => [c.method, c.params]), [
         [
           'commands.catalog',
           {'session_id': 'live-1'},
@@ -629,7 +916,7 @@ void main() {
       fake.on('slash.exec', (_) => {'output': 'Current model: glm-5'});
       final chat = await open(sessionId: '');
       await chat.send('/model');
-      expect(fake.calls.map((c) => (c.method, c.params['session_id'])), [
+      expect(calls().map((c) => (c.method, c.params['session_id'])), [
         ('commands.catalog', null),
         ('session.create', null),
         ('slash.exec', 'live-new'),
@@ -682,13 +969,13 @@ void main() {
           );
         final chat = await open();
         await chat.send('/pr-triage 42');
-        expect(fake.calls.skip(1).map((c) => c.method), [
+        expect(calls().skip(1).map((c) => c.method), [
           'commands.catalog',
           'slash.exec',
           'command.dispatch',
           'prompt.submit',
         ]);
-        expect(fake.calls.elementAt(3).params, {
+        expect(calls().elementAt(3).params, {
           'name': 'pr-triage',
           'arg': '42',
           'session_id': 'live-1',
@@ -1286,7 +1573,7 @@ void main() {
     );
     await chat.ready;
     expect(chat.state.activeThreadId, 'side-1');
-    expect(fake.calls.single.params['session_id'], 'side-1');
+    expect(calls().single.params['session_id'], 'side-1');
     chat.openThread('stored-1');
     expect(observer.events, ['open stored-1']);
   });
@@ -1382,12 +1669,9 @@ void main() {
 
   test('a new conversation creates its session lazily', () async {
     final chat = await open(sessionId: '');
-    expect(fake.calls, isEmpty);
+    expect(calls(), isEmpty);
     await chat.send('hello');
-    expect(fake.calls.map((c) => c.method), [
-      'session.create',
-      'prompt.submit',
-    ]);
+    expect(calls().map((c) => c.method), ['session.create', 'prompt.submit']);
     expect(observer.created.single.$1.sessionId, 'stored-new');
     expect(observer.created.single.$2, isNull);
   });
@@ -1399,15 +1683,15 @@ void main() {
       final chat = await open(sessionId: '');
       const pick = ChatModel(provider: 'zai', model: 'glm-5.3-flash');
       await chat.setModel(pick);
-      expect(fake.calls, isEmpty);
+      expect(calls(), isEmpty);
       expect(chat.state.model, pick);
       await chat.send('hi');
-      expect(fake.calls.map((c) => c.method), [
+      expect(calls().map((c) => c.method), [
         'session.create',
         'config.set',
         'prompt.submit',
       ]);
-      expect(fake.calls.elementAt(1).params, {
+      expect(calls().elementAt(1).params, {
         'key': 'model',
         'value': 'glm-5.3-flash --provider zai',
         'session_id': 'live-new',
@@ -1454,8 +1738,7 @@ void main() {
   });
 
   test('tools read by kind; names read as words', () {
-    ActivityItem item(String tool) =>
-        ActivityItem(tool: tool, summary: '', at: DateTime(2026, 10, 2));
+    ToolKind kind(String tool) => toolKindOf(tool);
     expect(
       [
         for (final tool in [
@@ -1468,7 +1751,7 @@ void main() {
           'read_file',
           'execute_code',
         ])
-          item(tool).kind,
+          kind(tool),
       ],
       [
         ToolKind.web,
@@ -1481,8 +1764,8 @@ void main() {
         ToolKind.code,
       ],
     );
-    expect(item('browser_navigate').title, 'Browser navigate');
-    expect(item('').title, 'Tool');
+    expect(toolTitle('browser_navigate'), 'Browser navigate');
+    expect(toolTitle(''), 'Tool');
   });
 
   test('time-ago buckets', () {

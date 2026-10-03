@@ -17,6 +17,9 @@ The menu button at the bottom of the navigation rail opens a pop-over:
   **Light** or **Dark**; the choice applies immediately and is saved on this
   device. **Dark** is the default, including during startup. **System** follows
   your operating system's appearance only when explicitly selected.
+  **Permissions** sets when the open agent asks before risky commands
+  ([Approvals](profile-panel.md#approvals)); it is saved on that Hermes, not
+  on this device. **Connectors** has none available yet and says so.
 - **Instances** opens the existing Hermes instance management page.
 
 On narrow windows, the same menu is in the bottom navigation. Closing Settings
@@ -166,10 +169,13 @@ matches the one built into the app.
 ### On Linux
 
 Linux uses the same managed installation as [SSH setup](server.md): a dedicated
-non-root `hermes` account, `/home/hermes/.hermes`, and
-`hermuse-dashboard.service`. The desktop connects to `http://127.0.0.1:9119`
-with a private token for a new installation, or the existing dashboard account
-when that service already requires sign-in. Closing the app does **not** stop
+non-root `hermes` account, `/home/hermes/.hermes`, `hermuse-dashboard.service`
+and a second service, `hermuse-gateway.service` (**Scheduler**), which runs
+`hermes gateway run` and with it every scheduled job: your reminders and
+briefings, the 30-minute heartbeat and the plugin's jobs. Their results arrive
+in your main chat. The desktop connects to `http://127.0.0.1:9119` with a
+private token for a new installation, or the existing dashboard account when
+that service already requires sign-in. Closing the app does **not** stop
 Hermes, its scheduled jobs or the agent's computer.
 
 **Set up this computer** first checks the desktop keyring and existing
@@ -179,9 +185,10 @@ release-bound helper with the bundled plugin; it does not execute a script
 supplied by the desktop. The shared installer prepares only its owned resources:
 
 - missing system build packages and the pinned Hermes Agent **0.21.5** runtime;
-- the dedicated account, plugin and four background jobs;
+- the dedicated account, plugin, its background jobs and the heartbeat;
 - the system Docker service and the agent's computer;
-- the loopback dashboard service and authenticated readiness.
+- the loopback dashboard service, the scheduler service and authenticated
+  readiness.
 
 Docker access is granted to **`hermes`**, not your desktop account. Membership
 of the `docker` group gives that account **root-equivalent access**. Existing
@@ -212,6 +219,13 @@ plugin, jobs or agent's computer:
   adopted. An unmanaged plugin does not block connection and remains unmanaged.
   Deliberately preparing additional components still uses the installer's
   ownership guards; do not fabricate markers to bypass them.
+- When the scheduler service of an existing installation is missing, stopped
+  or not the installer's exact unit, setup shows **Scheduler — needs repair**
+  first. **Repair scheduler** runs the same installer (with administrator
+  authorization) to put it back; it reuses healthy parts and keeps your data.
+  You can also go on without repair (**Sign in without repair** when the
+  dashboard requires sign-in); scheduled items then only run when you press
+  **Run now** in the panel's **Upcoming** tab.
 
 The dashboard password or private token is saved in the system keyring only
 after authenticated access succeeds. The saved connection is **This computer**,

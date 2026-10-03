@@ -105,6 +105,7 @@ final class LinuxServiceInspection {
     this.legacy,
     this.legacyPresent = false,
     this.authRequired,
+    this.schedulerReady,
   });
   final bool canonicalPresent;
   final LegacyHermesMigration? legacy;
@@ -113,6 +114,11 @@ final class LinuxServiceInspection {
   /// Whether the existing loopback dashboard requires its normal login flow.
   /// Null means its read-only status could not be safely inspected.
   final bool? authRequired;
+
+  /// Whether the canonical scheduler (Hermes gateway) service is the exact
+  /// installed unit, enabled and running; false means setup must repair it.
+  /// Null when no canonical service exists or its state could not be read.
+  final bool? schedulerReady;
 }
 
 typedef LinuxServiceProcessStarter = Future<Process> Function(
@@ -160,6 +166,7 @@ final class LinuxServiceInstaller {
       canonicalPresent: value['canonicalPresent'] as bool,
       legacyPresent: value['legacyPresent'] as bool? ?? value['legacy'] != null,
       authRequired: value['authRequired'] as bool?,
+      schedulerReady: value['schedulerReady'] as bool?,
       legacy: value['legacy'] == null
           ? null
           : LegacyHermesMigration.fromJson(serviceObject(value['legacy'])),

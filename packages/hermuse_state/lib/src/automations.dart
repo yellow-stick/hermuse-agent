@@ -9,9 +9,9 @@ part 'automations.g.dart';
 /// Hermes' cron API on the dashboard (`hermes_cli/web_routers/cron.py`).
 const hermesCronRoute = '/api/cron/jobs';
 
-/// Who created an automation: the Hermuse plugin (its feed, ideas, goals
-/// and reflection jobs, `origin.source == 'hermuse'`) or the user, asking
-/// their agent.
+/// Who created an automation: the Hermuse plugin (its maintenance jobs and
+/// the heartbeat, `origin.source == 'hermuse'`) or the user, asking their
+/// agent.
 enum AutomationOwner { hermuse, user }
 
 /// Outcome of an automation's last run (`last_status`).
@@ -26,9 +26,29 @@ enum AutomationOutcome {
 /// A user action on one automation.
 enum AutomationAction { pause, resume, runNow, delete }
 
+/// Sections of the profile panel's Upcoming tab, in order.
+enum UpcomingGroup {
+  /// One-shot jobs (`schedule.kind == 'once'`).
+  reminders('Reminders'),
+  daily('Daily'),
+  weekly('Weekly'),
+  other('Other recurring'),
+
+  /// The Hermuse heartbeat (`origin.key == 'heartbeat'`).
+  heartbeat('Heartbeat');
+
+  const UpcomingGroup(this.label);
+  final String label;
+}
+
+/// Origin key of the Hermuse heartbeat job; every other Hermuse job is
+/// maintenance (feed, ideas, goals check-in, reflection), hidden.
+const hermuseHeartbeatKey = 'heartbeat';
+
 /// One Hermes cron job. Shape: `{id, name, schedule: {kind, expr?, minutes?,
 /// run_at?, display}, enabled, state, next_run_at, last_run_at,
-/// last_status, last_error, origin: {source, key}?}`.
+/// last_status, last_error, last_output, last_delivery_error,
+/// origin: {source, key}?, hidden?}`.
 final class Automation {
   const Automation({
     required this.id,
@@ -36,28 +56,39 @@ final class Automation {
     required this.schedule,
     required this.owner,
     required this.paused,
+    this.group = UpcomingGroup.other,
+    this.hidden = false,
     this.nextRunAt,
     this.lastRunAt,
     this.lastOutcome,
     this.lastError = '',
+    this.lastOutput = '',
+    this.lastDeliveryError = '',
   });
 
   factory Automation.fromJson(Map<String, Object?> json) {
     final origin = json['origin'];
+    final hermuse = origin is Map && origin['source'] == 'hermuse';
+    final heartbeat = hermuse && origin['key'] == hermuseHeartbeatKey;
     final state = json['state'] as String? ?? '';
     final lastStatus = json['last_status'] as String?;
+    final schedule =
+        (json['schedule'] as Map?)?.cast<String, Object?>() ?? const {};
     return Automation(
       id: json['id'] as String,
       name: (json['name'] as String?)?.trim().isNotEmpty == true
           ? (json['name'] as String).trim()
           : json['id'] as String,
-      schedule: describeSchedule(
-        (json['schedule'] as Map?)?.cast<String, Object?>() ?? const {},
-      ),
-      owner: origin is Map && origin['source'] == 'hermuse'
-          ? AutomationOwner.hermuse
-          : AutomationOwner.user,
+      schedule: describeSchedule(schedule),
+      owner: hermuse ? AutomationOwner.hermuse : AutomationOwner.user,
       paused: state == 'paused' || json['enabled'] == false,
+      group: heartbeat ? UpcomingGroup.heartbeat : upcomingGroupOf(schedule),
+      // A fired one-shot reminder is done, not upcoming (Hermes keeps it
+      // disabled with state `completed`).
+      hidden:
+          json['hidden'] == true ||
+          (hermuse && !heartbeat) ||
+          state == 'completed',
       nextRunAt: _parseTime(json['next_run_at']),
       lastRunAt: _parseTime(json['last_run_at']),
       lastOutcome: switch (lastStatus) {
@@ -67,6 +98,8 @@ final class Automation {
         _ => AutomationOutcome.failed,
       },
       lastError: json['last_error'] as String? ?? '',
+      lastOutput: json['last_output'] as String? ?? '',
+      lastDeliveryError: json['last_delivery_error'] as String? ?? '',
     );
   }
 
@@ -78,10 +111,23 @@ final class Automation {
   final AutomationOwner owner;
   final bool paused;
 
+  /// Its section of the Upcoming tab.
+  final UpcomingGroup group;
+
+  /// A Hermuse maintenance job (or one the server marks `hidden`): not
+  /// listed.
+  final bool hidden;
+
   final DateTime? nextRunAt;
   final DateTime? lastRunAt;
   final AutomationOutcome? lastOutcome;
   final String lastError;
+
+  /// What the last run answered (Hermes' `last_output`).
+  final String lastOutput;
+
+  /// Why the last result could not be delivered.
+  final String lastDeliveryError;
 
   /// Only the user's own automations can be deleted: the plugin registers
   /// its jobs again whenever its schedule is turned on (pausing sticks).
@@ -95,7 +141,45 @@ final class Automation {
   ];
 }
 
-/// The Automations tab of one instance.
+/// [UpcomingGroup] of a Hermes [schedule] (heartbeat aside): one-shot jobs
+/// are reminders; a job at fixed times every day is daily, on some weekdays
+/// weekly (an interval of exactly a day or a week too); anything else is
+/// other recurring.
+UpcomingGroup upcomingGroupOf(Map<String, Object?> schedule) {
+  switch (schedule['kind']) {
+    case 'once':
+      return UpcomingGroup.reminders;
+    case 'interval':
+      return switch ((schedule['minutes'] as num?)?.toInt()) {
+        1440 => UpcomingGroup.daily,
+        10080 => UpcomingGroup.weekly,
+        _ => UpcomingGroup.other,
+      };
+    case 'cron':
+      final f = '${schedule['expr'] ?? ''}'.trim().split(RegExp(r'\s+'));
+      if (f.length != 5) return UpcomingGroup.other;
+      final [minute, hour, dayOfMonth, month, dayOfWeek] = f;
+      final fixedTime =
+          int.tryParse(minute) != null &&
+          hour.split(',').every((h) => int.tryParse(h) != null);
+      if (!fixedTime || month != '*' || dayOfMonth != '*') {
+        return UpcomingGroup.other;
+      }
+      return dayOfWeek == '*' ? UpcomingGroup.daily : UpcomingGroup.weekly;
+  }
+  return UpcomingGroup.other;
+}
+
+/// One section of the Upcoming tab.
+final class UpcomingSection {
+  const UpcomingSection(this.group, this.automations);
+  final UpcomingGroup group;
+
+  /// Sorted by next run ([sortAutomations]).
+  final List<Automation> automations;
+}
+
+/// The Upcoming tab of one agent.
 final class AutomationBoard {
   const AutomationBoard({
     required this.automations,
@@ -104,7 +188,8 @@ final class AutomationBoard {
     this.error,
   });
 
-  /// Sorted by next run ([sortAutomations]).
+  /// The listed jobs (hidden ones left out), sorted by next run
+  /// ([sortAutomations]).
   final List<Automation> automations;
 
   /// No Hermes scheduler ticks for these jobs: they only run when started
@@ -116,6 +201,14 @@ final class AutomationBoard {
 
   /// Why the last action failed, in the server's words.
   final String? error;
+
+  /// [automations] by [UpcomingGroup], in tab order; empty groups left out.
+  List<UpcomingSection> get sections => [
+    for (final group in UpcomingGroup.values)
+      if (automations.where((a) => a.group == group).toList() case final items
+          when items.isNotEmpty)
+        UpcomingSection(group, items),
+  ];
 
   AutomationBoard copyWith({
     List<Automation>? automations,
@@ -132,8 +225,9 @@ final class AutomationBoard {
 /// A scheduler heartbeat older than this means its ticker stopped.
 const _schedulerStale = 300;
 
-/// Hermes' cron jobs of [instanceId] (the Hermuse plugin's and the user's),
-/// with pause/resume, run now and delete.
+/// Hermes' cron jobs of [instanceId] for [profile] (the user's and the
+/// heartbeat; Hermuse maintenance jobs are left out), with pause/resume,
+/// run now and delete.
 @riverpod
 class Automations extends _$Automations {
   bool _refreshPending = false;
@@ -153,7 +247,8 @@ class Automations extends _$Automations {
     ];
     return AutomationBoard(
       automations: sortAutomations([
-        for (final row in rows) Automation.fromJson(row),
+        for (final row in rows)
+          if (Automation.fromJson(row) case final job when !job.hidden) job,
       ]),
       schedulerStopped:
           rows.isNotEmpty &&
@@ -233,6 +328,134 @@ class Automations extends _$Automations {
       ref.invalidateSelf();
     }
   }
+}
+
+/// How one run of an automation went.
+enum AutomationRunStatus { running, ok, failed }
+
+/// One run of an automation: a Hermes run session (`cron_<job>_<time>`) and
+/// an excerpt of what it answered.
+final class AutomationRun {
+  const AutomationRun({
+    required this.id,
+    required this.startedAt,
+    required this.status,
+    this.endedAt,
+    this.output = '',
+  });
+
+  /// Session row of `GET /api/cron/jobs/{id}/runs`: `{id, started_at,
+  /// ended_at, end_reason, is_active, …}` (times in epoch seconds).
+  factory AutomationRun.fromJson(
+    Map<String, Object?> json, {
+    String output = '',
+  }) {
+    final ended = _parseEpoch(json['ended_at']);
+    return AutomationRun(
+      id: '${json['id']}',
+      startedAt:
+          _parseEpoch(json['started_at']) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
+      endedAt: ended,
+      status: json['is_active'] == true
+          ? AutomationRunStatus.running
+          : ended != null && json['end_reason'] == 'cron_complete'
+          ? AutomationRunStatus.ok
+          : AutomationRunStatus.failed,
+      output: output,
+    );
+  }
+
+  final String id;
+  final DateTime startedAt;
+  final DateTime? endedAt;
+  final AutomationRunStatus status;
+
+  /// The start of the run's last answer ([runOutputLimit] characters at
+  /// most); '' when it answered nothing readable.
+  final String output;
+}
+
+/// Longest output excerpt an [AutomationRun] keeps.
+const runOutputLimit = 280;
+
+DateTime? _parseEpoch(Object? value) => switch (value) {
+  final num seconds when seconds > 0 => DateTime.fromMillisecondsSinceEpoch(
+    (seconds * 1000).round(),
+  ),
+  final String text => DateTime.tryParse(text),
+  _ => null,
+};
+
+/// The last few runs of the automation [jobId], newest first, each with
+/// an excerpt of its answer (the run session's last assistant message; the
+/// job's `last_output` for the newest run when its transcript says
+/// nothing).
+@riverpod
+Future<List<AutomationRun>> automationRuns(
+  Ref ref,
+  String instanceId,
+  String jobId, {
+  String profile = 'default',
+  int limit = 10,
+}) async {
+  final rest = await ref.watch(
+    restClientProvider(instanceId, profile: profile).future,
+  );
+  final job = '$hermesCronRoute/${Uri.encodeComponent(jobId)}';
+  final body = await rest.getJson('$job/runs', {'limit': '$limit'});
+  final rows = [
+    for (final e in (body['runs'] as List?) ?? const [])
+      if (e is Map) e.cast<String, Object?>(),
+  ];
+  final outputs = await Future.wait([
+    for (final row in rows) _runOutput(rest, '${row['id']}'),
+  ]);
+  if (outputs.isNotEmpty && outputs.first.isEmpty) {
+    try {
+      outputs[0] = _excerpt(
+        '${(await rest.getJson(job))['last_output'] ?? ''}',
+      );
+    } on HermesException {
+      // The job is gone or unreadable: the run keeps no excerpt.
+    }
+  }
+  return [
+    for (final (i, row) in rows.indexed)
+      AutomationRun.fromJson(row, output: outputs[i]),
+  ];
+}
+
+/// Excerpt of the last assistant message of the run session [sessionId];
+/// '' when there is none or it cannot be read.
+Future<String> _runOutput(HermesRestClient rest, String sessionId) async {
+  try {
+    final body = await rest.getJson(
+      '/api/sessions/${Uri.encodeComponent(sessionId)}/messages',
+      {'limit': '20', 'order': 'latest'},
+    );
+    final messages = [
+      for (final m in (body['messages'] as List?) ?? const [])
+        if (m is Map && m['role'] == 'assistant') m,
+    ];
+    for (final m in messages.reversed) {
+      final text = switch (m['display_content'] ?? m['content']) {
+        final String text => text.trim(),
+        _ => '',
+      };
+      if (text.isNotEmpty) return _excerpt(text);
+    }
+  } on HermesException {
+    // Unreadable run: no excerpt.
+  }
+  return '';
+}
+
+String _excerpt(String text) {
+  final trimmed = text.trim();
+  return trimmed.length <= runOutputLimit
+      ? trimmed
+      : '${trimmed.substring(0, runOutputLimit - 1)}…';
 }
 
 /// Soonest next run first; paused or finished automations (no next run)

@@ -1891,447 +1891,6 @@ class SettingsCompanion extends UpdateCompanion<SettingRow> {
   }
 }
 
-class Activity extends Table with TableInfo<Activity, ActivityRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  Activity(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    hasAutoIncrement: true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    $customConstraints: 'NOT NULL PRIMARY KEY AUTOINCREMENT',
-  );
-  static const VerificationMeta _instanceIdMeta = const VerificationMeta(
-    'instanceId',
-  );
-  late final GeneratedColumn<String> instanceId = GeneratedColumn<String>(
-    'instance_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    $customConstraints: 'NOT NULL REFERENCES instances(id)ON DELETE CASCADE',
-  );
-  static const VerificationMeta _profileMeta = const VerificationMeta(
-    'profile',
-  );
-  late final GeneratedColumn<String> profile = GeneratedColumn<String>(
-    'profile',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    $customConstraints: 'NOT NULL DEFAULT \'default\'',
-    defaultValue: const CustomExpression('\'default\''),
-  );
-  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
-    'sessionId',
-  );
-  late final GeneratedColumn<String> sessionId = GeneratedColumn<String>(
-    'session_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    $customConstraints: 'NOT NULL',
-  );
-  static const VerificationMeta _toolMeta = const VerificationMeta('tool');
-  late final GeneratedColumn<String> tool = GeneratedColumn<String>(
-    'tool',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    $customConstraints: 'NOT NULL',
-  );
-  static const VerificationMeta _summaryMeta = const VerificationMeta(
-    'summary',
-  );
-  late final GeneratedColumn<String> summary = GeneratedColumn<String>(
-    'summary',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    $customConstraints: 'NOT NULL DEFAULT \'\'',
-    defaultValue: const CustomExpression('\'\''),
-  );
-  static const VerificationMeta _atMeta = const VerificationMeta('at');
-  late final GeneratedColumn<int> at = GeneratedColumn<int>(
-    'at',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-    $customConstraints: 'NOT NULL',
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    instanceId,
-    profile,
-    sessionId,
-    tool,
-    summary,
-    at,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'activity';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<ActivityRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('instance_id')) {
-      context.handle(
-        _instanceIdMeta,
-        instanceId.isAcceptableOrUnknown(data['instance_id']!, _instanceIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_instanceIdMeta);
-    }
-    if (data.containsKey('profile')) {
-      context.handle(
-        _profileMeta,
-        profile.isAcceptableOrUnknown(data['profile']!, _profileMeta),
-      );
-    }
-    if (data.containsKey('session_id')) {
-      context.handle(
-        _sessionIdMeta,
-        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_sessionIdMeta);
-    }
-    if (data.containsKey('tool')) {
-      context.handle(
-        _toolMeta,
-        tool.isAcceptableOrUnknown(data['tool']!, _toolMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_toolMeta);
-    }
-    if (data.containsKey('summary')) {
-      context.handle(
-        _summaryMeta,
-        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
-      );
-    }
-    if (data.containsKey('at')) {
-      context.handle(_atMeta, at.isAcceptableOrUnknown(data['at']!, _atMeta));
-    } else if (isInserting) {
-      context.missing(_atMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  ActivityRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return ActivityRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      instanceId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}instance_id'],
-      )!,
-      profile: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}profile'],
-      )!,
-      sessionId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}session_id'],
-      )!,
-      tool: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}tool'],
-      )!,
-      summary: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}summary'],
-      )!,
-      at: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}at'],
-      )!,
-    );
-  }
-
-  @override
-  Activity createAlias(String alias) {
-    return Activity(attachedDatabase, alias);
-  }
-
-  @override
-  bool get dontWriteConstraints => true;
-}
-
-class ActivityRow extends DataClass implements Insertable<ActivityRow> {
-  final int id;
-  final String instanceId;
-  final String profile;
-
-  /// Session of the chat it ran in; '' for a chat not created yet.
-  final String sessionId;
-  final String tool;
-  final String summary;
-
-  /// When the tool finished (ms since epoch).
-  final int at;
-  const ActivityRow({
-    required this.id,
-    required this.instanceId,
-    required this.profile,
-    required this.sessionId,
-    required this.tool,
-    required this.summary,
-    required this.at,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['instance_id'] = Variable<String>(instanceId);
-    map['profile'] = Variable<String>(profile);
-    map['session_id'] = Variable<String>(sessionId);
-    map['tool'] = Variable<String>(tool);
-    map['summary'] = Variable<String>(summary);
-    map['at'] = Variable<int>(at);
-    return map;
-  }
-
-  ActivityCompanion toCompanion(bool nullToAbsent) {
-    return ActivityCompanion(
-      id: Value(id),
-      instanceId: Value(instanceId),
-      profile: Value(profile),
-      sessionId: Value(sessionId),
-      tool: Value(tool),
-      summary: Value(summary),
-      at: Value(at),
-    );
-  }
-
-  factory ActivityRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return ActivityRow(
-      id: serializer.fromJson<int>(json['id']),
-      instanceId: serializer.fromJson<String>(json['instance_id']),
-      profile: serializer.fromJson<String>(json['profile']),
-      sessionId: serializer.fromJson<String>(json['session_id']),
-      tool: serializer.fromJson<String>(json['tool']),
-      summary: serializer.fromJson<String>(json['summary']),
-      at: serializer.fromJson<int>(json['at']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'instance_id': serializer.toJson<String>(instanceId),
-      'profile': serializer.toJson<String>(profile),
-      'session_id': serializer.toJson<String>(sessionId),
-      'tool': serializer.toJson<String>(tool),
-      'summary': serializer.toJson<String>(summary),
-      'at': serializer.toJson<int>(at),
-    };
-  }
-
-  ActivityRow copyWith({
-    int? id,
-    String? instanceId,
-    String? profile,
-    String? sessionId,
-    String? tool,
-    String? summary,
-    int? at,
-  }) => ActivityRow(
-    id: id ?? this.id,
-    instanceId: instanceId ?? this.instanceId,
-    profile: profile ?? this.profile,
-    sessionId: sessionId ?? this.sessionId,
-    tool: tool ?? this.tool,
-    summary: summary ?? this.summary,
-    at: at ?? this.at,
-  );
-  ActivityRow copyWithCompanion(ActivityCompanion data) {
-    return ActivityRow(
-      id: data.id.present ? data.id.value : this.id,
-      instanceId: data.instanceId.present
-          ? data.instanceId.value
-          : this.instanceId,
-      profile: data.profile.present ? data.profile.value : this.profile,
-      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
-      tool: data.tool.present ? data.tool.value : this.tool,
-      summary: data.summary.present ? data.summary.value : this.summary,
-      at: data.at.present ? data.at.value : this.at,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ActivityRow(')
-          ..write('id: $id, ')
-          ..write('instanceId: $instanceId, ')
-          ..write('profile: $profile, ')
-          ..write('sessionId: $sessionId, ')
-          ..write('tool: $tool, ')
-          ..write('summary: $summary, ')
-          ..write('at: $at')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode =>
-      Object.hash(id, instanceId, profile, sessionId, tool, summary, at);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is ActivityRow &&
-          other.id == this.id &&
-          other.instanceId == this.instanceId &&
-          other.profile == this.profile &&
-          other.sessionId == this.sessionId &&
-          other.tool == this.tool &&
-          other.summary == this.summary &&
-          other.at == this.at);
-}
-
-class ActivityCompanion extends UpdateCompanion<ActivityRow> {
-  final Value<int> id;
-  final Value<String> instanceId;
-  final Value<String> profile;
-  final Value<String> sessionId;
-  final Value<String> tool;
-  final Value<String> summary;
-  final Value<int> at;
-  const ActivityCompanion({
-    this.id = const Value.absent(),
-    this.instanceId = const Value.absent(),
-    this.profile = const Value.absent(),
-    this.sessionId = const Value.absent(),
-    this.tool = const Value.absent(),
-    this.summary = const Value.absent(),
-    this.at = const Value.absent(),
-  });
-  ActivityCompanion.insert({
-    this.id = const Value.absent(),
-    required String instanceId,
-    this.profile = const Value.absent(),
-    required String sessionId,
-    required String tool,
-    this.summary = const Value.absent(),
-    required int at,
-  }) : instanceId = Value(instanceId),
-       sessionId = Value(sessionId),
-       tool = Value(tool),
-       at = Value(at);
-  static Insertable<ActivityRow> custom({
-    Expression<int>? id,
-    Expression<String>? instanceId,
-    Expression<String>? profile,
-    Expression<String>? sessionId,
-    Expression<String>? tool,
-    Expression<String>? summary,
-    Expression<int>? at,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (instanceId != null) 'instance_id': instanceId,
-      if (profile != null) 'profile': profile,
-      if (sessionId != null) 'session_id': sessionId,
-      if (tool != null) 'tool': tool,
-      if (summary != null) 'summary': summary,
-      if (at != null) 'at': at,
-    });
-  }
-
-  ActivityCompanion copyWith({
-    Value<int>? id,
-    Value<String>? instanceId,
-    Value<String>? profile,
-    Value<String>? sessionId,
-    Value<String>? tool,
-    Value<String>? summary,
-    Value<int>? at,
-  }) {
-    return ActivityCompanion(
-      id: id ?? this.id,
-      instanceId: instanceId ?? this.instanceId,
-      profile: profile ?? this.profile,
-      sessionId: sessionId ?? this.sessionId,
-      tool: tool ?? this.tool,
-      summary: summary ?? this.summary,
-      at: at ?? this.at,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (instanceId.present) {
-      map['instance_id'] = Variable<String>(instanceId.value);
-    }
-    if (profile.present) {
-      map['profile'] = Variable<String>(profile.value);
-    }
-    if (sessionId.present) {
-      map['session_id'] = Variable<String>(sessionId.value);
-    }
-    if (tool.present) {
-      map['tool'] = Variable<String>(tool.value);
-    }
-    if (summary.present) {
-      map['summary'] = Variable<String>(summary.value);
-    }
-    if (at.present) {
-      map['at'] = Variable<int>(at.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ActivityCompanion(')
-          ..write('id: $id, ')
-          ..write('instanceId: $instanceId, ')
-          ..write('profile: $profile, ')
-          ..write('sessionId: $sessionId, ')
-          ..write('tool: $tool, ')
-          ..write('summary: $summary, ')
-          ..write('at: $at')
-          ..write(')'))
-        .toString();
-  }
-}
-
 abstract class _$HermuseDatabase extends GeneratedDatabase {
   _$HermuseDatabase(QueryExecutor e) : super(e);
   $HermuseDatabaseManager get managers => $HermuseDatabaseManager(this);
@@ -2352,11 +1911,6 @@ abstract class _$HermuseDatabase extends GeneratedDatabase {
     'messages_fts_update',
   );
   late final Settings settings = Settings(this);
-  late final Activity activity = Activity(this);
-  late final Index activityByTime = Index(
-    'activity_by_time',
-    'CREATE INDEX activity_by_time ON activity (instance_id, profile, at)',
-  );
   Selectable<SearchMessagesResult> searchMessages(
     String query,
     String instanceId,
@@ -2397,8 +1951,6 @@ abstract class _$HermuseDatabase extends GeneratedDatabase {
     messagesFtsDelete,
     messagesFtsUpdate,
     settings,
-    activity,
-    activityByTime,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -2436,13 +1988,6 @@ abstract class _$HermuseDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.update,
       ),
       result: [TableUpdate('messages_fts', kind: UpdateKind.insert)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'instances',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('activity', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -2488,25 +2033,6 @@ final class $InstancesReferences
     ).filter((f) => f.instanceId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_sessionsRefsTable($_db));
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: cache),
-    );
-  }
-
-  static MultiTypedResultKey<Activity, List<ActivityRow>> _activityRefsTable(
-    _$HermuseDatabase db,
-  ) => MultiTypedResultKey.fromTable(
-    db.activity,
-    aliasName: 'instances__id__activity__instance_id',
-  );
-
-  $ActivityProcessedTableManager get activityRefs {
-    final manager = $ActivityTableManager(
-      $_db,
-      $_db.activity,
-    ).filter((f) => f.instanceId.id.sqlEquals($_itemColumn<String>('id')!));
-
-    final cache = $_typedResult.readTableOrNull(_activityRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -2577,31 +2103,6 @@ class $InstancesFilterComposer extends Composer<_$HermuseDatabase, Instances> {
           }) => $SessionsFilterComposer(
             $db: $db,
             $table: $db.sessions,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
-
-  Expression<bool> activityRefs(
-    Expression<bool> Function($ActivityFilterComposer f) f,
-  ) {
-    final $ActivityFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.activity,
-      getReferencedColumn: (t) => t.instanceId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $ActivityFilterComposer(
-            $db: $db,
-            $table: $db.activity,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -2719,31 +2220,6 @@ class $InstancesAnnotationComposer
     );
     return f(composer);
   }
-
-  Expression<T> activityRefs<T extends Object>(
-    Expression<T> Function($ActivityAnnotationComposer a) f,
-  ) {
-    final $ActivityAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.id,
-      referencedTable: $db.activity,
-      getReferencedColumn: (t) => t.instanceId,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $ActivityAnnotationComposer(
-            $db: $db,
-            $table: $db.activity,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return f(composer);
-  }
 }
 
 class $InstancesTableManager
@@ -2759,7 +2235,7 @@ class $InstancesTableManager
           $InstancesUpdateCompanionBuilder,
           (InstanceRow, $InstancesReferences),
           InstanceRow,
-          PrefetchHooks Function({bool sessionsRefs, bool activityRefs})
+          PrefetchHooks Function({bool sessionsRefs})
         > {
   $InstancesTableManager(_$HermuseDatabase db, Instances table)
     : super(
@@ -2824,55 +2300,33 @@ class $InstancesTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback:
-              ({sessionsRefs = false, activityRefs = false}) {
-                return PrefetchHooks(
-                  db: db,
-                  explicitlyWatchedTables: [
-                    if (sessionsRefs) db.sessions,
-                    if (activityRefs) db.activity,
-                  ],
-                  addJoins: null,
-                  getPrefetchedDataCallback: (items) async {
-                    return [
-                      if (sessionsRefs)
-                        await $_getPrefetchedData<
-                          InstanceRow,
-                          Instances,
-                          SessionRow
-                        >(
-                          currentTable: table,
-                          referencedTable: $InstancesReferences
-                              ._sessionsRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $InstancesReferences(db, table, p0).sessionsRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.instanceId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                      if (activityRefs)
-                        await $_getPrefetchedData<
-                          InstanceRow,
-                          Instances,
-                          ActivityRow
-                        >(
-                          currentTable: table,
-                          referencedTable: $InstancesReferences
-                              ._activityRefsTable(db),
-                          managerFromTypedResult: (p0) =>
-                              $InstancesReferences(db, table, p0).activityRefs,
-                          referencedItemsForCurrentItem:
-                              (item, referencedItems) => referencedItems.where(
-                                (e) => e.instanceId == item.id,
-                              ),
-                          typedResults: items,
-                        ),
-                    ];
-                  },
-                );
+          prefetchHooksCallback: ({sessionsRefs = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [if (sessionsRefs) db.sessions],
+              addJoins: null,
+              getPrefetchedDataCallback: (items) async {
+                return [
+                  if (sessionsRefs)
+                    await $_getPrefetchedData<
+                      InstanceRow,
+                      Instances,
+                      SessionRow
+                    >(
+                      currentTable: table,
+                      referencedTable: $InstancesReferences._sessionsRefsTable(
+                        db,
+                      ),
+                      managerFromTypedResult: (p0) =>
+                          $InstancesReferences(db, table, p0).sessionsRefs,
+                      referencedItemsForCurrentItem: (item, referencedItems) =>
+                          referencedItems.where((e) => e.instanceId == item.id),
+                      typedResults: items,
+                    ),
+                ];
               },
+            );
+          },
         ),
       );
 }
@@ -2889,7 +2343,7 @@ typedef $InstancesProcessedTableManager =
       $InstancesUpdateCompanionBuilder,
       (InstanceRow, $InstancesReferences),
       InstanceRow,
-      PrefetchHooks Function({bool sessionsRefs, bool activityRefs})
+      PrefetchHooks Function({bool sessionsRefs})
     >;
 typedef $SessionsCreateCompanionBuilder = SessionsCompanion Function({
   required String instanceId,
@@ -3751,350 +3205,6 @@ typedef $SettingsProcessedTableManager =
       SettingRow,
       PrefetchHooks Function()
     >;
-typedef $ActivityCreateCompanionBuilder = ActivityCompanion Function({
-  Value<int> id,
-  required String instanceId,
-  Value<String> profile,
-  required String sessionId,
-  required String tool,
-  Value<String> summary,
-  required int at,
-});
-typedef $ActivityUpdateCompanionBuilder = ActivityCompanion Function({
-  Value<int> id,
-  Value<String> instanceId,
-  Value<String> profile,
-  Value<String> sessionId,
-  Value<String> tool,
-  Value<String> summary,
-  Value<int> at,
-});
-
-final class $ActivityReferences
-    extends BaseReferences<_$HermuseDatabase, Activity, ActivityRow> {
-  $ActivityReferences(super.$_db, super.$_table, super.$_typedResult);
-
-  static Instances _instanceIdTable(_$HermuseDatabase db) =>
-      db.instances.createAlias('activity__instance_id__instances__id');
-
-  $InstancesProcessedTableManager get instanceId {
-    final $_column = $_itemColumn<String>('instance_id')!;
-
-    final manager = $InstancesTableManager(
-      $_db,
-      $_db.instances,
-    ).filter((f) => f.id.sqlEquals($_column));
-    final item = $_typedResult.readTableOrNull(_instanceIdTable($_db));
-    if (item == null) return manager;
-    return ProcessedTableManager(
-      manager.$state.copyWith(prefetchedData: [item]),
-    );
-  }
-}
-
-class $ActivityFilterComposer extends Composer<_$HermuseDatabase, Activity> {
-  $ActivityFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get profile => $composableBuilder(
-    column: $table.profile,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get sessionId => $composableBuilder(
-    column: $table.sessionId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get tool => $composableBuilder(
-    column: $table.tool,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get summary => $composableBuilder(
-    column: $table.summary,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get at => $composableBuilder(
-    column: $table.at,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  $InstancesFilterComposer get instanceId {
-    final $InstancesFilterComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.instanceId,
-      referencedTable: $db.instances,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $InstancesFilterComposer(
-            $db: $db,
-            $table: $db.instances,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-}
-
-class $ActivityOrderingComposer extends Composer<_$HermuseDatabase, Activity> {
-  $ActivityOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get profile => $composableBuilder(
-    column: $table.profile,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get sessionId => $composableBuilder(
-    column: $table.sessionId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get tool => $composableBuilder(
-    column: $table.tool,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get summary => $composableBuilder(
-    column: $table.summary,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get at => $composableBuilder(
-    column: $table.at,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  $InstancesOrderingComposer get instanceId {
-    final $InstancesOrderingComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.instanceId,
-      referencedTable: $db.instances,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $InstancesOrderingComposer(
-            $db: $db,
-            $table: $db.instances,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-}
-
-class $ActivityAnnotationComposer
-    extends Composer<_$HermuseDatabase, Activity> {
-  $ActivityAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<int> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get profile =>
-      $composableBuilder(column: $table.profile, builder: (column) => column);
-
-  GeneratedColumn<String> get sessionId =>
-      $composableBuilder(column: $table.sessionId, builder: (column) => column);
-
-  GeneratedColumn<String> get tool =>
-      $composableBuilder(column: $table.tool, builder: (column) => column);
-
-  GeneratedColumn<String> get summary =>
-      $composableBuilder(column: $table.summary, builder: (column) => column);
-
-  GeneratedColumn<int> get at =>
-      $composableBuilder(column: $table.at, builder: (column) => column);
-
-  $InstancesAnnotationComposer get instanceId {
-    final $InstancesAnnotationComposer composer = $composerBuilder(
-      composer: this,
-      getCurrentColumn: (t) => t.instanceId,
-      referencedTable: $db.instances,
-      getReferencedColumn: (t) => t.id,
-      builder:
-          (
-            joinBuilder, {
-            $addJoinBuilderToRootComposer,
-            $removeJoinBuilderFromRootComposer,
-          }) => $InstancesAnnotationComposer(
-            $db: $db,
-            $table: $db.instances,
-            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-            joinBuilder: joinBuilder,
-            $removeJoinBuilderFromRootComposer:
-                $removeJoinBuilderFromRootComposer,
-          ),
-    );
-    return composer;
-  }
-}
-
-class $ActivityTableManager
-    extends
-        RootTableManager<
-          _$HermuseDatabase,
-          Activity,
-          ActivityRow,
-          $ActivityFilterComposer,
-          $ActivityOrderingComposer,
-          $ActivityAnnotationComposer,
-          $ActivityCreateCompanionBuilder,
-          $ActivityUpdateCompanionBuilder,
-          (ActivityRow, $ActivityReferences),
-          ActivityRow,
-          PrefetchHooks Function({bool instanceId})
-        > {
-  $ActivityTableManager(_$HermuseDatabase db, Activity table)
-    : super(
-        TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $ActivityFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $ActivityOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $ActivityAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                Value<String> instanceId = const Value.absent(),
-                Value<String> profile = const Value.absent(),
-                Value<String> sessionId = const Value.absent(),
-                Value<String> tool = const Value.absent(),
-                Value<String> summary = const Value.absent(),
-                Value<int> at = const Value.absent(),
-              }) => ActivityCompanion(
-                id: id,
-                instanceId: instanceId,
-                profile: profile,
-                sessionId: sessionId,
-                tool: tool,
-                summary: summary,
-                at: at,
-              ),
-          createCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                required String instanceId,
-                Value<String> profile = const Value.absent(),
-                required String sessionId,
-                required String tool,
-                Value<String> summary = const Value.absent(),
-                required int at,
-              }) => ActivityCompanion.insert(
-                id: id,
-                instanceId: instanceId,
-                profile: profile,
-                sessionId: sessionId,
-                tool: tool,
-                summary: summary,
-                at: at,
-              ),
-          withReferenceMapper: (p0) => p0
-              .map(
-                (e) => (
-                  e.readTable<Activity, ActivityRow>(table),
-                  $ActivityReferences(db, table, e),
-                ),
-              )
-              .toList(),
-          prefetchHooksCallback: ({instanceId = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [],
-              addJoins:
-                  <
-                    T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic
-                    >
-                  >(state) {
-                    if (instanceId) {
-                      state = state.withJoin(
-                        currentTable: table,
-                        currentColumn: table.instanceId,
-                        referencedTable: $ActivityReferences._instanceIdTable(
-                          db,
-                        ),
-                        referencedColumn: $ActivityReferences
-                            ._instanceIdTable(db)
-                            .id,
-                      ) as T;
-                    }
-
-                    return state;
-                  },
-              getPrefetchedDataCallback: (items) async {
-                return [];
-              },
-            );
-          },
-        ),
-      );
-}
-
-typedef $ActivityProcessedTableManager =
-    ProcessedTableManager<
-      _$HermuseDatabase,
-      Activity,
-      ActivityRow,
-      $ActivityFilterComposer,
-      $ActivityOrderingComposer,
-      $ActivityAnnotationComposer,
-      $ActivityCreateCompanionBuilder,
-      $ActivityUpdateCompanionBuilder,
-      (ActivityRow, $ActivityReferences),
-      ActivityRow,
-      PrefetchHooks Function({bool instanceId})
-    >;
 
 class $HermuseDatabaseManager {
   final _$HermuseDatabase _db;
@@ -4109,8 +3219,6 @@ class $HermuseDatabaseManager {
       $MessagesFtsTableManager(_db, _db.messagesFts);
   $SettingsTableManager get settings =>
       $SettingsTableManager(_db, _db.settings);
-  $ActivityTableManager get activity =>
-      $ActivityTableManager(_db, _db.activity);
 }
 
 class SearchMessagesResult {

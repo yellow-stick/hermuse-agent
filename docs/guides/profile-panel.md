@@ -1,8 +1,11 @@
-# Agents, Activity, Approvals and Automations
+# Agents, Activity, Approvals, Upcoming and Identity
 
 The profile panel sits on the right of the chat (the avatar at the top right
-opens it on narrow windows). Under **Open computer** it has four tabs; the
-desktop app and the web app show the same thing.
+opens it on narrow windows). Under the agent's name a status line says
+**Connected** while the agent is idle and what it is doing while it works
+("Searching the web", "Reading example.com", "Running a command"). Under
+**Open computer** it has four tabs: **Activity**, **Approvals**, **Upcoming**
+and **Identity**. The desktop app and the web app show the same thing.
 
 ## Several agents on one Hermes
 
@@ -28,7 +31,7 @@ Only the original Hermuse profile, while using its original portrait, plays
 the bundled activity animations. Reduced-motion preferences show its static
 portrait instead.
 
-Feed, Ideas, Goals, Library, Activity, Automations and the computer view
+Feed, Ideas, Goals, Library, Activity, Upcoming, Identity and the computer view
 follow the selected profile. Update the Hermuse plugin on existing servers
 before using these profile-scoped surfaces; older plugins do not isolate
 their data by profile. Profiles separate agent state, not operating-system
@@ -36,11 +39,22 @@ permissions: they are not security sandboxes.
 
 ## Activity
 
-One row per tool your agent finished in a chat: a web search, a page it
-opened, a command it ran, an automation it created. Each row shows the tool,
-what it worked on (the command, the search, the address; Hermes' one-line
-result when the call names nothing) and the time, grouped by day (**Today**,
-**Yesterday**, the weekday, then the date).
+One row per task your agent ran: one request you made, or one scheduled run
+(a reminder, a briefing, the heartbeat), from every surface (this app, the
+web app, the CLI, Telegram, …). The Hermuse plugin titles and summarises each
+task once it ends ("Set daily 8am briefing" — "Scheduled daily 8:00 AM Nantes
+briefing"); a row shows the icon of the main tool it used, the title, the
+summary and the time, newest first, grouped by day (**Today**, **Yesterday**,
+the weekday, then the date). A row from the open chat or one of its side
+chats opens that chat.
+
+A task running now shows on top, under **Now**: your request (or the chat it
+runs in), the agent's current step and a **Stop** button that interrupts it.
+
+Tasks are kept on the server by the plugin (`/api/plugins/hermuse/tasks`), so
+every device shows the same list; the tab refreshes when a turn ends and when
+Hermes reports sessions written elsewhere. Without the plugin the tab stays
+empty. Heartbeat runs that found nothing to tell you are not recorded.
 
 In the chat itself, each tool call is a row with its icon, name, command or
 query, duration and a check, or a red cross when it failed. A row that has
@@ -49,12 +63,6 @@ characters), Hermes' result line and why it failed (`Exit code 1`,
 `Command denied by user`). After a reload Hermes no longer sends tool
 outputs, so earlier rows show the command with a grey check: finished, but
 not known to have worked.
-
-Activity is kept on this device (the app's local database, the browser's
-storage for the web app), up to the last 500 rows per agent profile, and survives a
-restart. It only records what happened while the app was open: a chat held on
-another device or surface (CLI, Telegram, …) does not show up here. A row from
-the open chat or one of its side chats opens that chat.
 
 ## Approvals
 
@@ -70,54 +78,75 @@ confirms which requests are still pending on reconnect; it never approves
 anything for you. After relaunch, open a previously unopened side chat to
 recover its pending requests.
 
-Which commands ask first is Hermes' setting `approvals.mode` in
-`config.yaml`:
+Which commands ask first is set in **Settings → Permissions** for the open
+agent (Hermes' `approvals.mode`, written with `config.set`; it applies to the
+next command, no restart needed):
 
-| Value | What happens |
-| --- | --- |
-| `smart` (Hermes' default) | A small model judges each risky command; you are asked only when it is unsure. `rm -rf /tmp/test` usually runs without asking. |
-| `manual` | Every command Hermes flags as risky (recursive delete, `sudo`, writes to system paths, …) asks you first. |
-| `off` | Nothing asks. |
+| Choice | Value | What happens |
+| --- | --- | --- |
+| **Ask only when needed** (default) | `smart` | A small model judges each risky command; you are asked only when it is unsure. `rm -rf /tmp/test` usually runs without asking. |
+| **Always ask for risky commands** | `manual` | Every command Hermes flags as risky (recursive delete, `sudo`, writes to system paths, …) asks you first. |
+| **Never ask** | `off` | Nothing asks. |
 
-To be asked every time, on the machine that runs Hermes (as the user that
-runs it):
+## Upcoming
 
-```bash
-hermes config set approvals.mode manual
-```
+Everything scheduled for this agent, in sections: **Reminders** (one-shot,
+with their date, "Oct 4, 9:15 AM"), **Daily**, **Weekly**, **Other
+recurring** and **Heartbeat**. You create them by asking your agent, for
+example:
 
-It applies to the next command, no restart needed.
+> Remind me Saturday at 9 to call the plumber.
+>
+> Every day at 8 AM, send me a briefing.
 
-## Automations
+The agent saves a real Hermes job that delivers into your main chat; it never
+asks which platform to deliver to. The Hermuse plugin's own maintenance jobs
+(daily feed, weekly ideas, goals check-in, nightly reflection) are not
+listed. The list refreshes when the agent's scheduling tool finishes and when
+the chat turn ends; changes are scoped to the current agent profile.
 
-Every task Hermes runs on a schedule: the four of the Hermuse plugin (the
-daily feed, the weekly ideas, the weekly goals check-in and the nightly
-reflection) and the ones you created by asking your agent, for example:
-
-> Every day at 6 PM, sum up my day.
-
-The list refreshes when the agent's scheduling tool finishes and when the chat
-turn ends, without closing and reopening the panel. Changes are scoped to the
-current agent profile. A promise in chat is not an automation: the agent must
-successfully save a real Hermes job.
-
-Each row shows the schedule in words (**Every day at 6:00 PM**), the next run
-and, once it ran, the last run and how it went (**OK**, **Failed** with the
-reason, or **Not delivered**). The soonest next run comes first; paused
-automations go last.
+Tapping an item opens its sheet: the schedule in words (**Every weekday at
+7:00 AM**), the next run, the **Run history** (time, how it went, and the
+start of what it answered) and its actions:
 
 - **Pause** / **Resume** stops or restarts the schedule.
-- **Run now** runs it right away and waits for the result.
-- **Delete** (after a confirmation) removes one of your automations. The
-  Hermuse ones cannot be deleted, only paused: the plugin registers them again
-  whenever its schedule is turned on, and a pause sticks.
+- **Run now** runs it right away.
+- **Delete** (after a confirmation) removes one of your items. The heartbeat
+  cannot be deleted, only paused: the plugin registers it again whenever its
+  schedule is turned on, and a pause sticks.
 
 Schedule hours are the server's time zone, as the agent wrote them; the next
-and last runs are shown in your device's time.
+and past runs are shown in your device's time.
 
-Hermes runs automations from its **gateway** (`hermes gateway`). When no
-scheduler has ticked on that Hermes, the tab says so: automations then only run
-when you press **Run now**, until the gateway runs on that machine.
+### Heartbeat
+
+Every 30 minutes the agent reviews its memory, your goals and what is coming
+up. It writes in the main chat only when something needs you ("your trip is
+in 4 days and the flight is not booked"), often with quick replies to pick
+from; otherwise it stays silent.
+
+### The scheduler
+
+Hermes runs scheduled jobs from its **gateway** (`hermes gateway`), which
+servers set up by Hermuse run as a second service, `hermuse-gateway.service`
+(**Scheduler** in the install steps). When no scheduler has ticked on that
+Hermes, the tab says so: items then only run when you press **Run now**, until
+the scheduler runs on that machine. Reminders and briefings arrive in the main
+chat as agent messages, after a small **Scheduled: <name>** line.
+
+## Identity
+
+The agent's name with **Edit** (the agent editor: name, portrait, prompt),
+then two cards:
+
+- **SOUL** opens `SOUL.md`, the agent's persona, in a full-screen editor with
+  a preview. It shapes every new conversation; saving writes the profile's
+  `SOUL.md` on the server.
+- **MEMORY** opens the agent's long-term memory: `MEMORY.md` (what it
+  remembers about your life) and `USER.md` (your profile), one block per
+  entry. Edit, add or delete entries, then **Save**; Hermes keeps them under
+  `HERMES_HOME/memories/`. The card shows when the memory last changed. You
+  can also ask your agent to forget something.
 
 ## Feed during chat
 
@@ -133,4 +162,5 @@ feed editions additionally require a running Hermes gateway.
 
 ## Connectors
 
-Coming soon.
+Connectors live in **Settings → Connectors**. None are available yet; the
+section says so.

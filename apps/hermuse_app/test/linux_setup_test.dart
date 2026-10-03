@@ -337,6 +337,43 @@ void main() {
         expect(fixture.installs, isEmpty);
       },
     );
+
+    test(
+      'should review a broken scheduler before the dashboard login',
+      () async {
+        final fixture = _Fixture(
+          canonical: true,
+          authRequired: true,
+          schedulerReady: false,
+        );
+        await fixture.controller.prepare(LinuxSetupGoal.local);
+        expect(fixture.state.phase, isA<SetupReview>());
+        expect(fixture.state.purpose, LinuxSetupPurpose.dashboardLogin);
+        // A plain authorize never installs over the gated service.
+        await fixture.controller.authorize();
+        expect(fixture.installs, isEmpty);
+        expect(fixture.connects, 0);
+        fixture.controller.skipSchedulerRepair();
+        expect(fixture.state.phase, isA<SetupDashboardLogin>());
+      },
+    );
+
+    testWidgets('should repair a broken scheduler with the installer', (
+      tester,
+    ) async {
+      final fixture = _Fixture(canonical: true, schedulerReady: false);
+      await fixture.controller.prepare(LinuxSetupGoal.local);
+      await _pumpSetup(tester, fixture);
+      expect(find.text('Scheduler — needs repair'), findsOneWidget);
+      expect(find.text('Authorize service access'), findsOneWidget);
+      await _capture(tester, 'linux-service-scheduler-repair.png');
+      await tester.tap(find.text('Repair scheduler'));
+      await tester.pumpAndSettle();
+      expect(fixture.installs, [null]);
+      expect(fixture.connects, 0);
+      expect(fixture.state.phase, isA<SetupFinished>());
+      expect(find.text('Scheduler — needs repair'), findsNothing);
+    });
   });
 }
 
@@ -345,6 +382,7 @@ final class _Fixture {
     this.canonical = false,
     this.authRequired = false,
     this.legacy,
+    this.schedulerReady,
     SecretStore? secretStore,
   }) : secrets = secretStore ?? MemorySecretStore() {
     addTearDown(db.close);
@@ -353,6 +391,7 @@ final class _Fixture {
   final bool canonical;
   final bool? authRequired;
   final LegacyHermesMigration? legacy;
+  final bool? schedulerReady;
   final db = openMemoryDatabase();
   final SecretStore secrets;
   final installs = <LegacyHermesMigration?>[];
@@ -387,6 +426,7 @@ final class _Fixture {
               canonicalPresent: canonical,
               authRequired: authRequired,
               legacy: legacy,
+              schedulerReady: schedulerReady,
             );
           },
           connect: () async* {

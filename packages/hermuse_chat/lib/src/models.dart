@@ -380,34 +380,41 @@ enum ChatConnection {
   error,
 }
 
-/// A tool the agent finished in a chat: one row of the profile panel's
-/// Activity tab, kept on the device (`ChatObserver.toolCompleted`).
-final class ActivityItem {
-  const ActivityItem({
-    required this.tool,
-    required this.summary,
-    required this.at,
-    this.sessionId = '',
+/// A turn the agent is running in one chat: the live row on top of the
+/// profile panel's Activity tab, stopped with `ChatController.interrupt`.
+final class RunningTask {
+  const RunningTask({
+    required this.threadId,
+    required this.isMain,
+    required this.threadTitle,
+    required this.request,
+    required this.step,
   });
 
-  /// Hermes' tool name (`web_search`, `browser_navigate`, …).
-  final String tool;
+  final String threadId;
 
-  /// What it worked on (the command, the query) or else Hermes' one-line
-  /// result; '' when neither is known.
-  final String summary;
+  /// It runs in the main chat (a scheduled job or a heartbeat lands there).
+  final bool isMain;
 
-  /// When the tool finished.
-  final DateTime at;
+  /// Title of the side chat it runs in ('' while untitled); the apps name
+  /// the main chat themselves.
+  final String threadTitle;
 
-  /// Session of the chat it ran in ('' for a chat not created yet).
-  final String sessionId;
+  /// First line of the user's message that started it; '' for a turn the
+  /// server started (a scheduled job, the heartbeat).
+  final String request;
 
-  ToolKind get kind => toolKindOf(tool);
-
-  /// The tool name in words: `browser_navigate` → "Browser navigate".
-  String get title => toolTitle(tool);
+  /// What the agent is doing now ([agentStepLabel]): "Searching the web".
+  final String step;
 }
+
+/// Name of the scheduled job whose output [text] hands to the main chat
+/// (Hermes' `[Cronjob "<name>" output — …]` brief), or null when [text] is
+/// no such brief.
+String? cronBriefJobName(String text) =>
+    _cronBrief.firstMatch(text.trimLeft())?.group(1);
+
+final _cronBrief = RegExp(r'^\[Cronjob "(.*?)" output — ');
 
 /// An approval request of the agent nobody answered yet.
 final class ApprovalRequest {
@@ -435,9 +442,9 @@ final class ApprovalRequest {
 /// Tabs of the profile panel.
 enum PanelTab {
   activity('Activity', 'Nothing yet'),
-  approvals('Approvals', 'No approvals waiting'),
-  automations('Automations', 'Nothing scheduled'),
-  connectors('Connectors', 'Coming soon');
+  approvals('Approvals', 'No approvals yet'),
+  upcoming('Upcoming', 'Nothing scheduled'),
+  identity('Identity', '');
 
   const PanelTab(this.label, this.emptyText);
   final String label;

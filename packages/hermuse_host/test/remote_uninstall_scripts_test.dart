@@ -148,6 +148,17 @@ void main() {
         expect(before['transactionActive'], isFalse);
         final outcome = await machine.remove(before, purge: false);
         expect(outcome['complete'], isTrue, reason: jsonEncode(outcome));
+        expect(outcome['removed'], containsAll(['dashboard', 'scheduler']));
+        expect(
+          await machine
+              .file('etc/systemd/system/hermuse-gateway.service')
+              .exists(),
+          isFalse,
+        );
+        expect(
+          await machine.file('state/hermuse-gateway.service.active').exists(),
+          isFalse,
+        );
         expect(
           await Directory(
             '${machine.root.path}/home/hermes/.hermes/hermes-agent',
@@ -266,6 +277,48 @@ void main() {
           ),
           isTrue,
         );
+      });
+
+      test('lists the scheduler for removal and preserves a modified scheduler unit with the account', () async {
+        await machine.install();
+        final scheduler = _resource(
+          await machine.inventory(),
+          'scheduler',
+          machine,
+        );
+        expect(scheduler['kind'], 'service');
+        expect(scheduler['removable'], isTrue);
+        expect(
+          scheduler['label'],
+          '${machine.root.path}/etc/systemd/system/hermuse-gateway.service',
+        );
+        final unit = '$gatewayService\n'.replaceAll(
+          '/home/hermes',
+          '${machine.root.path}/home/hermes',
+        );
+        final modified = '${unit}ExecStartPre=/usr/bin/true\n';
+        await machine
+            .file('etc/systemd/system/hermuse-gateway.service')
+            .writeAsString(modified);
+        final inventory = await machine.inventory();
+        expect(
+          _resource(inventory, 'scheduler', machine)['removable'],
+          isFalse,
+        );
+        final outcome = await machine.remove(inventory, purge: true);
+        expect(outcome['complete'], isFalse);
+        expect(outcome['removed'], isNot(contains('scheduler')));
+        expect(
+          await machine
+              .file('etc/systemd/system/hermuse-gateway.service')
+              .readAsString(),
+          modified,
+        );
+        expect(
+          await machine.file('state/hermuse-gateway.service.active').exists(),
+          isTrue,
+        );
+        expect(await machine.file('state/account.json').exists(), isTrue);
       });
 
       test('should not follow a planted runtime symlink or a symlink inside an owned tree', () async {
@@ -1100,6 +1153,7 @@ os.execv("/usr/bin/ps", ["/usr/bin/ps", *sys.argv[1:]])''');
     await target.parent.create(recursive: true);
     final content =
         path == 'etc/systemd/system/hermuse-dashboard.service' ||
+            path == 'etc/systemd/system/hermuse-gateway.service' ||
             path == 'etc/caddy/Caddyfile'
         ? data
               .replaceAll('/home/hermes', '${root.path}/home/hermes')
@@ -1257,6 +1311,11 @@ os.execv("/usr/bin/ps", ["/usr/bin/ps", *sys.argv[1:]])''');
       '$dashboardService\n',
     );
     await put('state/hermuse-dashboard.service.active', '');
+    await put(
+      'etc/systemd/system/hermuse-gateway.service',
+      '$gatewayService\n',
+    );
+    await put('state/hermuse-gateway.service.active', '');
     await put('state/caddy.active', '');
     await put(
       'etc/caddy/hermuse-remote.caddy',

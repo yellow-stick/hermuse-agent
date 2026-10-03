@@ -67,22 +67,6 @@ CREATE TABLE settings (
   value TEXT NOT NULL
 ) AS SettingRow;
 
--- Tools the agent finished in a chat (the profile panel's Activity tab),
--- newest kept: see `HermuseDatabase.activityKept`.
-CREATE TABLE activity (
-  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-  instance_id TEXT NOT NULL REFERENCES instances (id) ON DELETE CASCADE,
-  profile TEXT NOT NULL DEFAULT 'default',
-  -- Session of the chat it ran in; '' for a chat not created yet.
-  session_id TEXT NOT NULL,
-  tool TEXT NOT NULL,
-  summary TEXT NOT NULL DEFAULT '',
-  -- When the tool finished (ms since epoch).
-  at INTEGER NOT NULL
-) AS ActivityRow;
-
-CREATE INDEX activity_by_time ON activity (instance_id, profile, at);
-
 searchMessages:
   SELECT m.** FROM messages_fts f
     INNER JOIN messages m ON m.rowid = f.rowid

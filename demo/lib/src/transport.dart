@@ -57,11 +57,15 @@ final class DemoTransport implements HermesTransport {
       ) as R;
     }
     if (method.name == HermesMethods.profilesDescribe.name) {
-      return const ProfilesDescribeResult(
+      return ProfilesDescribeResult(
         name: 'default',
-        soul: 'This is a fictional, read-only demonstration agent.',
-        model: ProfileModelPin(),
+        soul: instance.soul,
+        model: const ProfileModelPin(),
       ) as R;
+    }
+    // Settings → Permissions reads Hermes' default approval policy.
+    if (params is ConfigGetParams && params.key == 'approvals.mode') {
+      return const ConfigGetResult(value: 'smart') as R;
     }
     if (params is SessionResumeParams) {
       final chat = instance.chats
@@ -73,10 +77,18 @@ final class DemoTransport implements HermesTransport {
   }
 
   SessionResumeResult _resume(DemoChat chat) {
-    // Rows 40 s apart, the last one [DemoChat.age] before page load.
-    final last = _now.subtract(chat.age);
-    final first = last.subtract(Duration(seconds: 40 * chat.rows.length));
-    final start = first.millisecondsSinceEpoch / 1000;
+    // Rows 40 s apart, the last one about [DemoChat.age] before page load;
+    // a row with its own [DemoRow.age] (an earlier turn) sits there.
+    final at = List<double>.filled(chat.rows.length, 0);
+    var next = _now.subtract(chat.age);
+    for (var i = chat.rows.length - 1; i >= 0; i--) {
+      final age = chat.rows[i].age;
+      next = age == null
+          ? next.subtract(const Duration(seconds: 40))
+          : _now.subtract(age);
+      at[i] = next.millisecondsSinceEpoch / 1000;
+    }
+    final start = at.firstOrNull ?? _now.millisecondsSinceEpoch / 1000;
     final base = demoRowBase(instance, chat);
     return SessionResumeResult(
       sessionId: chat.id,
@@ -93,7 +105,7 @@ final class DemoTransport implements HermesTransport {
             context: row.role == 'tool' ? row.text : null,
             args: row.role == 'tool' && row.args.isNotEmpty ? row.args : null,
             toolCallId: row.role == 'tool' ? '${chat.id}-tool-$i' : null,
-            timestamp: start + 40.0 * i,
+            timestamp: at[i],
             rowId: base + i,
           ),
       ],

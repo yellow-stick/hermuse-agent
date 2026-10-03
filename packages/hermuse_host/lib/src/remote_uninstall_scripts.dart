@@ -68,6 +68,7 @@ String _recipe(Map<String, Object?> request) =>
     'python3 -I -B -c ${shellQuote(_program)} ${shellQuote(jsonEncode({
       ...request,
       'dashboardService': '$dashboardService\n',
+      'gatewayService': '$gatewayService\n',
       'releaseCommit': hermesReleaseCommit,
       'installerHash': hermesInstallShSha256,
       'packages': [...prerequisitePackages, 'ufw', 'docker.io', 'caddy'],
@@ -87,6 +88,7 @@ HERMES = HOME + "/.hermes"
 CHECKOUT = HERMES + "/hermes-agent"
 PLUGIN = HERMES + "/plugins/hermuse"
 SERVICE = "/etc/systemd/system/hermuse-dashboard.service"
+GATEWAY = "/etc/systemd/system/hermuse-gateway.service"
 CADDY = "/etc/caddy/Caddyfile"
 SITE = "/etc/caddy/hermuse-remote.caddy"
 IMPORT = "import /etc/caddy/hermuse-remote.caddy"
@@ -770,6 +772,20 @@ def service_owned():
     except (OSError, UnsafePath, UnicodeError):
         return False
 
+def gateway_owned():
+    if not root_file(GATEWAY):
+        return False
+    try:
+        if text(GATEWAY).rstrip("\n") != REQUEST["gatewayService"].rstrip("\n"):
+            return False
+        if shutil.which("systemctl"):
+            result = command(["systemctl", "show", "hermuse-gateway.service", "--property=DropInPaths", "--value"], required=False)
+            if result.returncode or result.stdout.strip():
+                return False
+        return True
+    except (OSError, UnsafePath, UnicodeError):
+        return False
+
 def caddy_source_safe():
     if not active("caddy"):
         return True
@@ -797,6 +813,8 @@ def service_usage():
         names.add(name)
     for name in sorted(names):
         if name == "hermuse-dashboard.service" and service_owned():
+            continue
+        if name == "hermuse-gateway.service" and gateway_owned():
             continue
         if name.endswith("@.service"):
             # Bare templates cannot be queried with `show`. Read all fragments
@@ -923,7 +941,7 @@ def mount_id(fd):
 def inventory(own_lock=False):
     value, problem = journal()
     resources = []
-    observed = {path: info(path, digest=True) for path in [*PATH_KINDS, SERVICE, SITE, CADDY, JOURNAL, ROOT + "/owns-hermes"]}
+    observed = {path: info(path, digest=True) for path in [*PATH_KINDS, SERVICE, GATEWAY, SITE, CADDY, JOURNAL, ROOT + "/owns-hermes"]}
     usage = service_usage()
     observed["serviceUsage"] = usage
     if problem:
@@ -934,6 +952,12 @@ def inventory(own_lock=False):
             "Exact installer unit with no overrides; stop, disable and remove it." if removable else
             "Unit content, symlink ownership or drop-ins differ; the service will not be stopped or removed.",
             managed=bool(value or root_file(SERVICE))))
+    if info(GATEWAY):
+        removable = gateway_owned()
+        resources.append(resource("scheduler", GATEWAY, "service", removable,
+            "Exact installer scheduler unit with no overrides; stop, disable and remove it." if removable else
+            "Unit content, symlink ownership or drop-ins differ; the scheduler service will not be stopped or removed.",
+            managed=bool(value or root_file(GATEWAY))))
     for path, kind in PATH_KINDS.items():
         item = observed[path]
         if not item:
@@ -1301,6 +1325,15 @@ def remove():
             if active("hermuse-dashboard.service"):
                 raise RuntimeError("The managed dashboard did not stop.")
             done("dashboard")
+        if "scheduler" in candidates:
+            if not gateway_owned():
+                raise RuntimeError("Scheduler ownership changed before stopping it.")
+            command(["systemctl", "disable", "--now", "hermuse-gateway.service"])
+            remove_tree(GATEWAY, info(GATEWAY))
+            command(["systemctl", "daemon-reload"])
+            if active("hermuse-gateway.service"):
+                raise RuntimeError("The managed scheduler did not stop.")
+            done("scheduler")
         busy = processes() or external_runtime()
         if busy:
             warnings.append("The hermes account still has running processes or another service uses its runtime. Runtime, job and data deletion were skipped; unrelated services/processes were not stopped.")

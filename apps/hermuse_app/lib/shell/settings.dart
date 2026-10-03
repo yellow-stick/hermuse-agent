@@ -29,11 +29,24 @@ final class SettingsMenu extends StatelessWidget {
   );
 }
 
-/// Device appearance preferences and the upcoming Yellow Stick account.
+/// Device appearance, the open agent's permissions, connectors and the
+/// upcoming Yellow Stick account.
 final class SettingsScreen extends ConsumerStatefulWidget {
-  const SettingsScreen({required this.onClose, super.key});
+  const SettingsScreen({
+    required this.onClose,
+    this.instanceId = '',
+    this.profile = 'default',
+    this.agentName = '',
+    super.key,
+  });
 
   final VoidCallback onClose;
+
+  /// Hermes instance and profile of the open chat: its permissions show
+  /// ('' when no agent is open).
+  final String instanceId;
+  final String profile;
+  final String agentName;
 
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
@@ -206,6 +219,16 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             ],
                           ),
                         ),
+                        if (widget.instanceId.isNotEmpty) ...[
+                          const SizedBox(height: YsSpace.lg),
+                          _PermissionsSection(
+                            instanceId: widget.instanceId,
+                            profile: widget.profile,
+                            agentName: widget.agentName,
+                          ),
+                        ],
+                        const SizedBox(height: YsSpace.lg),
+                        const _ConnectorsSection(),
                         const SizedBox(height: YsSpace.lg),
                         _SectionCard(
                           child: Column(
@@ -297,6 +320,253 @@ final class _SectionCard extends StatelessWidget {
         border: Border.all(color: palette.lineColor, width: ysHairline),
       ),
       child: Padding(padding: const EdgeInsets.all(YsSpace.lg), child: child),
+    );
+  }
+}
+
+/// What each approvals mode means, in one line.
+String approvalsModeHelp(ApprovalsMode mode) => switch (mode) {
+  ApprovalsMode.smart =>
+    'Your agent judges which commands are risky and asks you only for those.',
+  ApprovalsMode.manual =>
+    'Your agent asks before every command that could change or delete '
+        'something.',
+  ApprovalsMode.off =>
+    'Your agent runs every command without asking. Use only on a server you '
+        'can rebuild.',
+};
+
+/// Settings → Permissions: when the open agent asks before risky commands.
+final class _PermissionsSection extends ConsumerStatefulWidget {
+  const _PermissionsSection({
+    required this.instanceId,
+    required this.profile,
+    required this.agentName,
+  });
+
+  final String instanceId;
+  final String profile;
+  final String agentName;
+
+  @override
+  ConsumerState<_PermissionsSection> createState() =>
+      _PermissionsSectionState();
+}
+
+final class _PermissionsSectionState
+    extends ConsumerState<_PermissionsSection> {
+  ApprovalsMode? _saving;
+  String? _error;
+
+  Future<void> _select(ApprovalsMode mode) async {
+    setState(() {
+      _saving = mode;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(
+            approvalsModeProvider(
+              widget.instanceId,
+              profile: widget.profile,
+            ).notifier,
+          )
+          .set(mode);
+    } catch (error) {
+      if (mounted) setState(() => _error = 'Not saved: $error');
+    } finally {
+      if (mounted) setState(() => _saving = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final provider = approvalsModeProvider(
+      widget.instanceId,
+      profile: widget.profile,
+    );
+    final setting = ref.watch(provider);
+    final current = setting.value;
+    final muted = YsType.body.flutter.copyWith(
+      color: palette.contentMutedColor,
+    );
+    final who = widget.agentName.isEmpty ? 'your agent' : widget.agentName;
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Permissions', style: YsType.title.flutter),
+          const SizedBox(height: YsSpace.sm),
+          Text('When $who asks before running risky commands.', style: muted),
+          const SizedBox(height: YsSpace.lg),
+          if (current == null && setting.hasError) ...[
+            Text(
+              'Permissions could not be loaded: ${setting.error}',
+              style: YsType.body.flutter.copyWith(color: palette.errorColor),
+            ),
+            const SizedBox(height: YsSpace.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: YsButton.neutral(
+                label: 'Try again',
+                onPressed: () => ref.invalidate(provider),
+              ),
+            ),
+          ] else if (current == null)
+            Text('Loading permissions…', style: YsType.caption.flutter)
+          else
+            Semantics(
+              label: 'Approvals',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final mode in ApprovalsMode.values)
+                    _RadioRow(
+                      label: mode.label,
+                      help: approvalsModeHelp(mode),
+                      selected: (_saving ?? current) == mode,
+                      onPressed: _saving == null && mode != current
+                          ? () => _select(mode)
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+          if (_saving != null) ...[
+            const SizedBox(height: YsSpace.sm),
+            Text('Saving…', style: YsType.caption.flutter),
+          ],
+          if (_error case final error?) ...[
+            const SizedBox(height: YsSpace.sm),
+            Text(
+              error,
+              style: YsType.body.flutter.copyWith(color: palette.errorColor),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One choice of a radio group: ring, label and a line of help.
+final class _RadioRow extends StatelessWidget {
+  const _RadioRow({
+    required this.label,
+    required this.help,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final String help;
+  final bool selected;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return YsPressable(
+      onPressed: onPressed,
+      // Inside the pressable: the radio state joins the button's own node.
+      builder: (context, state) => Semantics(
+        inMutuallyExclusiveGroup: true,
+        checked: selected,
+        child: YsFocusRing(
+          visible: state.focused,
+          radius: YsRadius.row,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: state.hovered && !selected
+                  ? palette.neutralWashColor
+                  : const Color(0x00000000),
+              borderRadius: BorderRadius.circular(YsRadius.row),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(YsSpace.sm),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: YsSpace.xxs),
+                    child: Container(
+                      width: YsLayout.inlineIcon,
+                      height: YsLayout.inlineIcon,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: selected
+                              ? palette.primaryInkColor
+                              : palette.contentSubtleColor,
+                          width: ysHairline,
+                        ),
+                      ),
+                      child: selected
+                          ? Container(
+                              width: YsLayout.statusDot,
+                              height: YsLayout.statusDot,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: palette.primaryInkColor,
+                              ),
+                            )
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: YsSpace.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label, style: YsType.heading.flutter),
+                        const SizedBox(height: YsSpace.xxs),
+                        Text(
+                          help,
+                          style: YsType.small.flutter.copyWith(
+                            color: palette.contentMutedColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Settings → Connectors: none exist yet, and it says so.
+final class _ConnectorsSection extends StatelessWidget {
+  const _ConnectorsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Connectors', style: YsType.title.flutter),
+          const SizedBox(height: YsSpace.lg),
+          YsIconWidget(YsIcon.link, size: 32, color: palette.contentMutedColor),
+          const SizedBox(height: YsSpace.md),
+          Text('No connectors yet', style: YsType.heading.flutter),
+          const SizedBox(height: YsSpace.sm),
+          Text(
+            'Connectors will let your agent reach your other accounts, such as '
+            'mail or calendars. None are available yet.',
+            style: YsType.body.flutter.copyWith(
+              color: palette.contentMutedColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

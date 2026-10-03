@@ -910,6 +910,19 @@ final class _ShellState extends ConsumerState<_Shell> {
     );
   }
 
+  /// Try it (Ideas): [seed] is sent in the main chat, which opens.
+  void _tryIdea(String seed) {
+    final chat = widget.controller;
+    chat.openThread(chat.state.mainThread.id);
+    final shell = YsShell.forWidth(MediaQuery.sizeOf(context).width);
+    setState(() {
+      if (!(shell == YsShell.wide && _splitChat)) {
+        _destination = HermuseDestination.chat;
+      }
+    });
+    unawaited(chat.send(seed));
+  }
+
   /// The product page for [_destination], or null for the chat. A new page
   /// enters with [YsEntrance].
   Widget? _product() {
@@ -923,7 +936,7 @@ final class _ShellState extends ConsumerState<_Shell> {
       ),
       HermuseDestination.ideas => IdeasScreen(
         instance: instance,
-        onStartInChat: _discuss,
+        onStartInChat: _tryIdea,
       ),
       HermuseDestination.goals => GoalsScreen(instance: instance),
       HermuseDestination.library => LibraryScreen(instance: instance),
@@ -1027,6 +1040,9 @@ final class _ShellState extends ConsumerState<_Shell> {
             ),
             if (_settingsOpen)
               SettingsScreen(
+                instanceId: widget.controller.instanceId,
+                profile: widget.controller.profile,
+                agentName: widget.controller.state.agentName,
                 onClose: () => setState(() => _settingsOpen = false),
               ),
           ],
@@ -1080,6 +1096,9 @@ final class _ShellState extends ConsumerState<_Shell> {
       profile: profile,
       avatar: avatar,
       approvals: state.approvals,
+      runningTasks: state.runningTasks,
+      agentStep: state.agentStep,
+      onStop: (threadId) => unawaited(widget.controller.interrupt(threadId)),
       threadIds: {for (final thread in state.threads) thread.id},
       onOpenThread: _openFromPanel,
       onOpenComputer: widget.controller.openComputer,

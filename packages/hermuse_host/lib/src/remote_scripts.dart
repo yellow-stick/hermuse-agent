@@ -153,7 +153,7 @@ for path in /var/lib/hermuse-provision /var/lib/hermuse-provision/owns-hermes /v
 done
 for path in /home/hermes /home/hermes/.hermes /home/hermes/.hermes/hermes-agent \
   /home/hermes/.hermes/plugins /home/hermes/.hermes/plugins/hermuse \
-  /etc/systemd/system/hermuse-dashboard.service ''' +
+  /etc/systemd/system/hermuse-dashboard.service /etc/systemd/system/hermuse-gateway.service ''' +
     (local ? '' : '/etc/caddy/Caddyfile /etc/caddy/hermuse-remote.caddy') +
     r'''; do
   [ ! -L "$path" ] || { echo "Refusing a symlink at managed path: $path" >&2; exit 1; }
@@ -388,6 +388,10 @@ done
 if [ -e /etc/systemd/system/hermuse-dashboard.service ] &&
    ! grep -q '^# Managed by Hermuse remote installer$' /etc/systemd/system/hermuse-dashboard.service; then
   echo 'An unrelated hermuse-dashboard.service exists; it will not be overwritten.' >&2; exit 1
+fi
+if [ -e /etc/systemd/system/hermuse-gateway.service ] &&
+   ! grep -q '^# Managed by Hermuse remote installer$' /etc/systemd/system/hermuse-gateway.service; then
+  echo 'An unrelated hermuse-gateway.service exists; it will not be overwritten.' >&2; exit 1
 fi
 ''' +
     managedPathsPreflight(local: local) +
@@ -1031,6 +1035,110 @@ for attempt in \$(seq 1 60); do
   sleep 1
 done
 echo 'The loopback dashboard did not become ready.' >&2
+exit 1
+''';
+
+const gatewayUnit = 'hermuse-gateway.service';
+const gatewayUnitPath = '/etc/systemd/system/$gatewayUnit';
+
+/// Liveness stamp the Hermes cron ticker rewrites on start and every minute.
+const schedulerHeartbeatFile = '$remoteHermesHome/cron/ticker_heartbeat';
+
+/// The Hermes gateway owns the cron ticker; without any messaging platform it
+/// keeps running for scheduled jobs alone. Exit 75 is its planned-restart
+/// request and 78 a fatal configuration error, as in Hermes' own unit.
+const gatewayService = '''# Managed by Hermuse remote installer
+[Unit]
+Description=Hermuse Hermes scheduler (gateway)
+After=network-online.target docker.service hermuse-dashboard.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+SupplementaryGroups=docker
+WorkingDirectory=/home/hermes/.hermes
+Environment=HOME=/home/hermes
+Environment=USER=hermes
+Environment=LOGNAME=hermes
+Environment=HERMES_HOME=/home/hermes/.hermes
+Environment=HERMES_SUPERVISED_CHILD=1
+Environment=PATH=/home/hermes/.local/bin:/home/hermes/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/hermes/.local/bin/hermes gateway run
+ExecStop=-/home/hermes/.hermes/hermes-agent/venv/bin/python -m gateway.systemd_stop_mark
+ExecStopPost=-/home/hermes/.hermes/hermes-agent/venv/bin/python -m gateway.cgroup_cleanup
+Restart=always
+RestartSec=5
+RestartForceExitStatus=75
+SuccessExitStatus=75
+RestartPreventExitStatus=78
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=70
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+''';
+
+/// Arguments: heartbeat file, earliest accepted epoch, maximum age in seconds.
+const _schedulerHeartbeatProgram = r'''
+import os, stat, sys, time
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd) as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError()
+        beat = float(stream.read(64))
+    now = time.time()
+    fresh = float(sys.argv[2]) <= beat <= now + 60 and now - beat <= float(sys.argv[3])
+except (OSError, ValueError):
+    fresh = False
+raise SystemExit(0 if fresh else 1)
+''';
+
+String _schedulerTicking(String since) =>
+    'python3 -I -B -c ${shellQuote(_schedulerHeartbeatProgram)} '
+    '$schedulerHeartbeatFile $since 180';
+
+/// Ready only for the exact enabled, active unit whose ticker beat recently.
+final schedulerHealthScript = _health('''
+cmp -s $gatewayUnitPath <(printf '%s' ${shellQuote('$gatewayService\n')}) &&
+systemctl is-active --quiet $gatewayUnit &&
+systemctl is-enabled --quiet $gatewayUnit &&
+${_schedulerTicking('0')}
+''');
+
+/// Unprivileged view of the scheduler service; the ticker stamp is private.
+final schedulerServiceStatusScript = _health('''
+cmp -s $gatewayUnitPath <(printf '%s' ${shellQuote('$gatewayService\n')}) &&
+systemctl is-active --quiet $gatewayUnit &&
+systemctl is-enabled --quiet $gatewayUnit
+''');
+
+String configureSchedulerScript() =>
+    '''
+[ ! -L $gatewayUnitPath ] || exit 1
+if [ -e $gatewayUnitPath ] &&
+   ! grep -q '^# Managed by Hermuse remote installer\$' $gatewayUnitPath; then
+  echo 'An unrelated scheduler service was not overwritten.' >&2; exit 1
+fi
+if ! cmp -s $gatewayUnitPath <(printf '%s' ${shellQuote('$gatewayService\n')}); then
+  printf '%s' ${shellQuote('$gatewayService\n')} > $gatewayUnitPath
+  chmod 0644 $gatewayUnitPath
+  systemctl daemon-reload
+fi
+if ! systemctl is-enabled --quiet $gatewayUnit; then systemctl enable $gatewayUnit; fi
+started=\$(date +%s)
+systemctl restart $gatewayUnit
+for attempt in \$(seq 1 120); do
+  if systemctl is-active --quiet $gatewayUnit &&
+     ${_schedulerTicking('"\$started"')}; then exit 0; fi
+  sleep 1
+done
+echo 'The scheduler did not start ticking.' >&2
 exit 1
 ''';
 

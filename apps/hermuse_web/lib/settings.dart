@@ -97,11 +97,22 @@ class _HermuseSettingsMenuState extends State<HermuseSettingsMenu> {
   );
 }
 
-/// Local preferences; account sign-in remains explicitly unavailable.
+/// Local preferences, the open agent's permissions and connectors; account
+/// sign-in remains explicitly unavailable.
 class HermuseSettings extends StatefulComponent {
-  const HermuseSettings({required this.onBack, super.key});
+  const HermuseSettings({
+    required this.onBack,
+    this.instanceId,
+    this.profile = 'default',
+    super.key,
+  });
 
   final VoidCallback onBack;
+
+  /// Instance and profile of the open chat (Permissions); null before any
+  /// chat is open.
+  final String? instanceId;
+  final String profile;
 
   @override
   State<HermuseSettings> createState() => _HermuseSettingsState();
@@ -233,6 +244,69 @@ class HermuseSettings extends StatefulComponent {
       color: .variable('--error'),
       backgroundColor: .variable('--error-wash'),
     ),
+    css('.hermuse-settings-radios').styles(
+      margin: .only(top: YsSpace.lg.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(YsSpace.sm.px),
+    ),
+    css('.hermuse-settings-radio').styles(
+      width: 100.percent,
+      padding: .all(YsSpace.md.px),
+      border: .all(color: .variable('--line'), width: 1.px),
+      radius: .circular(YsRadius.navRow.px),
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .start,
+      gap: .all(YsSpace.md.px),
+      color: .variable('--content'),
+      backgroundColor: .variable('--canvas'),
+      textAlign: .left,
+      cursor: .pointer,
+    ),
+    css('.hermuse-settings-radio[aria-checked="true"]').styles(
+      border: .all(color: .variable('--primary'), width: 1.px),
+      backgroundColor: .variable('--primary-wash'),
+    ),
+    css('.hermuse-settings-radio-dot').styles(
+      width: 18.px,
+      height: 18.px,
+      margin: .only(top: 1.px),
+      radius: .circular(YsRadius.pill.px),
+      border: .all(color: .variable('--content-subtle'), width: 1.5.px),
+      raw: {'flex-shrink': '0'},
+    ),
+    css(
+      '.hermuse-settings-radio[aria-checked="true"] .hermuse-settings-radio-dot',
+    ).styles(
+      border: .all(color: .variable('--primary'), width: 5.px),
+    ),
+    css('.hermuse-settings-radio-text')
+        .styles(display: .flex, flexDirection: .column, gap: .all(2.px)),
+    css('.hermuse-settings-radio-label').styles(
+      fontSize: YsType.body.size.px,
+      lineHeight: YsType.body.lineHeight.px,
+      fontWeight: .w500,
+    ),
+    css('.hermuse-settings-radio-help').styles(
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
+      color: .variable('--content-muted'),
+    ),
+    css('.hermuse-settings-empty').styles(
+      margin: .only(top: YsSpace.lg.px),
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(YsSpace.md.px),
+      color: .variable('--content-muted'),
+    ),
+    css('.hermuse-settings-empty-title').styles(
+      fontSize: YsType.body.size.px,
+      fontWeight: .w500,
+      color: .variable('--content'),
+    ),
+    css('.hermuse-settings .hermuse-settings-empty p').styles(margin: .zero),
     css.media(MediaQuery.screen(maxWidth: 480.px), [
       css('.hermuse-settings, .hermuse-settings-section')
           .styles(padding: .all(YsSpace.lg.px)),
@@ -365,6 +439,38 @@ class _HermuseSettingsState extends State<HermuseSettings> {
                 ],
               ),
           ]),
+          if (component.instanceId case final instanceId?)
+            _PermissionsSection(
+              key: ValueKey('$instanceId:${component.profile}'),
+              instanceId: instanceId,
+              profile: component.profile,
+            )
+          else
+            section(classes: 'hermuse-settings-section', [
+              h2([.text('Permissions')]),
+              p([
+                .text('Open a chat with an agent to choose its permissions.'),
+              ]),
+            ]),
+          section(classes: 'hermuse-settings-section', [
+            h2([.text('Connectors')]),
+            p([.text('Apps and accounts your agent can use on your behalf.')]),
+            div(classes: 'hermuse-settings-empty', [
+              YsIconView(YsIcon.link, size: 20),
+              div([
+                p(classes: 'hermuse-settings-empty-title', [
+                  .text('No connectors yet'),
+                ]),
+                p([
+                  .text(
+                    'Connectors will let your agent reach your other '
+                    'accounts, such as mail or calendars. None are '
+                    'available yet.',
+                  ),
+                ]),
+              ]),
+            ]),
+          ]),
           section(classes: 'hermuse-settings-section', [
             div(classes: 'hermuse-settings-section-head', [
               h2([.text('Yellow Stick account')]),
@@ -386,6 +492,127 @@ class _HermuseSettingsState extends State<HermuseSettings> {
             ]),
           ]),
         ]),
+      ]);
+    },
+  );
+}
+
+/// Settings → Permissions: when the open agent asks before running a
+/// command ([approvalsModeProvider]).
+class _PermissionsSection extends StatefulComponent {
+  const _PermissionsSection({
+    required this.instanceId,
+    required this.profile,
+    super.key,
+  });
+
+  final String instanceId;
+  final String profile;
+
+  @override
+  State<_PermissionsSection> createState() => _PermissionsSectionState();
+}
+
+class _PermissionsSectionState extends State<_PermissionsSection> {
+  ApprovalsMode? _saving;
+  String? _error;
+
+  static String _help(ApprovalsMode mode) => switch (mode) {
+    ApprovalsMode.smart =>
+      'Your agent judges which commands are risky and asks you only for '
+          'those.',
+    ApprovalsMode.manual =>
+      'Your agent asks before every command that could change or delete '
+          'something.',
+    ApprovalsMode.off =>
+      'Your agent runs every command without asking. Use only on a server '
+          'you can rebuild.',
+  };
+
+  Future<void> _set(BuildContext context, ApprovalsMode mode) async {
+    setState(() {
+      _saving = mode;
+      _error = null;
+    });
+    try {
+      await context
+          .readProvider(
+            approvalsModeProvider(
+              component.instanceId,
+              profile: component.profile,
+            ).notifier,
+          )
+          .set(mode);
+    } on Object catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Could not save: ${hermuseErrorText(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _saving = null);
+    }
+  }
+
+  @override
+  Component build(BuildContext context) => HermuseWatch(
+    provider: approvalsModeProvider(
+      component.instanceId,
+      profile: component.profile,
+    ),
+    builder: (context, mode) {
+      final selected = _saving ?? mode.value;
+      final busy = _saving != null || mode.value == null;
+      return section(classes: 'hermuse-settings-section', [
+        h2([.text('Permissions')]),
+        p([.text('When your agent asks before running a command.')]),
+        div(
+          classes: 'hermuse-settings-radios',
+          attributes: {
+            'role': 'radiogroup',
+            'aria-label': 'Approvals',
+            'aria-busy': '$busy',
+          },
+          [
+            for (final option in ApprovalsMode.values)
+              YsPressable(
+                label: option.label,
+                classes: 'hermuse-settings-radio',
+                attributes: {
+                  'role': 'radio',
+                  'aria-checked': '${option == selected}',
+                },
+                onPressed: busy || option == selected
+                    ? null
+                    : () => unawaited(_set(context, option)),
+                builder: (context, state) => .fragment([
+                  span(classes: 'hermuse-settings-radio-dot', []),
+                  span(classes: 'hermuse-settings-radio-text', [
+                    span(classes: 'hermuse-settings-radio-label', [
+                      .text(option.label),
+                    ]),
+                    span(classes: 'hermuse-settings-radio-help', [
+                      .text(_help(option)),
+                    ]),
+                  ]),
+                ]),
+              ),
+          ],
+        ),
+        if (mode.value == null && mode.hasError)
+          div(
+            classes: 'hermuse-settings-error',
+            attributes: {'role': 'alert'},
+            [
+              .text(
+                'Could not load permissions: ${hermuseErrorText(mode.error!)}',
+              ),
+            ],
+          ),
+        if (_error case final error?)
+          div(
+            classes: 'hermuse-settings-error',
+            attributes: {'role': 'alert'},
+            [.text(error)],
+          ),
       ]);
     },
   );

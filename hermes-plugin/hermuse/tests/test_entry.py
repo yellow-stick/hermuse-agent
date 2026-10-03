@@ -40,6 +40,8 @@ class _Ctx:
         self.browser_providers = []
         self.hooks = {}
         self.prompt_sections = {}
+        self.aux_tasks = {}
+        self.llm = None  # no model in tests: task summaries stay heuristic
 
     def register_tool(self, name, toolset, schema, handler, **kwargs):
         self.tools[name] = {
@@ -61,6 +63,9 @@ class _Ctx:
 
     def register_system_prompt_section(self, id, content, **kwargs):
         self.prompt_sections[id] = {"content": content, **kwargs}
+
+    def register_auxiliary_task(self, key, *, display_name, description, defaults=None):
+        self.aux_tasks[key] = {"display_name": display_name, "description": description}
 
 
 @pytest.fixture()
@@ -121,6 +126,7 @@ def test_feed_tool_uses_active_profile_at_invocation(registered, hermes_home):
             result = json.loads(handler({
                 "title": f"{profile.name} discovery",
                 "body": f"Research result for {profile.name}.",
+                "why": "You asked me to watch this topic.",
                 "topic": "Research",
                 "sources": ["https://example.com/source"],
             }))
@@ -139,7 +145,30 @@ def test_feed_tool_uses_active_profile_at_invocation(registered, hermes_home):
     assert plugin_store.list_feed(plugin_store.hermuse_root(hermes_home)) == []
 
 
-@pytest.mark.parametrize("args", [{"title": "Missing body"}, {"body": "Missing title"}])
+def test_behaviour_prompt_section_task_hooks_and_aux_task(registered):
+    from hermes_cli.plugins import VALID_HOOKS, is_valid_system_prompt_section_id
+
+    section = registered.prompt_sections["hermuse_behaviour"]["content"]
+    assert is_valid_system_prompt_section_id("hermuse_behaviour")
+    assert len(section) < 1200
+    for needle in ('deliver="bot-chat"', "cronjob_manage", "goal_track", 'source="agent"',
+                   "cron_job_id", "status_line", "clarify", "why", "NO_REPLY",
+                   '"Ask the user"', "do not act on it yourself", 'action="create"',
+                   '"in 2m"', "Never wait, sleep or poll", "fire time"):
+        assert needle in section, needle
+    assert "platform" in section  # never ask which platform/channel
+    for hook in ("pre_llm_call", "post_llm_call", "on_session_end"):
+        assert hook in VALID_HOOKS
+        assert len(registered.hooks[hook]) == 1, hook
+    assert "hermuse_task_summary" in registered.aux_tasks
+
+
+@pytest.mark.parametrize("args", [
+    {"title": "Missing body", "why": "w"},
+    {"body": "Missing title", "why": "w"},
+    {"title": "Missing why", "body": "b"},
+    {"title": "t", "body": "b", "why": "w", "image_url": "file:///etc/passwd"},
+])
 def test_invalid_feed_tool_call_does_not_publish(registered, hermes_home, args):
     import store as plugin_store
 
@@ -167,7 +196,10 @@ def test_computer_provider_and_hooks_are_accepted_by_hermes(registered):
     [provider] = registered.browser_providers
     assert isinstance(provider, BrowserProvider)  # Hermes ignores anything else
     assert provider.name == "hermuse"  # the browser.cloud_provider value setup writes
-    assert set(registered.hooks) == {"pre_tool_call", "transform_tool_result"}
+    assert set(registered.hooks) == {
+        "pre_tool_call", "transform_tool_result",  # the agent's computer
+        "pre_llm_call", "post_llm_call", "on_session_end",  # Activity tasks
+    }
     assert set(registered.hooks) <= VALID_HOOKS
 
 
@@ -211,8 +243,10 @@ def test_tool_handlers_persist_files(registered, hermes_home):
     handlers = {n: e["handler"] for n, e in registered.tools.items()}
     root = plugin_store.hermuse_root(hermes_home)
 
-    feed = json.loads(handlers["feed_post"]({"title": "t", "body": "b"}))
-    assert feed["ok"] and plugin_store.get_feed_post(root, feed["id"]) is not None
+    feed = json.loads(handlers["feed_post"]({
+        "title": "t", "body": "b", "why": "w", "image_url": "https://example.com/a.png"}))
+    post = plugin_store.get_feed_post(root, feed["id"])
+    assert feed["ok"] and post["why"] == "w" and post["image_url"] == "https://example.com/a.png"
 
     idea = json.loads(handlers["idea_propose"](
         {"title": "t", "pitch": "p", "group": "g"}))
@@ -221,10 +255,27 @@ def test_tool_handlers_persist_files(registered, hermes_home):
     goal = json.loads(handlers["goal_track"](
         {"title": "t", "category": "health", "why": "w"}))
     assert goal["ok"]
+    tracked = plugin_store.get_goal(root, goal["id"])
+    assert tracked["source"] == "agent" and tracked["parent_id"] is None
     update = json.loads(handlers["goal_update"](
         {"goal_id": goal["id"], "note": "n"}))
     assert update["ok"]
     assert len(plugin_store.get_goal(root, goal["id"])["timeline"]) == 2
+    status = json.loads(handlers["goal_update"](
+        {"goal_id": goal["id"], "status_line": "Flight booked, hotel open"}))
+    assert status["ok"]
+    assert plugin_store.get_goal(root, goal["id"])["status_line"] == "Flight booked, hotel open"
+    assert len(plugin_store.get_goal(root, goal["id"])["timeline"]) == 2
+    assert "error" in json.loads(handlers["goal_update"]({"goal_id": goal["id"]}))
+
+    sub = json.loads(handlers["goal_track"]({
+        "title": "Book flight", "category": "something_else", "why": "Trip",
+        "source": "user", "parent_id": goal["id"], "cron_job_id": "abc123"}))
+    subgoal = plugin_store.get_goal(root, sub["id"])
+    assert subgoal["source"] == "user" and subgoal["parent_id"] == goal["id"]
+    assert subgoal["cron_job_id"] == "abc123"
+    assert "error" in json.loads(handlers["goal_track"]({
+        "title": "t", "category": "health", "why": "w", "parent_id": "missing"}))
 
     artifact = json.loads(handlers["artifact_save"](
         {"title": "t", "kind": "document", "content": "x"}))

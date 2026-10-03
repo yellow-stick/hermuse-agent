@@ -93,7 +93,7 @@ final class ModelSelectionStateProvider
 }
 
 String _$modelSelectionStateHash() =>
-    r'21cc75d467f5cfe3206b5663815f0a5e00df20dd';
+    r'55c8d31148059b0fe0076179d7a2bdf1f145cf30';
 
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///

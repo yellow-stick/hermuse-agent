@@ -151,7 +151,7 @@ final class FeedProvider extends $AsyncNotifierProvider<Feed, List<FeedPost>> {
   }
 }
 
-String _$feedHash() => r'dea93d61bd31f09fd13227ace2ff84ea3b77a86b';
+String _$feedHash() => r'4b5618205d78ee750a6b0144461af634ac07eaa3';
 
 /// Feed posts, newest first.
 
@@ -264,7 +264,7 @@ final class IdeasProvider extends $AsyncNotifierProvider<Ideas, List<Idea>> {
   }
 }
 
-String _$ideasHash() => r'158495c88952b63952945289fb086b4438c2fe50';
+String _$ideasHash() => r'dfb4d8de5030df2d60b1263d5985caac4414ae6a';
 
 /// Ideas, newest first.
 
@@ -377,7 +377,7 @@ final class GoalsProvider extends $AsyncNotifierProvider<Goals, List<Goal>> {
   }
 }
 
-String _$goalsHash() => r'acf4fb0ef071aa7cc26c0c2e4470d49e1ce9c09b';
+String _$goalsHash() => r'1972ed7e9a68518d65f61b424b1cb080fee377b3';
 
 /// Goals, newest first.
 

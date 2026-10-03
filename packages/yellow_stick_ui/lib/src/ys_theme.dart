@@ -37,6 +37,11 @@ extension YsFlutterPalette on YsPalette {
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
   Color get shadowColor => Color(shadow.value);
+  Color get soulStartColor => Color(soulStart.value);
+  Color get soulEndColor => Color(soulEnd.value);
+  Color get memoryStartColor => Color(memoryStart.value);
+  Color get memoryEndColor => Color(memoryEnd.value);
+  Color get identityContentColor => Color(identityContent.value);
 
   /// Resting elevation of a raised [paper]/[paperClear] surface on [canvas]:
   /// a hairline ring and a soft two-step shadow (empty for a palette with

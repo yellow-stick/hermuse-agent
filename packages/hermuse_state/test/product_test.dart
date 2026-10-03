@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermes_client/testing.dart';
+import 'package:hermuse_chat/hermuse_chat.dart' show ToolKind;
 import 'package:hermuse_data/hermuse_data.dart';
 import 'package:hermuse_data/native.dart';
 import 'package:hermuse_state/hermuse_state.dart';
@@ -331,5 +332,298 @@ void main() {
       container.read(systemFileProvider('vps', '../x').future),
       throwsA(isA<ArgumentError>()),
     );
+  });
+
+  Map<String, Object?> taskRow(
+    String id,
+    String finishedAt, {
+    String? status,
+  }) => {
+    'id': id,
+    'session_id': 's-$id',
+    'turn_id': 't-$id',
+    'title': 'Set daily 8am briefing',
+    'summary': 'Scheduled daily 8:00 AM Nantes briefing',
+    'status': ?status,
+    'source': 'chat',
+    'started_at': finishedAt,
+    'finished_at': finishedAt,
+    'tools': ['cronjob', 'web_search'],
+  };
+
+  group('Activity tasks', () {
+    test('decode the plugin shape', () {
+      final task = Task.fromJson({
+        ...taskRow('a', '2026-10-02T08:00:05Z', status: 'interrupted'),
+        'source': 'heartbeat',
+        'started_at': '2026-10-02T08:00:00Z',
+      });
+      expect(task.title, 'Set daily 8am briefing');
+      expect(task.summary, 'Scheduled daily 8:00 AM Nantes briefing');
+      expect(task.status, TaskStatus.interrupted);
+      expect(task.source, TaskSource.heartbeat);
+      expect(task.sessionId, 's-a');
+      expect(task.startedAt, DateTime.utc(2026, 10, 2, 8));
+      expect(task.finishedAt, DateTime.utc(2026, 10, 2, 8, 0, 5));
+      expect(task.kind, ToolKind.web);
+      expect(Task.fromJson(const {'id': 'b'}).status, TaskStatus.completed);
+      expect(
+        Task.fromJson(const {'id': 'b', 'source': 'x'}).source,
+        TaskSource.other,
+      );
+    });
+
+    test('group by local day, newest first', () {
+      final now = DateTime(2026, 10, 2, 9);
+      Task at(DateTime when) =>
+          Task.fromJson({...taskRow('x', when.toUtc().toIso8601String())});
+      final days = activityDays([
+        at(DateTime(2026, 10, 2, 8, 30)),
+        at(DateTime(2026, 10, 2, 0, 5)),
+        at(DateTime(2026, 10, 1, 23, 59)),
+        at(DateTime(2026, 9, 28, 12)),
+        at(DateTime(2026, 9, 20, 12)),
+        at(DateTime(2025, 12, 31, 12)),
+      ], now);
+      expect(
+        [for (final d in days) (d.label, d.items.length)],
+        [
+          ('Today', 2),
+          ('Yesterday', 1),
+          ('Monday', 1),
+          ('Sep 20', 1),
+          ('Dec 31, 2025', 1),
+        ],
+      );
+    });
+
+    test('load from the plugin and reload on sessions.changed', () async {
+      var served = 0;
+      routes['GET /api/plugins/hermuse/tasks'] = (request) {
+        served++;
+        expect(request.url.queryParameters['limit'], '100');
+        return json({
+          'tasks': [
+            for (var i = served; i > 0; i--)
+              taskRow('$i', '2026-10-02T08:0$i:00Z'),
+          ],
+        });
+      };
+      final sub = container.listen(tasksProvider('vps'), (_, _) {});
+      addTearDown(sub.close);
+      expect(
+        (await container.read(tasksProvider('vps').future)).single.id,
+        '1',
+      );
+      // The connection opens alongside; its writes reload the list.
+      await container.read(connectionProvider('vps').future);
+      fake.emitEvent('sessions.changed');
+      await Future<void>.delayed(const Duration(milliseconds: 2200));
+      final tasks = await container.read(tasksProvider('vps').future);
+      expect(tasks.map((t) => t.id), ['2', '1']);
+    });
+  });
+
+  test('memory entries read and save per target', () async {
+    routes['GET /api/plugins/hermuse/memory/user'] = (_) => json({
+      'target': 'user',
+      'entries': ['Lives in Nantes', 'Prefers trains'],
+      'updated_at': '2026-10-01T10:00:00Z',
+    });
+    Object? saved;
+    routes['PUT /api/plugins/hermuse/memory/user'] = (request) {
+      saved = jsonDecode(request.body);
+      return json({'ok': true});
+    };
+    final provider = agentMemoryProvider('vps', MemoryTarget.user);
+    final memory = await container.read(provider.future);
+    expect(memory.entries, ['Lives in Nantes', 'Prefers trains']);
+    expect(memory.updatedAt, DateTime.utc(2026, 10, 1, 10));
+    await container.read(provider.notifier).save([
+      ' Lives in Nantes ',
+      '',
+      'Vegetarian',
+    ]);
+    expect(saved, {
+      'entries': ['Lives in Nantes', 'Vegetarian'],
+    });
+    expect(container.read(provider).value!.entries, [
+      'Lives in Nantes',
+      'Vegetarian',
+    ]);
+    expect(MemoryTarget.memory.fileName, 'MEMORY.md');
+  });
+
+  test('approvals mode reads and writes approvals.mode', () async {
+    var mode = 'manual';
+    fake
+      ..on('config.get', (params) {
+        expect(params['key'], 'approvals.mode');
+        return {'value': mode};
+      })
+      ..on('config.set', (params) {
+        mode = params['value']! as String;
+        return {'key': 'approvals.mode', 'value': mode};
+      });
+    final provider = approvalsModeProvider('vps');
+    expect(await container.read(provider.future), ApprovalsMode.manual);
+    await container.read(provider.notifier).set(ApprovalsMode.off);
+    expect(mode, 'off');
+    expect(container.read(provider).value, ApprovalsMode.off);
+    expect(ApprovalsMode.fromValue(null), ApprovalsMode.smart);
+    expect(ApprovalsMode.smart.label, 'Ask only when needed');
+  });
+
+  test('SOUL saves through profiles.configure', () async {
+    fake.on('profiles.configure', (params) {
+      expect(params['name'], 'aya');
+      expect(params['soul'], 'You are Aya.');
+      return {
+        'ok': true,
+        'applied': {'soul': true},
+      };
+    });
+    fake.on('profiles.list', (_) => {'profiles': const []});
+    await container
+        .read(agentProfilesProvider('vps').notifier)
+        .saveSoul('aya', 'You are Aya.');
+    fake.on('profiles.configure', (_) => {'ok': true, 'applied': const {}});
+    await expectLater(
+      container
+          .read(agentProfilesProvider('vps').notifier)
+          .saveSoul('aya', 'x'),
+      throwsA(isA<AgentWriteException>()),
+    );
+  });
+
+  test('goals: sections, subgoal, rename, complete, delete', () async {
+    Map<String, Object?> goal(
+      String id, {
+      String source = 'user',
+      String? parent,
+      bool done = false,
+    }) => {
+      ...((goalsFixture()['goals'] as List).first as Map<String, Object?>),
+      'id': id,
+      'title': id,
+      'source': source,
+      'status_line': 'on track',
+      'done': done,
+      'parent_id': parent,
+      'cron_job_id': null,
+    };
+    routes['GET /api/plugins/hermuse/goals'] = (_) => json({
+      'goals': [
+        goal('trip', source: 'agent'),
+        goal('run'),
+        goal('book', parent: 'trip'),
+        goal('orphan', parent: 'gone'),
+      ],
+    });
+    routes['POST /api/plugins/hermuse/goals'] = (_) =>
+        json(goal('hotel', parent: 'trip'), 201);
+    routes['PATCH /api/plugins/hermuse/goals/run'] = (request) {
+      final body = jsonDecode(request.body) as Map<String, Object?>;
+      return json({
+        ...goal('run', done: body['done'] == true),
+        if (body['title'] case final String title) 'title': title,
+      });
+    };
+    routes['DELETE /api/plugins/hermuse/goals/trip'] = (_) =>
+        json({'ok': true});
+    final notifier = container.read(goalsProvider('vps').notifier);
+    final goals = await container.read(goalsProvider('vps').future);
+    final sections = goalSections(goals);
+    expect(sections.tracking.map((g) => g.id), ['trip']);
+    expect(sections.goals.map((g) => g.id), ['run', 'orphan']);
+    expect(sections.subgoalsOf(goals.first).map((g) => g.id), ['book']);
+    expect(goals.first.statusLine, 'on track');
+    expect(goals.first.source, GoalSource.agent);
+
+    await notifier.addSubgoal(parent: goals.first, title: 'Book hotel');
+    expect(calls.last.body, {
+      'title': 'Book hotel',
+      'category': 'health',
+      'why': 'Part of "trip"',
+      'source': 'user',
+      'parent_id': 'trip',
+    });
+    await container.read(goalsProvider('vps').future);
+    expect((await notifier.rename('run', ' Run 10k ')).title, 'Run 10k');
+    expect(calls.last.body, {'title': 'Run 10k'});
+    expect((await notifier.complete('run')).done, isTrue);
+    expect(calls.last.body, {'done': true});
+    await notifier.delete('trip');
+    expect(calls.last.method, 'DELETE');
+    expect(container.read(goalsProvider('vps')).value!.map((g) => g.id), [
+      'run',
+      'orphan',
+    ]);
+    // Records written before: user goals, done from the status.
+    final legacy = Goal.fromJson({'id': 'old', 'status': 'done'});
+    expect(
+      (legacy.source, legacy.done, legacy.parentId),
+      (GoalSource.user, true, null),
+    );
+  });
+
+  test('feed: why, image, delete, generate', () async {
+    routes['GET /api/plugins/hermuse/feed'] = (_) => json({
+      'posts': [
+        {
+          ...((feedFixture()['posts'] as List).first as Map<String, Object?>),
+          'why': 'You asked about Lisbon.',
+          'image_url': 'https://img.example/1.jpg',
+        },
+        (feedFixture()['posts'] as List).last,
+      ],
+    });
+    routes['DELETE /api/plugins/hermuse/feed/6372ea12f016'] = (_) =>
+        json({'ok': true});
+    routes['POST /api/plugins/hermuse/feed/generate'] = (_) =>
+        json({'job_id': 'feedjob', 'started': true});
+    final posts = await container.read(feedProvider('vps').future);
+    expect(posts.first.why, 'You asked about Lisbon.');
+    expect(posts.first.imageUrl, 'https://img.example/1.jpg');
+    expect((posts.last.why, posts.last.imageUrl), ('', null));
+    final notifier = container.read(feedProvider('vps').notifier);
+    final run = await notifier.generate();
+    expect((run.jobId, run.started), ('feedjob', true));
+    await notifier.delete('6372ea12f016');
+    expect(container.read(feedProvider('vps')).value!.map((p) => p.id), [
+      'a1b2c3d4e5f6',
+    ]);
+  });
+
+  test('ideas: starter catalog flags and dismiss', () async {
+    routes['GET /api/plugins/hermuse/ideas'] = (_) => json({
+      'ideas': [
+        {
+          'id': 'seed-workout',
+          'title': 'Plan my workouts',
+          'pitch': 'A weekly plan.',
+          'group': 'Health',
+          'first_step': 'Tell me your goal',
+          'file': null,
+          'created_at': null,
+          'feedback': <Object?>[],
+          'seeded': true,
+          'icon': 'workout',
+        },
+        ...(ideasFixture()['ideas'] as List),
+      ],
+    });
+    routes['POST /api/plugins/hermuse/ideas/seed-workout/dismiss'] = (_) =>
+        json({'ok': true});
+    final ideas = await container.read(ideasProvider('vps').future);
+    expect(
+      (ideas.first.seeded, ideas.first.icon, ideas.first.file),
+      (true, 'workout', ''),
+    );
+    expect((ideas.last.seeded, ideas.last.icon), (false, ''));
+    await container.read(ideasProvider('vps').notifier).dismiss('seed-workout');
+    expect(container.read(ideasProvider('vps')).value!.map((i) => i.id), [
+      '9432126be5b7',
+    ]);
   });
 }
