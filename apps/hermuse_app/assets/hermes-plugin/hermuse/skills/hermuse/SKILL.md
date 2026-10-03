@@ -42,8 +42,10 @@ When nothing is worth writing, write nothing: silence beats noise.
   First read `FEED_PROMPT.md` as well as `PREFERENCES.md`, and check recent feed
   entries to avoid duplicates. Ground claims in actual conversation or tool
   results; link sources when applicable. `why` is required: one sentence on why
-  this matters to the user (shown as "Why I created this"). `image_url` is an
-  http(s) image that illustrates the post. Routine replies are not feed posts.
+  this matters to the user (shown as "Why I created this"). Put the main page
+  first in `sources`: the card shows that page's share image (copied onto the
+  server, never hotlinked). Pass `image_url` only for a direct image that fits
+  better. Routine replies are not feed posts.
 - `idea_propose(title, pitch, group, first_step?, icon?)` — a suggestion for the
   Ideas surface, shown next to the built-in starter catalog. Title in the first
   person when it reads well ("I'll…"). Group must be a plain label such as

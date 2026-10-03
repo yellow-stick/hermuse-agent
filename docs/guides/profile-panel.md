@@ -155,6 +155,11 @@ useful discoveries, research results and completed-work summaries through
 `feed_post`, respecting your feed prompt and proactive preferences. It should
 not copy every reply into Feed or invent posts to fill an empty view.
 
+A post's picture is the share image of its main source page (the picture a
+link preview shows), copied onto your Hermes server when the post is written
+and deleted with it. A page without one gives a post without a picture; no
+image is generated.
+
 Feed refreshes automatically after publication and at the end of a chat turn,
 on both desktop and web. This requires working model credentials and the
 plugin's tools; failed or unavailable tools do not create content. Scheduled

@@ -29,6 +29,7 @@ from starlette.requests import HTTPConnection
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import dashboard_restart  # noqa: E402
+import feed_images  # noqa: E402
 import store  # noqa: E402
 import subscription_bridge  # noqa: E402
 from computer import runtime as computer_runtime  # noqa: E402
@@ -120,15 +121,25 @@ def get_feed_post(post_id: str):
 
 @router.post("/feed", status_code=201)
 def create_feed_post(payload: FeedPostBody):
+    sources = [s for s in (s.strip() for s in payload.sources) if s]
     return store.post_feed(
         _root(),
         title=payload.title.strip(),
         body=payload.body,
         topic=payload.topic.strip(),
-        sources=[s for s in (s.strip() for s in payload.sources) if s],
+        sources=sources,
         why=payload.why.strip(),
-        image_url=payload.image_url,
+        image=feed_images.find_post_image(payload.image_url, sources),
     )
+
+
+@router.get("/feed/{post_id}/image")
+def get_feed_image(post_id: str):
+    found = store.feed_image(_root(), post_id)
+    if found is None:
+        raise _not_found("feed image")
+    path, mime = found
+    return FileResponse(path=str(path), media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.post("/feed/generate")

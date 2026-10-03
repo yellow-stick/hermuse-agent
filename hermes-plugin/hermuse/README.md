@@ -34,6 +34,8 @@ hermes-plugin/hermuse/
 │                          #   per turn, summaries by the `hermuse_task_summary` aux task
 ├── subscription_bridge.py # pinned CLIProxyAPI next to Hermes (see "Subscription bridge")
 ├── dashboard_restart.py   # in-place restart of the dashboard (see "Restarting the dashboard")
+├── feed_images.py         # feed card image: the source's share image (og:image) or the named
+│                          #   image, fetched with SSRF guards and stored beside the post
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
 ├── cron_specs.py          # feed/ideas/goals/reflection/heartbeat specs + idempotent registration
@@ -138,7 +140,7 @@ left untouched).
 
 | Tool | Params |
 | --- | --- |
-| `feed_post` | `title`, `body` (Markdown), `why` ("Why I created this"), `topic?`, `sources?[]`, `image_url?` (http(s)) |
+| `feed_post` | `title`, `body` (Markdown), `why` ("Why I created this"), `topic?`, `sources?[]` (main page first: its share image becomes the card image), `image_url?` (http(s), a direct image that wins over the source's) |
 | `idea_propose` | `title`, `pitch` (Markdown), `group`, `first_step?`, `icon?` (`workout`\|`shopping`\|`people`\|`city`\|`documents`\|`returns`\|`inbox`\|`money`\|`health`\|`travel`) |
 | `goal_track` | `title`, `category` (`health`\|`relationships`\|`finance`\|`career`\|`interests`\|`productivity`\|`something_else`), `why`, `target_date?`, `source?` (`agent` default \| `user`), `parent_id?`, `cron_job_id?` |
 | `goal_update` | `goal_id`, `note?`, `progress?`, `status_line?` (at least one of `note` / `status_line`) |
@@ -194,10 +196,11 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | Method | Path | Body → Result |
 | --- | --- | --- |
 | `GET` | `/feed?limit=` | → `{"posts": […]}` (newest first) |
-| `POST` | `/feed` | `{title, body, topic?, sources?[], why?, image_url?}` → post (`201`) |
+| `POST` | `/feed` | `{title, body, topic?, sources?[], why?, image_url?}` → post (`201`); the image is copied as for `feed_post` |
+| `GET` | `/feed/{id}/image` | → the post's stored image (`image/jpeg\|png\|gif\|webp`) / `404` |
 | `POST` | `/feed/generate` | marks the feed job due now (`cron.jobs.trigger_job`; the scheduler fires it on its next tick) → `{"job_id", "started": true}`; `409` feed job not registered |
 | `GET` | `/feed/{id}` | → post / `404` |
-| `DELETE` | `/feed/{id}` | → `{"ok": true}` / `404` (removes the `.md` too) |
+| `DELETE` | `/feed/{id}` | → `{"ok": true}` / `404` (removes the `.md` and the image too) |
 | `POST` | `/feed/{id}/react` | `{reaction: love\|discuss}` → post (toggles) |
 | `GET` | `/ideas?limit=` | → `{"ideas": […]}`: agent ideas (newest first), then the starter catalog; dismissed ones hidden |
 | `POST` | `/ideas` | `{title, pitch, group, first_step?, icon?}` → idea (`201`) |
@@ -244,7 +247,7 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 
 Shapes:
 
-- post: `{id, title, topic, body, sources[], why, image_url, file, created_at, reactions: {love?: ts, discuss?: ts}}`
+- post: `{id, title, topic, body, sources[], why, image_url, file, created_at, reactions: {love?: ts, discuss?: ts}}` — `image_url` is `/api/plugins/hermuse/feed/{id}/image` when an image was stored (`feed/images/<id>.<ext>`), the original URL for posts written before 0.5.0, else null.
 - idea: `{id, title, pitch, group, icon, seeded, first_step, file, created_at, feedback: [{at, text}]}` — seeded ideas (ids `seed-…`, static data shipped with the plugin) have `file` and `created_at` null; click an idea to start the task in chat; `feedback` is the "Idea feedback" affordance.
 - goal: `{id, title, category, why, target_date, status, done, source, status_line, parent_id, cron_job_id, file, created_at, timeline: [{at, note, progress}]}` — `status` is `tracking` or `done` (`done` mirrors it); records from before 0.5.0 read as `source: user`, `status_line` = latest timeline progress.
 - task: `{id, session_id, turn_id, title, summary, status: completed\|failed\|interrupted, source: chat\|cron\|heartbeat\|other, started_at, finished_at, tools: [str]}`
@@ -464,3 +467,18 @@ release off its checksums never installed, private files, the detached
 process (reused, restarted on its persisted port at plugin load, moved off a
 taken port, never confused with a recycled pid) and the account/model routes
 with name validation, all against a fake CLIProxyAPI executable (no network).
+
+## Feed images
+
+When a post is published (`feed_post` or `POST /feed`), `feed_images.py` looks
+for a card image: the `image_url` the agent named, else the share image
+(`og:image`, `twitter:image`, `<link rel="image_src">`) of the first two
+source pages. The bytes are copied to `feed/images/<id>.<ext>` and served by
+`GET /feed/{id}/image`, so they keep working behind the relay and after the
+original link expires; they are deleted with the post. Nothing is generated.
+
+The URLs come from the model, so fetching is guarded: `http(s)` only; every
+hop, redirects included, must resolve to public addresses only and is
+connected to the checked address; 5 s per request and 10 s in total; pages up
+to 512 KiB and images up to 2 MiB; JPEG, PNG, GIF or WebP recognised by their
+bytes (no SVG). When anything fails the post is published without an image.

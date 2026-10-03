@@ -289,7 +289,8 @@ def test_feed_why_image_and_delete(client):
         "image_url": "https://example.com/rain.png"})
     assert created.status_code == 201, created.text
     post = created.json()
-    assert post["why"] == "You bike to work." and post["image_url"] == "https://example.com/rain.png"
+    # An image that cannot be copied is not hotlinked.
+    assert post["why"] == "You bike to work." and post["image_url"] is None
     assert client.get(f"{API}/feed").json()["posts"][0]["why"] == "You bike to work."
     bad_image = client.post(f"{API}/feed", json={"title": "x", "body": "y", "image_url": "file:///x"})
     assert bad_image.status_code == 422
@@ -413,3 +414,22 @@ def test_cron_rows_flag_hidden_maintenance_jobs(client):
     assert set(rows) == {"feed", "ideas", "goals", "reflection", "heartbeat"}
     assert {key for key, row in rows.items() if row["hidden"]} == {"feed", "ideas", "goals", "reflection"}
     assert rows["heartbeat"]["hidden"] is False and rows["heartbeat"]["registered"] is False
+
+
+def test_feed_image_route(client, monkeypatch):
+    jpeg = b"\xff\xd8\xff\xe0" + b"\0" * 32
+    monkeypatch.setattr(sys.modules["feed_images"], "find_post_image",
+                        lambda image_url, sources, get=None: (jpeg, ".jpg") if sources else None)
+    created = client.post(f"{API}/feed", json={
+        "title": "Rain", "body": "b", "sources": ["https://news.example/a"]}).json()
+    assert created["image_url"] == f"{API}/feed/{created['id']}/image"
+    image = client.get(created["image_url"])
+    assert image.status_code == 200 and image.content == jpeg
+    assert image.headers["content-type"] == "image/jpeg"
+    bare = client.post(f"{API}/feed", json={"title": "t", "body": "b"}).json()
+    assert bare["image_url"] is None
+    assert client.get(f"{API}/feed/{bare['id']}/image").status_code == 404
+    listed = {p["id"]: p for p in client.get(f"{API}/feed").json()["posts"]}
+    assert listed[created["id"]]["image_url"] == created["image_url"]
+    assert client.delete(f"{API}/feed/{created['id']}").json() == {"ok": True}
+    assert client.get(created["image_url"]).status_code == 404

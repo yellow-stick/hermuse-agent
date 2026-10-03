@@ -91,11 +91,16 @@ def atomic_write_text(path: Path, content: str) -> None:
 
     Mirrors ``utils.atomic_write_text`` (Hermes core) without the dependency.
     """
+    atomic_write_bytes(path, content.encode("utf-8"))
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Binary sibling of :func:`atomic_write_text`."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp_", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(content)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
@@ -103,6 +108,7 @@ def atomic_write_text(path: Path, content: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
 
 def _read_json(path: Path, default: Any) -> Any:
     try:
@@ -251,9 +257,18 @@ def write_managed(root: Path, name: str, content: str) -> None:
 # Feed
 # ---------------------------------------------------------------------------
 
+FEED_IMAGES_DIR = "images"
+FEED_IMAGE_TYPES = {".jpg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+# Where the dashboard serves a stored post image (plugin routes are mounted
+# at /api/plugins/hermuse); clients load it with their authenticated REST.
+FEED_IMAGE_ROUTE = "/api/plugins/hermuse/feed/{id}/image"
+
+
 def _feed_view(record: dict[str, Any]) -> dict[str, Any]:
-    """Posts written before ``why``/``image_url`` existed read with their defaults."""
-    return {**record, "why": str(record.get("why") or ""), "image_url": record.get("image_url") or None}
+    """Posts written before ``why``/``image_url`` existed read with their
+    defaults; a stored image is served by the plugin, never hotlinked."""
+    image = FEED_IMAGE_ROUTE.format(id=record["id"]) if record.get("image_file") else record.get("image_url")
+    return {**record, "why": str(record.get("why") or ""), "image_url": image or None}
 
 
 def post_feed(
@@ -265,15 +280,28 @@ def post_feed(
     sources: Optional[list[str]] = None,
     why: str = "",
     image_url: Optional[str] = None,
+    image: Optional[tuple[bytes, str]] = None,
     post_id: Optional[str] = None,
     created_at: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Append a feed post; returns the stored record (incl. reactions ``{}``)."""
+    """Append a feed post; returns its view (incl. reactions ``{}``).
+
+    *image* is ``(bytes, ext)`` from ``feed_images.find_post_image``: stored
+    as ``feed/images/<id><ext>`` and served by the plugin. *image_url* is
+    kept only for posts without stored bytes (legacy records)."""
     ensure_defaults(root)
     pid = post_id or new_id()
     stamp = created_at or utcnow_iso()
     day = stamp[:10] if len(stamp) >= 10 else date.today().isoformat()
     filename = f"{day}-{slugify(title)}-{pid}.md"
+    image_file = None
+    if image is not None:
+        data, ext = image
+        if ext not in FEED_IMAGE_TYPES:
+            raise ValueError(f"unsupported image type: {ext}")
+        image_file = f"{pid}{ext}"
+        atomic_write_bytes(root / "feed" / FEED_IMAGES_DIR / image_file, data)
+        image_url = None
     meta: dict[str, Any] = {
         "id": pid,
         "title": title,
@@ -282,7 +310,9 @@ def post_feed(
         "sources": sources or [],
         "why": why,
     }
-    if image_url:
+    if image_file:
+        meta["image_file"] = f"{FEED_IMAGES_DIR}/{image_file}"
+    elif image_url:
         meta["image_url"] = image_url
     atomic_write_text(root / "feed" / filename, _front_matter(meta, body))
     items = _read_index(root, "feed")
@@ -294,13 +324,25 @@ def post_feed(
         "sources": sources or [],
         "why": why,
         "image_url": image_url or None,
+        "image_file": image_file,
         "file": filename,
         "created_at": stamp,
         "reactions": {},
     }
     items[pid] = record
     _write_index(root, "feed", items)
-    return record
+    return _feed_view(record)
+
+
+def feed_image(root: Path, post_id: str) -> Optional[tuple[Path, str]]:
+    """``(path, mime type)`` of a post's stored image, or None."""
+    record = _read_index(root, "feed").get(post_id)
+    name = record.get("image_file") if record else None
+    if not isinstance(name, str) or Path(name).name != name:
+        return None
+    mime = FEED_IMAGE_TYPES.get(Path(name).suffix)
+    path = root / "feed" / FEED_IMAGES_DIR / name
+    return (path, mime) if mime and path.is_file() else None
 
 
 def list_feed(root: Path, limit: int = 50) -> list[dict[str, Any]]:
@@ -325,6 +367,7 @@ def delete_feed_post(root: Path, post_id: str) -> bool:
         return False
     _write_index(root, "feed", items)
     _unlink_in(root / "feed", record.get("file"))
+    _unlink_in(root / "feed" / FEED_IMAGES_DIR, record.get("image_file"))
     return True
 
 

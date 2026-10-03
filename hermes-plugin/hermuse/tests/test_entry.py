@@ -246,7 +246,8 @@ def test_tool_handlers_persist_files(registered, hermes_home):
     feed = json.loads(handlers["feed_post"]({
         "title": "t", "body": "b", "why": "w", "image_url": "https://example.com/a.png"}))
     post = plugin_store.get_feed_post(root, feed["id"])
-    assert feed["ok"] and post["why"] == "w" and post["image_url"] == "https://example.com/a.png"
+    # No network in tests: the named image cannot be copied, so none is shown.
+    assert feed["ok"] and post["why"] == "w" and post["image_url"] is None and feed["image"] is False
 
     idea = json.loads(handlers["idea_propose"](
         {"title": "t", "pitch": "p", "group": "g"}))

@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import store
+from . import feed_images, store
 
 TOOLSET = "hermuse"
 
@@ -71,18 +71,26 @@ def _image_url(args: dict) -> Optional[str]:
 
 def handle_feed_post(args: dict, **kwargs: Any) -> str:
     try:
+        title = _nonblank(args, "title", "title", 200)
+        body = _nonblank(args, "body", "body", 20000)
+        topic = _optional(args, "topic", 120)
+        sources = _string_list(args, "sources")
+        why = _nonblank(args, "why", "why", 1000)
+        image_url = _image_url(args)
+        # The image is copied now (the agent's named image, else the first
+        # sources' share image); none found leaves the post without one.
         record = store.post_feed(
             _resolve_root(),
-            title=_nonblank(args, "title", "title", 200),
-            body=_nonblank(args, "body", "body", 20000),
-            topic=_optional(args, "topic", 120),
-            sources=_string_list(args, "sources"),
-            why=_nonblank(args, "why", "why", 1000),
-            image_url=_image_url(args),
+            title=title,
+            body=body,
+            topic=topic,
+            sources=sources,
+            why=why,
+            image=feed_images.find_post_image(image_url, sources or []),
         )
     except ValueError as exc:
         return _fail(str(exc))
-    return _ok({"ok": True, "id": record["id"], "file": record["file"]})
+    return _ok({"ok": True, "id": record["id"], "file": record["file"], "image": record["image_url"] is not None})
 
 
 def handle_idea_propose(args: dict, **kwargs: Any) -> str:
@@ -191,8 +199,10 @@ FEED_POST_SCHEMA = _schema(
         "body": {**_STR, "description": "Post body in Markdown."},
         "why": {**_STR, "description": "Why I created this: one sentence on why it matters to the user."},
         "topic": {**_STR, "description": "Short topic label (optional)."},
-        "sources": {**_STR_ARRAY, "description": "Source URLs, if any."},
-        "image_url": {**_STR, "description": "http(s) URL of an image illustrating the post (optional)."},
+        "sources": {**_STR_ARRAY, "description": (
+            "Source URLs, main page first: the card shows that page's share image.")},
+        "image_url": {**_STR, "description": (
+            "Direct http(s) URL of a better image for the card (optional; overrides the source's image).")},
     },
     ("title", "body", "why"),
 )
