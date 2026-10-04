@@ -20,6 +20,13 @@ def _server_hermes(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_media_env(monkeypatch):
+    """The server's own media provider settings never leak into tests."""
+    monkeypatch.delenv("HERMUSE_MEDIA_ENDPOINT", raising=False)
+    monkeypatch.delenv("HERMUSE_MEDIA_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _no_internet(monkeypatch):
     """Tests never reach the internet (feed posts fetch their source's image):
     only IP literals and localhost resolve."""

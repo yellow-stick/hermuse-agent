@@ -546,6 +546,36 @@ about a model (an expensive one, or a tier that trains on your data) it says
 why and asks before switching. The key is stored by Hermes on the server, not
 in the app.
 
+## Image generation
+
+Generated agent portraits and animations, and illustrations for Feed posts
+without a picture, need an image/video generation service you run: Hermuse
+does not provide one. The first supported service is **ContentFlow** (it
+drives Google Flow in a browser signed in to your Google account; generations
+use that account's Flow credits). Without it, the agent editor offers the
+bundled portraits only and Feed posts without a source picture stay without
+one.
+
+1. Run ContentFlow where your Hermes server can reach it: on the server
+   itself (`http://127.0.0.1:9400`, no token needed on loopback) or behind a
+   private tunnel with its `CONTENTFLOW_API_TOKEN` set.
+2. In the app, **Settings → Image generation** of the instance: enter the
+   endpoint and the token (if any), then **Test**. It shows whether the
+   service answers, your remaining credits and what one animation costs
+   (7 credits per 4-second clip with Omni 1.1 Flash). The token is kept on the
+   server and never shown again.
+3. Leave **Illustrate Feed posts without an image** on to give such posts a
+   generated picture.
+
+The setting is shared by every agent of the server (it lives in
+`~/.hermes/hermuse/media.json`, readable by the Hermes user only);
+`HERMUSE_MEDIA_ENDPOINT` and `HERMUSE_MEDIA_TOKEN` in the dashboard's
+environment override it. Animations are exported with **ffmpeg** on the
+server: servers Hermuse sets up have it; elsewhere install it
+(`sudo apt install ffmpeg`), or **Test** reports it missing and animating is
+refused. A refused generation is reported with the service's own message and
+never resubmitted automatically, so credits are not spent twice.
+
 ## Troubleshooting
 
 - **`400 Invalid Host header`**: set `dashboard.public_url` (step 2).

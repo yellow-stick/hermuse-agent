@@ -49,6 +49,9 @@ final class YsAvatar extends StatelessWidget {
                   fit: BoxFit.cover,
                   filterQuality: FilterQuality.medium,
                   excludeFromSemantics: true,
+                  // A new image (another animation state) replaces the
+                  // current frame only once it has decoded: no blank flash.
+                  gaplessPlayback: true,
                 ),
               ),
             ),

@@ -15,6 +15,7 @@ import 'package:hermuse_app/computer/browser_parts.dart' show FrameImage;
 import 'package:hermuse_app/panel/identity.dart' show MemoryEditor;
 import 'package:hermuse_app/panel/profile_panel.dart' show ProfilePanel;
 import 'package:hermuse_app/shell/app.dart';
+import 'package:hermuse_app/shell/agent_avatar.dart' show AgentPortrait;
 import 'package:hermuse_app/shell/agents.dart';
 import 'package:hermuse_app/shell/brand.dart';
 import 'package:hermuse_app/sidebar/side_chats.dart';
@@ -952,6 +953,9 @@ Future<void> main() async {
       await tester.pumpAndSettle();
       await tester.tap(find.bySemanticsLabel('Add MEMORY.md entry'));
       await tester.pumpAndSettle();
+      // The new entry's box has the caret, ready to type.
+      expect(tester.widget<EditableText>(field('')).focusNode.hasFocus, isTrue);
+      await _capture(tester, 'proof-identity-memory-added.png');
       await tester.enterText(field(''), 'Allergic to peanuts');
       await tester.tap(find.widgetWithText(YsButton, 'Save'));
       await tester.runAsync(pumpEventQueue);
@@ -1227,6 +1231,145 @@ Future<void> main() async {
         expect(find.text(group), findsOneWidget, reason: group);
       }
       await _capture(tester, 'proof-ideas.png');
+    });
+
+    testWidgets(
+      'Goals: completing folds a goal into Completed goals and back',
+      (tester) async {
+        final harness = await _Harness.open();
+        addTearDown(harness.dispose);
+        const titles = {'g1': 'Run a 10k', 'g2': 'Read 12 books'};
+        final done = {'g1': false, 'g2': true};
+        final patches = <Object?>[];
+        Map<String, Object?> goal(String id) => {
+          'id': id,
+          'title': titles[id],
+          'category': 'health',
+          'why': 'Feel better',
+          'target_date': '',
+          'status': done[id]! ? 'done' : 'tracking',
+          'file': 'goals/$id.md',
+          'created_at': '',
+          'timeline': <Object?>[],
+          'source': 'user',
+          'status_line': '',
+          'done': done[id],
+          'parent_id': null,
+        };
+        Map<String, Object?> patch(String id, http.Request request) {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          patches.add(body);
+          done[id] = body['done'] == true;
+          return goal(id);
+        }
+
+        await _pumpApp(
+          tester,
+          _desktop,
+          harness,
+          plugin: {
+            'GET /api/plugins/hermuse/files': (_) => {'files': <Object?>[]},
+            'GET /api/plugins/hermuse/goals': (_) => {
+              'goals': [goal('g1'), goal('g2')],
+            },
+            'PATCH /api/plugins/hermuse/goals/g1': (r) => patch('g1', r),
+            'PATCH /api/plugins/hermuse/goals/g2': (r) => patch('g2', r),
+          },
+        );
+        await tester.tap(find.bySemanticsLabel('Close panel'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.bySemanticsLabel('Goals'));
+        await tester.runAsync(pumpEventQueue);
+        await tester.pumpAndSettle();
+        expect(find.text('Run a 10k'), findsOneWidget);
+        // Folded: the completed goal is out of the active list.
+        expect(find.text('Read 12 books'), findsNothing);
+        await tester.tap(find.text('Completed goals (1)'));
+        await tester.pumpAndSettle();
+        expect(find.text('Read 12 books'), findsOneWidget);
+
+        await tester.tap(find.bySemanticsLabel('Mark Run a 10k complete'));
+        await tester.runAsync(pumpEventQueue);
+        await tester.pumpAndSettle();
+        expect(patches.last, {'done': true});
+        expect(find.text('Completed goals (2)'), findsOneWidget);
+        expect(find.text('No goals yet'), findsOneWidget);
+        expect(
+          _top(tester, 'Completed goals (2)'),
+          lessThan(_top(tester, 'Run a 10k')),
+        );
+        await _capture(tester, 'proof-goals-completed.png');
+
+        await tester.tap(
+          find.bySemanticsLabel('More actions for Read 12 books'),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Mark not done'));
+        await tester.runAsync(pumpEventQueue);
+        await tester.pumpAndSettle();
+        expect(patches.last, {'done': false});
+        expect(find.text('Completed goals (1)'), findsOneWidget);
+        expect(find.text('No goals yet'), findsNothing);
+        expect(
+          _top(tester, 'Read 12 books'),
+          lessThan(_top(tester, 'Completed goals (1)')),
+        );
+      },
+    );
+
+    testWidgets('Create goal says what is missing until title and why', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      await _pumpApp(
+        tester,
+        _desktop,
+        harness,
+        plugin: {
+          'GET /api/plugins/hermuse/files': (_) => {'files': <Object?>[]},
+          'GET /api/plugins/hermuse/goals': (_) => {'goals': <Object?>[]},
+        },
+      );
+      await tester.tap(find.bySemanticsLabel('Close panel'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Goals'));
+      await tester.runAsync(pumpEventQueue);
+      await tester.pumpAndSettle();
+      final health = find.text('Health');
+      await tester.ensureVisible(health);
+      await tester.tap(health);
+      await tester.pumpAndSettle();
+      Finder input(int index) => find
+          .descendant(
+            of: find.byType(YsDialog),
+            matching: find.byType(EditableText),
+          )
+          .at(index);
+      bool createEnabled() =>
+          tester
+              .widget<YsButton>(find.widgetWithText(YsButton, 'Create goal'))
+              .onPressed !=
+          null;
+      expect(
+        find.text('Add a title and say why it matters to create the goal.'),
+        findsOneWidget,
+      );
+      expect(createEnabled(), isFalse);
+
+      await tester.enterText(input(0), 'Swim twice a week');
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Say why it matters to create the goal.'),
+        findsOneWidget,
+      );
+      expect(createEnabled(), isFalse);
+      await _capture(tester, 'proof-goals-create-hint.png');
+
+      await tester.enterText(input(1), 'Back pain');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('to create the goal'), findsNothing);
+      expect(createEnabled(), isTrue);
     });
 
     testWidgets('close panel then avatar button reopens it', (tester) async {
@@ -2000,6 +2143,542 @@ Future<void> main() async {
       expect(find.text('YOUR FEED PROMPT'), findsOneWidget);
     });
   });
+
+  group('generated avatars', () {
+    testWidgets('editor generates, picks and animates a portrait', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final profiles = _ProfilesFixture(harness.fake);
+      final server = await _AvatarServer.open(tester);
+      await _pumpApp(tester, _desktop, harness, plugin: server.routes());
+      await tester.tap(find.byType(AgentSwitcher));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit agent…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Generate avatar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Generate portraits'), findsOneWidget);
+
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) => w is YsTextArea && w.semanticLabel == 'Describe your agent',
+        ),
+        'A cheerful plush fox with round glasses and a green scarf',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Generate portraits'));
+      await tester.pumpAndSettle();
+      expect(server.descriptions, [
+        'A cheerful plush fox with round glasses and a green scarf',
+      ]);
+      expect(
+        find.text('Generating portraits… this takes about 15 seconds.'),
+        findsOneWidget,
+      );
+      expect(find.text('Generating…'), findsOneWidget);
+
+      // The job finishes; the next poll brings the candidates.
+      server.finishPortraits();
+      await tester.pump(const Duration(seconds: 3));
+      await _settleImages(tester);
+      expect(find.text('Pick a portrait'), findsOneWidget);
+      for (var i = 1; i <= 4; i++) {
+        expect(find.bySemanticsLabel('Portrait $i'), findsOneWidget);
+      }
+      await _capture(tester, 'proof-avatar-generate-candidates.png');
+
+      await tester.tap(find.bySemanticsLabel('Portrait 2'));
+      await _settleImages(tester);
+      expect(server.selected, 1);
+      expect(
+        (profiles.profiles['default']!['ui_meta']! as Map)['hermuse'],
+        containsPair('avatar_id', 'custom'),
+      );
+      expect(find.bySemanticsLabel('Portrait 2, selected'), findsOneWidget);
+      expect(find.text('Animate'), findsOneWidget);
+      expect(find.text('4 animations · 28 credits'), findsOneWidget);
+
+      await tester.tap(find.text('Animate'));
+      await tester.pumpAndSettle();
+      expect(server.animated, [null]);
+      server.progress({
+        'idle': 'done',
+        'thinking': 'running',
+        'replying': 'queued',
+        'working': 'queued',
+      });
+      await tester.pump(const Duration(seconds: 3));
+      await _settleImages(tester);
+      for (final label in ['Done', 'Generating…', 'Queued']) {
+        expect(find.text(label), findsWidgets);
+      }
+      expect(
+        find.text(
+          'You can save the agent now; the animations keep going on the '
+          'server.',
+        ),
+        findsOneWidget,
+      );
+      await _capture(tester, 'proof-avatar-animate-progress.png');
+
+      // One clip fails; only that one is generated again.
+      server.progress({
+        'idle': 'done',
+        'thinking': 'done',
+        'replying': 'done',
+        'working': 'failed',
+      }, finished: true);
+      await tester.pump(const Duration(seconds: 3));
+      await _settleImages(tester);
+      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('1 animation · 7 credits'), findsOneWidget);
+      await tester.tap(find.text('Retry failed'));
+      await tester.pumpAndSettle();
+      expect(server.animated.last, ['working']);
+
+      // Saved before the clips are in.
+      await tester.tap(find.text('Save agent'));
+      await tester.pumpAndSettle();
+      expect(find.byType(YsDialog), findsNothing);
+      server.progress({'working': 'done'}, finished: true);
+      await tester.pump(const Duration(seconds: 3));
+      await _settleImages(tester);
+      // Reduced motion (the harness): the panel shows the still portrait.
+      final panelAvatar = tester.widget<YsAvatar>(
+        find
+            .descendant(
+              of: find.byType(ProfilePanel),
+              matching: find.byType(YsAvatar),
+            )
+            .first,
+      );
+      expect(panelAvatar.image, isA<MemoryImage>());
+      expect(server.paths, isNot(contains(startsWith(_avatarStatesPath))));
+      await _capture(tester, 'proof-avatar-custom-panel.png');
+    });
+
+    testWidgets('a new agent is created first; a refusal says why', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final profiles = _ProfilesFixture(harness.fake);
+      final server = await _AvatarServer.open(tester)
+        ..refuse = 'WafRejectionError: PUBLIC_ERROR_UNUSUAL_ACTIVITY';
+      await _pumpApp(tester, _desktop, harness, plugin: server.routes());
+      await tester.tap(find.byType(AgentSwitcher));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create agent…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Generate avatar'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) => w is YsTextArea && w.semanticLabel == 'Describe your agent',
+        ),
+        'A robot librarian',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Generate portraits'));
+      await tester.pumpAndSettle();
+      // Avatars belong to a profile: the agent exists before generating,
+      // with the bundled portrait chosen so far.
+      final created = harness.calls('profiles.create').single;
+      expect(
+        (profiles.profiles[created['name']]!['ui_meta']! as Map)['hermuse'],
+        containsPair('avatar_id', 'noah'),
+      );
+      expect(
+        find.text('WafRejectionError: PUBLIC_ERROR_UNUSUAL_ACTIVITY'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('HermesHttpError'), findsNothing);
+      expect(find.text('Generate portraits'), findsOneWidget);
+      // Saving now edits that agent instead of creating another one.
+      await tester.tap(find.text('Save agent'));
+      await tester.pumpAndSettle();
+      expect(harness.calls('profiles.create'), hasLength(1));
+      expect(find.byType(YsDialog), findsNothing);
+    });
+
+    testWidgets('without an image service the editor points to Settings', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      _ProfilesFixture(harness.fake);
+      final server = await _AvatarServer.open(tester)
+        ..endpoint = '';
+      await _pumpApp(tester, _desktop, harness, plugin: server.routes());
+      await tester.tap(find.byType(AgentSwitcher));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit agent…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Generate avatar'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Portrait generation needs an image service. Set it up in '
+          'Settings → Image generation.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Generate portraits'), findsNothing);
+      await tester.tap(find.text('Open Settings'));
+      await tester.pumpAndSettle();
+      expect(find.byType(YsDialog), findsNothing);
+      expect(find.text('Image generation'), findsOneWidget);
+      expect(
+        find.text(
+          'Not set up: nothing is generated until you enter an endpoint.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Settings → Image generation saves and tests the service', (
+      tester,
+    ) async {
+      final harness = await _Harness.open();
+      addTearDown(harness.dispose);
+      final server = await _AvatarServer.open(tester)
+        ..endpoint = '';
+      await _pumpApp(
+        tester,
+        const Size(1938, 1062),
+        harness,
+        plugin: server.routes(),
+      );
+      await tester.tap(find.bySemanticsLabel('Settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings').last);
+      await tester.pumpAndSettle();
+      final section = find.text('Image generation');
+      await tester.ensureVisible(section);
+      await tester.pumpAndSettle();
+      Finder input(String label) => find.byWidgetPredicate(
+        (w) => w is YsInputBox && w.semanticLabel == label,
+      );
+      await tester.enterText(input('Endpoint'), 'http://127.0.0.1:8765');
+      await tester.enterText(input('Token'), 'secret-token');
+      await tester.tap(find.text('Illustrate Feed posts that have no image'));
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(server.configPuts.single, {
+        'endpoint': 'http://127.0.0.1:8765',
+        'token': 'secret-token',
+        'image_model': '',
+        'video_model': '',
+        'feed_fallback': true,
+      });
+      expect(find.text('Saved.'), findsOneWidget);
+      expect(find.text('Token saved'), findsOneWidget);
+
+      await tester.tap(find.text('Test'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reachable · 120 credits'), findsOneWidget);
+      await tester.ensureVisible(find.text('Test'));
+      await tester.pumpAndSettle();
+      await _capture(tester, 'proof-settings-image-generation.png');
+
+      server.statusError = 'WafRejectionError: PUBLIC_ERROR_UNUSUAL_ACTIVITY';
+      await tester.tap(find.text('Test'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Not reachable: WafRejectionError: PUBLIC_ERROR_UNUSUAL_ACTIVITY',
+        ),
+        findsOneWidget,
+      );
+
+      // Saving again without a token keeps the stored one.
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(server.configPuts.last.containsKey('token'), isFalse);
+    });
+
+    for (final reduced in [true, false]) {
+      testWidgets('a custom avatar ${reduced ? 'stays still' : 'animates'} '
+          '${reduced ? 'with' : 'without'} reduced motion', (tester) async {
+        final server = await _AvatarServer.open(tester)
+          ..portrait = true
+          ..states = {for (final s in customAvatarStates) s};
+        const chat = ChatState(
+          agentName: 'Fox',
+          threads: [],
+          activeThreadId: '',
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              restClientProvider.overrideWith(
+                (ref, _) => HermesRestClient(
+                  server.client(),
+                  baseUrl: Uri.parse('https://hermes.example.com'),
+                ),
+              ),
+            ],
+            child: MediaQuery(
+              data: MediaQueryData(disableAnimations: reduced),
+              child: const Directionality(
+                textDirection: TextDirection.ltr,
+                child: YsTheme(
+                  palette: YsPalette.dark,
+                  child: Center(
+                    child: AgentPortrait(
+                      instanceId: 'vps',
+                      profile: 'fox',
+                      avatarId: 'custom',
+                      size: 100,
+                      chat: chat,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        // The bundled stand-in until the bytes are in.
+        expect(
+          tester.widget<YsAvatar>(find.byType(YsAvatar)).image,
+          isA<AssetImage>(),
+        );
+        await _settleImages(tester);
+        expect(
+          tester.widget<YsAvatar>(find.byType(YsAvatar)).image,
+          isA<MemoryImage>(),
+        );
+        // Connecting maps to the idle clip when motion is allowed.
+        expect(
+          server.paths.where(
+            (p) => p.startsWith('/api/plugins/hermuse/avatar/'),
+          ),
+          reduced
+              ? ['/api/plugins/hermuse/avatar/portrait']
+              : ['$_avatarStatesPath/idle'],
+        );
+      });
+    }
+  });
+}
+
+const _avatarStatesPath = '/api/plugins/hermuse/avatar/states';
+
+/// Lets image bytes arrive and decode (real async work), then settles.
+Future<void> _settleImages(WidgetTester tester) async {
+  for (var i = 0; i < 4; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+}
+
+/// The plugin's media and avatar routes, with a scripted generation run.
+final class _AvatarServer {
+  _AvatarServer._(this._images);
+
+  /// Four small portraits drawn for the candidates; the second one is the
+  /// portrait once picked.
+  static Future<_AvatarServer> open(WidgetTester tester) async {
+    final images = await tester.runAsync(
+      () => Future.wait([for (var i = 0; i < 4; i++) _portraitPng(i)]),
+    );
+    return _AvatarServer._(images!);
+  }
+
+  final List<Uint8List> _images;
+  static const _root = '/api/plugins/hermuse';
+
+  String endpoint = 'http://127.0.0.1:8765';
+  bool hasToken = false;
+  bool feedFallback = false;
+  String? statusError;
+
+  /// Refuses portrait generation with this reason (HTTP 502).
+  String? refuse;
+  bool portrait = false;
+  Set<String> states = {};
+  Map<String, Object?>? job;
+  int _version = 0;
+  int? selected;
+  final descriptions = <String>[];
+  final animated = <List<String>?>[];
+  final configPuts = <Map<String, Object?>>[];
+  final paths = <String>[];
+
+  Map<String, Object?> get _config => {
+    'provider': 'contentflow',
+    'endpoint': endpoint,
+    'has_token': hasToken,
+    'image_model': '',
+    'video_model': '',
+    'feed_fallback': feedFallback,
+    'from_env': false,
+  };
+
+  Map<String, Object?> get _avatar => {
+    'portrait_url': portrait ? '$_root/avatar/portrait' : null,
+    'states': {for (final s in states) s: '$_root/avatar/states/$s'},
+    'job': job,
+    'updated_at': '2026-10-04T10:00:0${_version % 10}Z',
+  };
+
+  void finishPortraits() => job = {
+    ...job!,
+    'status': 'done',
+    'candidates': [
+      for (var i = 0; i < 4; i++) '$_root/avatar/candidates/j1/$i',
+    ],
+  };
+
+  /// Moves the animation job to [clips]; done clips join the avatar.
+  void progress(Map<String, String> clips, {bool finished = false}) {
+    states.addAll([
+      for (final MapEntry(:key, :value) in clips.entries)
+        if (value == 'done') key,
+    ]);
+    _version++;
+    job = {...job!, 'states': clips, 'status': finished ? 'done' : 'running'};
+  }
+
+  MockClient client() => MockClient((request) async {
+    final route = routes()['${request.method} ${request.url.path}'];
+    if (route == null) return http.Response('{"detail":"Not Found"}', 404);
+    return switch (route(request)) {
+      final http.Response response => response,
+      final Uint8List bytes => http.Response.bytes(bytes, 200),
+      final body => http.Response(jsonEncode(body), 200),
+    };
+  });
+
+  Map<String, Object? Function(http.Request)> routes() {
+    Map<String, Object?> body(http.Request r) =>
+        jsonDecode(r.body) as Map<String, Object?>;
+    Object? record(String path, Object? Function() answer) {
+      paths.add(path);
+      return answer();
+    }
+
+    return {
+      'GET $_root/media/config': (_) => _config,
+      'PUT $_root/media/config': (r) {
+        final put = body(r);
+        configPuts.add(put);
+        endpoint = '${put['endpoint']}';
+        if (put['token'] case final String token) hasToken = token.isNotEmpty;
+        if (put['feed_fallback'] case final bool on) feedFallback = on;
+        return _config;
+      },
+      'GET $_root/media/status': (_) => {
+        'configured': endpoint.isNotEmpty,
+        'reachable': statusError == null,
+        'credits': statusError == null ? 120 : null,
+        'video_cost': 7,
+        'error': statusError,
+      },
+      'GET $_root/avatar': (_) => _avatar,
+      'POST $_root/avatar/portrait': (r) {
+        if (refuse case final reason?) {
+          return http.Response(jsonEncode({'detail': reason}), 502);
+        }
+        descriptions.add('${body(r)['description']}');
+        return job = {
+          'id': 'j1',
+          'kind': 'portrait',
+          'status': 'running',
+          'candidates': <String>[],
+          'states': <String, String>{},
+        };
+      },
+      'GET $_root/avatar/jobs/j1': (_) => job,
+      'GET $_root/avatar/jobs/j2': (_) => job,
+      'POST $_root/avatar/select': (r) {
+        selected = body(r)['candidate']! as int;
+        portrait = true;
+        states = {};
+        _version++;
+        return _avatar;
+      },
+      'POST $_root/avatar/animate': (r) {
+        final requested = (body(r)['states'] as List?)?.cast<String>();
+        animated.add(requested);
+        return job = {
+          'id': 'j2',
+          'kind': 'animate',
+          'status': 'running',
+          'candidates': <String>[],
+          'states': {
+            for (final s in requested ?? customAvatarStates) s: 'queued',
+          },
+        };
+      },
+      for (var i = 0; i < 4; i++)
+        'GET $_root/avatar/candidates/j1/$i': (r) =>
+            record(r.url.path, () => _images[i]),
+      'GET $_root/avatar/portrait': (r) =>
+          record(r.url.path, () => _images[selected ?? 1]),
+      for (final s in customAvatarStates)
+        'GET $_root/avatar/states/$s': (r) =>
+            record(r.url.path, () => _images[selected ?? 1]),
+    };
+  }
+}
+
+/// A small drawn character (head, eyes, glasses, scarf) on a light
+/// backdrop, one colourway per [variant].
+Future<Uint8List> _portraitPng(int variant) async {
+  const side = 192.0;
+  const backdrops = [0xFFF3EDE2, 0xFFE6F0EA, 0xFFEAE8F4, 0xFFF4E6E6];
+  const furs = [0xFFE07B39, 0xFFB86B3A, 0xFFD9893F, 0xFFC65F2E];
+  const scarves = [0xFF2F7D4F, 0xFF3C8D5A, 0xFF25694A, 0xFF4E9A63];
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  Paint fill(int color) => Paint()..color = Color(color);
+  canvas
+    ..drawRect(const Rect.fromLTWH(0, 0, side, side), fill(backdrops[variant]))
+    ..drawOval(const Rect.fromLTWH(36, 140, 120, 90), fill(furs[variant]))
+    ..drawRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTWH(52, 128, 88, 22),
+        const Radius.circular(10),
+      ),
+      fill(scarves[variant]),
+    )
+    ..drawPath(
+      Path()
+        ..moveTo(52, 70)
+        ..lineTo(60, 28 + variant * 3)
+        ..lineTo(84, 56)
+        ..moveTo(140, 70)
+        ..lineTo(132, 28 + variant * 3)
+        ..lineTo(108, 56),
+      fill(furs[variant]),
+    )
+    ..drawCircle(const Offset(96, 92), 46, fill(furs[variant]))
+    ..drawOval(const Rect.fromLTWH(74, 98, 44, 32), fill(0xFFFFF4E8));
+  final rim = Paint()
+    ..color = const Color(0xFF2B2B2B)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 3;
+  for (final x in [78.0, 114.0]) {
+    canvas
+      ..drawCircle(Offset(x, 86), 6, fill(0xFF2B2B2B))
+      ..drawCircle(Offset(x, 86), 13, rim);
+  }
+  canvas
+    ..drawLine(const Offset(91, 86), const Offset(101, 86), rim)
+    ..drawCircle(const Offset(96, 106), 5, fill(0xFF2B2B2B));
+  final image = await recorder.endRecording().toImage(
+    side.toInt(),
+    side.toInt(),
+  );
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  return data!.buffer.asUint8List();
 }
 
 final class _ProfilesFixture {
@@ -2455,11 +3134,11 @@ Future<void> _pumpApp(
           }),
           if (httpClient != null)
             httpClientProvider.overrideWithValue(httpClient),
-          // Hermuse plugin REST (`'METHOD /path'`): JSON, a JPEG for bytes,
-          // or a ready [http.Response]; other routes answer 404.
+          // Hermuse plugin REST (`'METHOD /path'`), for every profile: JSON,
+          // image bytes, or a ready [http.Response]; other routes answer 404.
           if (plugin != null)
-            restClientProvider(_Harness.instanceId).overrideWith(
-              (ref) => HermesRestClient(
+            restClientProvider.overrideWith(
+              (ref, _) => HermesRestClient(
                 MockClient((request) async {
                   final route = plugin['${request.method} ${request.url.path}'];
                   if (route == null) {

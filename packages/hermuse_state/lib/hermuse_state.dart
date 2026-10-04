@@ -9,6 +9,7 @@ export 'src/automations.dart';
 export 'src/computer.dart';
 export 'src/connections.dart';
 export 'src/identity.dart';
+export 'src/media.dart';
 export 'src/model_selection.dart';
 export 'src/model_tiers.dart';
 export 'src/onboarding.dart';

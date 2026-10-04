@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:hermes_client/hermes_client.dart' show HermesException;
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
@@ -471,6 +472,21 @@ class _HermuseSettingsState extends State<HermuseSettings> {
               ]),
             ]),
           ]),
+          if (component.instanceId case final instanceId?)
+            HermuseImageGenerationSection(
+              key: ValueKey('media:$instanceId'),
+              instanceId: instanceId,
+            )
+          else
+            section(classes: 'hermuse-settings-section', [
+              h2([.text('Image generation')]),
+              p([
+                .text(
+                  'Open a chat with an agent to set up image generation on '
+                  'its server.',
+                ),
+              ]),
+            ]),
           section(classes: 'hermuse-settings-section', [
             div(classes: 'hermuse-settings-section-head', [
               h2([.text('Yellow Stick account')]),
@@ -615,5 +631,354 @@ class _PermissionsSectionState extends State<_PermissionsSection> {
           ),
       ]);
     },
+  );
+}
+
+/// Settings → Image generation: the ContentFlow service the open chat's
+/// server draws agent portraits, their animations and Feed illustrations
+/// with ([mediaConfigProvider], tested with [mediaStatusProvider]).
+class HermuseImageGenerationSection extends StatefulComponent {
+  const HermuseImageGenerationSection({required this.instanceId, super.key});
+
+  final String instanceId;
+
+  @override
+  State<HermuseImageGenerationSection> createState() =>
+      _HermuseImageGenerationSectionState();
+
+  @css
+  static List<StyleRule> get styles => [
+    css('.hermuse-media-form').styles(
+      margin: .only(top: YsSpace.lg.px),
+      display: .flex,
+      flexDirection: .column,
+      gap: .all(YsSpace.md.px),
+    ),
+    css(
+      '.hermuse-media-advanced',
+    ).styles(display: .flex, flexDirection: .column, gap: .all(YsSpace.md.px)),
+    css('.hermuse-media-disclosure').styles(
+      display: .inlineFlex,
+      alignSelf: .start,
+      alignItems: .center,
+      gap: .all(YsSpace.xxs.px),
+      color: .variable('--content-muted'),
+      fontSize: YsType.small.size.px,
+      lineHeight: YsType.small.lineHeight.px,
+    ),
+    css('.hermuse-media-disclosure:hover')
+        .styles(color: .variable('--content')),
+    css('.hermuse-media-disclosure:focus-visible').styles(
+      raw: {
+        'outline': '2px solid var(--primary)',
+        'outline-offset': '${YsSpace.xxs}px',
+      },
+    ),
+    css(
+      '.hermuse-media-advanced-fields',
+    ).styles(display: .flex, flexDirection: .column, gap: .all(YsSpace.md.px)),
+    css('.hermuse-media-value').styles(
+      margin: .zero,
+      color: .variable('--content'),
+      raw: {'overflow-wrap': 'anywhere'},
+    ),
+  ];
+}
+
+class _HermuseImageGenerationSectionState
+    extends State<HermuseImageGenerationSection> {
+  /// The config the fields were filled from (once, then they are the
+  /// user's).
+  MediaConfig? _seeded;
+  String _endpoint = '';
+  String _token = '';
+  String _imageModel = '';
+  String _videoModel = '';
+  bool _feedFallback = false;
+  bool _saving = false;
+  bool _saved = false;
+  bool _tested = false;
+
+  /// The model fields are shown (collapsed by default).
+  bool _advanced = false;
+  String? _error;
+
+  void _seed(MediaConfig config) {
+    if (_seeded != null) return;
+    _seeded = config;
+    _endpoint = config.endpoint;
+    _imageModel = config.imageModel;
+    _videoModel = config.videoModel;
+    _feedFallback = config.feedFallback;
+  }
+
+  void _edited(void Function() change) => setState(() {
+    change();
+    _saved = false;
+  });
+
+  Future<void> _save({String? token}) async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _saved = false;
+      _error = null;
+    });
+    try {
+      final config = await context
+          .readProvider(mediaConfigProvider(component.instanceId).notifier)
+          .save(
+            endpoint: _seeded?.fromEnv ?? false ? _seeded!.endpoint : _endpoint,
+            token: token ?? (_token.isEmpty ? null : _token),
+            imageModel: _imageModel.trim(),
+            videoModel: _videoModel.trim(),
+            feedFallback: _feedFallback,
+          );
+      if (mounted) {
+        setState(() {
+          _seeded = config;
+          _endpoint = config.endpoint;
+          _token = '';
+          _saved = true;
+          _tested = false;
+        });
+      }
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = 'Could not save: ${_reason(e)}');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _test() async {
+    setState(() {
+      _tested = true;
+      _saved = false;
+      _error = null;
+    });
+    try {
+      await context
+          .readProvider(mediaStatusProvider(component.instanceId).notifier)
+          .refresh();
+    } on Object catch (_) {
+      // Shown from the provider's error below.
+    }
+  }
+
+  static String _reason(Object e) =>
+      e is HermesException ? hermesReason(e) : hermuseErrorText(e);
+
+  Component _status(AsyncValue<MediaStatus> status) {
+    if (status.isLoading) {
+      return p(attributes: {'role': 'status'}, [.text('Testing…')]);
+    }
+    if (status.hasError) {
+      return div(
+        classes: 'hermuse-settings-error',
+        attributes: {'role': 'alert'},
+        [.text('Not reachable: ${_reason(status.error!)}')],
+      );
+    }
+    final value = status.value;
+    if (value == null) return .fragment(const []);
+    if (!value.configured) {
+      return p(
+        attributes: {'role': 'status'},
+        [
+          .text(
+            'Not set up: nothing is generated until you enter an endpoint.',
+          ),
+        ],
+      );
+    }
+    if (!value.reachable) {
+      return div(
+        classes: 'hermuse-settings-error',
+        attributes: {'role': 'alert'},
+        [
+          .text(
+            'Not reachable: ${value.error ?? 'the service did not answer'}',
+          ),
+        ],
+      );
+    }
+    return p(
+      attributes: {'role': 'status'},
+      [
+        .text(
+          value.credits == null
+              ? 'Reachable'
+              : 'Reachable · ${value.credits} credits',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Component build(BuildContext context) => HermuseWatch(
+    provider: mediaConfigProvider(component.instanceId),
+    builder: (context, config) => HermuseWatch(
+      provider: mediaStatusProvider(component.instanceId),
+      builder: (context, status) {
+        final value = config.value;
+        if (value != null) _seed(value);
+        final fromEnv = _seeded?.fromEnv ?? false;
+        final hasToken = _seeded?.hasToken ?? false;
+        final busy = _saving || value == null;
+        return section(classes: 'hermuse-settings-section', [
+          h2([.text('Image generation')]),
+          p([
+            .text(
+              'Generates agent portraits, their animations and Feed '
+              'illustrations with a ContentFlow service you run.',
+            ),
+          ]),
+          if (value == null)
+            config.hasError
+                ? div(
+                    classes: 'hermuse-settings-error',
+                    attributes: {'role': 'alert'},
+                    [
+                      .text(
+                        'Could not load image generation: '
+                        '${_reason(config.error!)}',
+                      ),
+                    ],
+                  )
+                : p(attributes: {'role': 'status'}, [.text('Loading…')])
+          else ...[
+            if (!value.configured && !_tested)
+              p([
+                .text(
+                  'Not set up: nothing is generated until you enter an '
+                  'endpoint.',
+                ),
+              ]),
+            div(classes: 'hermuse-media-form', [
+              if (fromEnv) ...[
+                p([
+                  .text(
+                    "Set by the server's environment "
+                    '(HERMUSE_MEDIA_ENDPOINT); change it there.',
+                  ),
+                ]),
+                YsField(
+                  label: 'Endpoint',
+                  child: p(classes: 'hermuse-media-value', [
+                    .text(value.endpoint),
+                  ]),
+                ),
+              ] else ...[
+                YsField(
+                  label: 'Endpoint',
+                  child: YsInputBox(
+                    value: _endpoint,
+                    label: 'Endpoint',
+                    url: true,
+                    placeholder: 'https://contentflow.example.com',
+                    onChanged: (text) => _edited(() => _endpoint = text),
+                    onSubmitted: () => unawaited(_save()),
+                  ),
+                ),
+                YsField(
+                  label: 'Token',
+                  child: YsInputBox(
+                    value: _token,
+                    label: 'Token',
+                    obscure: true,
+                    autocomplete: 'off',
+                    placeholder: hasToken
+                        ? 'Saved — leave empty to keep'
+                        : 'Leave empty if the service has none',
+                    onChanged: (text) => _edited(() => _token = text),
+                    onSubmitted: () => unawaited(_save()),
+                  ),
+                ),
+              ],
+              div(classes: 'hermuse-media-advanced', [
+                YsPressable(
+                  classes: 'hermuse-media-disclosure',
+                  attributes: {'aria-expanded': '$_advanced'},
+                  onPressed: () => setState(() => _advanced = !_advanced),
+                  builder: (context, state) => .fragment([
+                    YsIconView(
+                      _advanced ? YsIcon.chevronDown : YsIcon.chevronRight,
+                      size: YsLayout.inlineIcon,
+                    ),
+                    .text(_advanced ? 'Hide advanced' : 'Advanced'),
+                  ]),
+                ),
+                if (_advanced)
+                  div(classes: 'hermuse-media-advanced-fields', [
+                    YsField(
+                      label: 'Image model',
+                      child: YsInputBox(
+                        value: _imageModel,
+                        label: 'Image model',
+                        placeholder: 'Service default',
+                        onChanged: (text) => _edited(() => _imageModel = text),
+                      ),
+                    ),
+                    YsField(
+                      label: 'Video model',
+                      child: YsInputBox(
+                        value: _videoModel,
+                        label: 'Video model',
+                        placeholder: 'Service default',
+                        onChanged: (text) => _edited(() => _videoModel = text),
+                      ),
+                    ),
+                  ]),
+              ]),
+              YsPressable(
+                label: 'Illustrate Feed posts that have no image',
+                classes: 'hermuse-settings-radio',
+                attributes: {
+                  'role': 'switch',
+                  'aria-checked': '$_feedFallback',
+                },
+                onPressed: busy
+                    ? null
+                    : () => _edited(() => _feedFallback = !_feedFallback),
+                builder: (context, state) => .fragment([
+                  span(classes: 'hermuse-settings-radio-dot', []),
+                  span(classes: 'hermuse-settings-radio-text', [
+                    span(classes: 'hermuse-settings-radio-label', [
+                      .text('Illustrate Feed posts that have no image'),
+                    ]),
+                  ]),
+                ]),
+              ),
+            ]),
+            div(classes: 'hermuse-settings-account-actions', [
+              YsButton.primary(
+                label: _saving ? 'Saving…' : 'Save',
+                onPressed: busy ? null : () => unawaited(_save()),
+              ),
+              YsButton.neutral(
+                label: 'Test',
+                onPressed: busy || status.isLoading
+                    ? null
+                    : () => unawaited(_test()),
+              ),
+              if (hasToken && !fromEnv)
+                YsButton.neutral(
+                  label: 'Remove token',
+                  onPressed: busy ? null : () => unawaited(_save(token: '')),
+                ),
+            ]),
+            if (hasToken && !fromEnv) p([.text('Token saved')]),
+            if (_saved) p(attributes: {'role': 'status'}, [.text('Saved.')]),
+            if (_tested) _status(status),
+            if (_error case final error?)
+              div(
+                classes: 'hermuse-settings-error',
+                attributes: {'role': 'alert'},
+                [.text(error)],
+              ),
+          ],
+        ]);
+      },
+    ),
   );
 }

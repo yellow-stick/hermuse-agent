@@ -79,6 +79,7 @@ class HermusePanel extends StatelessComponent {
         ]),
         div(classes: 'hermuse-panel-avatar', [
           HermuseAgentAvatar(
+            instanceId: instanceId,
             profile: profile,
             avatarId: avatarId,
             chat: chat,

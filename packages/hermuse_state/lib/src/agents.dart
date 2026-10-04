@@ -6,7 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'providers.dart';
 
 export 'package:hermuse_chat/hermuse_chat.dart'
-    show AgentAvatar, agentAvatarAsset;
+    show AgentAvatar, agentAvatarAsset, customAvatarState, customAvatarStates;
 
 part 'agents.g.dart';
 
@@ -50,6 +50,10 @@ final class AgentProfile {
   final int metadataRevision;
 
   AgentAvatar get avatar => AgentAvatar.byId(avatarId);
+
+  /// Whether the agent shows the portrait the plugin generated for its
+  /// profile (`avatar_id` `custom`; see `agentAvatarProvider`).
+  bool get isCustom => avatar.isCustom;
 }
 
 final class AgentDetails {
@@ -237,7 +241,8 @@ void _validate(String name, String avatarId, String prompt) {
   if (prompt.trim().isEmpty) {
     throw ArgumentError('Enter a prompt for this agent.');
   }
-  if (!AgentAvatar.available.any((avatar) => avatar.id == avatarId)) {
+  if (avatarId != AgentAvatar.customId &&
+      !AgentAvatar.available.any((avatar) => avatar.id == avatarId)) {
     throw ArgumentError('Choose an available avatar.');
   }
 }

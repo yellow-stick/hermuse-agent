@@ -1,7 +1,8 @@
 """Hermuse agent-plugin entry point (``register(ctx)`` called by the loader).
 
 Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, conversational
-and proactive-behaviour system-prompt sections, the Activity task recorder
+and proactive-behaviour system-prompt sections, the per-turn local clock
+(``pre_llm_call``, see :mod:`turn_clock`), the Activity task recorder
 (``pre_llm_call`` / ``post_llm_call`` / ``on_session_end`` hooks and the
 ``hermuse_task_summary`` auxiliary task, see :mod:`task_recorder`), the
 ``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
@@ -22,7 +23,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent_tools, plugin_cli, subscription_bridge, task_recorder
+from . import agent_tools, plugin_cli, subscription_bridge, task_recorder, turn_clock
 from .computer import hooks as computer_hooks
 from .computer.provider import make_provider
 
@@ -65,21 +66,33 @@ CONVERSATION_GUIDANCE = (
 BEHAVIOUR_SECTION_ID = "hermuse_behaviour"
 BEHAVIOUR_GUIDANCE = (
     "You are a proactive personal agent; the user's main chat is the session "
-    "\"Bot Chat\".\n"
+    "\"Bot Chat\". Each turn ends with a \"Local time now\" line: use it for all times.\n"
     "- Every reminder or later/recurring action, even 1 minute away, MUST be "
-    "cronjob_manage action=\"create\", deliver=\"bot-chat\"; schedule \"in 2m\", "
-    "\"in 2h\" or an ISO time once, \"every day 8am\" or cron to recur. Its prompt "
-    "is self-contained; its final response is the message to the user (\"Rappel : "
-    "boire un verre d'eau.\"). Never wait, sleep or poll in a turn to emulate a "
-    "timer. Confirm in one short line with the fire time. Never ask which "
-    "platform or channel.\n"
-    "- Track multi-day commitments and things to keep in mind with goal_track "
-    "(source=\"agent\" on your initiative, cron_job_id of its job, parent_id for "
-    "a step); keep status_line current with goal_update.\n"
-    "- Offer 2-4 choices with clarify. Every feed_post needs why.\n"
-    "- [Cronjob \"...\" output messages are scheduled output, not the user: tell "
-    "the user what matters, else reply exactly NO_REPLY. If it says \"Ask the "
-    "user\", ask with clarify and wait; do not act on it yourself."
+    "cronjob_manage action=\"create\", deliver=\"bot-chat\". Schedule once with \"in 2m\", "
+    "\"in 2h\" or local ISO \"2026-10-05T09:00\"; recur with \"every day 8am\" or 5-field "
+    "cron \"0 8 * * *\", never 6 fields. Before creating, run action=\"list\" and update a "
+    "matching job instead of duplicating it. Never wait, sleep or poll to emulate a timer. "
+    "Never ask which platform or channel.\n"
+    "- \"Tomorrow morning\" is 09:00 local on tomorrow's date; never schedule 23:00-07:00 "
+    "unless asked. Confirm in one short line with the fire time as weekday, date and local "
+    "time (\"lundi 5 octobre à 9h00\"). If timing is unclear, offer choices with clarify "
+    "(\"Rappel demain matin | Non, juste garde en tête\").\n"
+    "- A job prompt is self-contained; its final response IS the deliverable the user gets "
+    "(reminder text, full briefing with sources), never narration of its steps.\n"
+    "- \"Keep in mind\"/\"help me not forget\" a dated plan (trip, deadline): call goal_track "
+    "(title, category, why, source=\"agent\", status_line; cron_job_id if a job serves it) "
+    "AND memory (target \"memory\", absolute dates: \"Commitment: Madrid trip 2026-10-07\"). "
+    "Other facts: memory only. Keep status_line current with goal_update.\n"
+    "- ALWAYS tool_describe a deferred tool (cronjob_manage, goal_track...) "
+    "before its first tool_call; never guess arguments. tool_call takes ONE entry for local "
+    "tools (two goals = two calls).\n"
+    "- Ideas you suggest: idea_propose each, and offer them as clarify choices. Offer 2-4 "
+    "choices with clarify. Every feed_post needs why and sources, main page first.\n"
+    "- [Cronjob \"...\" output messages are scheduled output, not the user. Your reply IS "
+    "that content for the user, in their language and tone, formatting and links kept: no "
+    "\"reçu\", no summary of or comment on the job. If nothing in it is for the user, reply "
+    "exactly NO_REPLY. If it says \"Ask the user\", ask with clarify and wait; do not act on "
+    "it yourself."
 )
 
 PLUGIN_NAME = "hermuse"
@@ -95,6 +108,7 @@ def register(ctx) -> None:
     ctx.register_system_prompt_section("hermuse.conversation", CONVERSATION_GUIDANCE)
     ctx.register_system_prompt_section(BEHAVIOUR_SECTION_ID, BEHAVIOUR_GUIDANCE)
     task_recorder.register(ctx)
+    ctx.register_hook("pre_llm_call", turn_clock.pre_llm_call)
     try:
         skill_md = Path(__file__).parent / "skills" / "hermuse" / "SKILL.md"
         ctx.register_skill(SKILL_NAME, skill_md, SKILL_DESCRIPTION)

@@ -15,9 +15,9 @@ prompt**, main chat and side chats. The app remembers the selected agent and
 the last conversation for each profile on this device.
 
 - Choose **Create agent…** on desktop or **Add agent** on the web, pick a
-  portrait, and edit the name and prompt before saving. Creating a profile
-  uses the same server and shares its model credentials; it does not install
-  another Hermes or generate an image.
+  portrait (or generate one, below), and edit the name and prompt before
+  saving. Creating a profile uses the same server and shares its model
+  credentials; it does not install another Hermes.
 - Choose **Edit agent…**, or click the pencil on the profile portrait, to
   change the selected agent's name, portrait and prompt. The editor loads
   that profile's saved prompt. Picking another portrait never replaces an
@@ -27,15 +27,44 @@ the last conversation for each profile on this device.
 
 Hermuse keeps the original profile. Noah, Aya, Oscar, Iris, Rusty, Bao, Olive,
 Mint and Nova are static portrait choices with editable starting prompts.
-Only the original Hermuse profile, while using its original portrait, plays
-the bundled activity animations. Reduced-motion preferences show its static
-portrait instead.
+Only the original Hermuse profile, while using its original portrait, and
+agents with a generated, animated portrait play activity animations.
+Reduced-motion preferences show the static portrait instead.
 
 Feed, Ideas, Goals, Library, Activity, Upcoming, Identity and the computer view
 follow the selected profile. Update the Hermuse plugin on existing servers
 before using these profile-scoped surfaces; older plugins do not isolate
 their data by profile. Profiles separate agent state, not operating-system
 permissions: they are not security sandboxes.
+
+### Custom agents with a generated portrait
+
+When the server has image generation set up (**Settings → Image
+generation**, see [the server guide](server.md#image-generation)), the agent
+editor offers **Generate** next to the bundled portraits:
+
+1. Describe the character (up to 1000 characters). The server generates four
+   candidates in about 15 seconds; pick one. Generate again for others.
+2. **Animate** creates the agent's animations from that portrait: idle,
+   thinking, replying and working, one 4-second clip each, about 30 seconds
+   per clip. The button shows what it costs at your provider ("4 animations ·
+   28 credits"); each state shows its progress. You can save the agent with
+   its portrait before the animations finish. A clip that failed shows
+   **Failed**; **Retry failed** generates only those clips again.
+
+Generation is stored per profile, so for a new agent **Generate portraits**
+first creates the agent (with the bundled portrait chosen so far); saving
+then edits that agent. Without an image service, **Generate** shows one line
+saying portrait generation needs one, with **Open Settings** to set it up.
+
+A generated agent shows its portrait wherever an agent appears and plays its
+animations like Hermuse: thinking while it thinks, replying while it answers,
+working while it searches, reads, codes or browses, idle while it waits for
+you. A state without a clip falls back to the closest one, then to the
+portrait. A clip the provider refuses is marked failed and is not retried
+automatically (the credits may already be spent): animate that state again
+when you want to. Removing the generated portrait brings back a bundled one.
+The files live in the profile's `hermuse/avatar/` folder on the server.
 
 ## Activity
 
@@ -144,7 +173,8 @@ then two cards:
   `SOUL.md` on the server.
 - **MEMORY** opens the agent's long-term memory: `MEMORY.md` (what it
   remembers about your life) and `USER.md` (your profile), one block per
-  entry. Edit, add or delete entries, then **Save**; Hermes keeps them under
+  entry. Edit or delete entries, or **Add entry** (a new empty block, ready
+  to type in), then **Save**; Hermes keeps them under
   `HERMES_HOME/memories/`. The card shows when the memory last changed. You
   can also ask your agent to forget something.
 
@@ -157,8 +187,11 @@ not copy every reply into Feed or invent posts to fill an empty view.
 
 A post's picture is the share image of its main source page (the picture a
 link preview shows), copied onto your Hermes server when the post is written
-and deleted with it. A page without one gives a post without a picture; no
-image is generated.
+and deleted with it. When there is none and image generation is set up with
+**Illustrate Feed posts without an image** on, the post appears at once and an
+illustration made from its title and "Why I created this" (no text, logos or
+real people) is added a few seconds later. If generation fails, or the
+option is off, the post stays without a picture.
 
 Feed refreshes automatically after publication and at the end of a chat turn,
 on both desktop and web. This requires working model credentials and the

@@ -8,7 +8,9 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import 'agent_avatar.dart';
 import 'screens.dart' show YsDialogError;
+import 'settings.dart' show SettingsLauncher, SettingsSection;
 
 /// The product subtree keeps its agent scope for the lifetime of its dialogs.
 final nativeAgentProfileProvider = Provider<String>(
@@ -184,10 +186,10 @@ final class _AgentSwitcherState extends ConsumerState<AgentSwitcher> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            YsAvatar(
-              AssetImage(
-                'assets/images/${agent?.avatar.assetPath ?? AgentAvatar.byId(null).assetPath}',
-              ),
+            AgentPortrait(
+              instanceId: widget.instanceId,
+              profile: widget.profile,
+              avatarId: agent?.avatarId ?? AgentAvatar.byId(null).id,
               size: 28,
             ),
             const SizedBox(width: YsSpace.sm),
@@ -288,6 +290,9 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
   final _prompt = TextEditingController();
   AgentProfile? _agent;
   String _avatarId = 'noah';
+
+  /// The Generate view is open (below the portraits).
+  bool _generateOpen = false;
   bool _loading = false;
   bool _saving = false;
   String? _error;
@@ -323,9 +328,10 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
       setState(() {
         _agent = agent;
         _avatarId = agent.avatarId;
+        _generateOpen = agent.isCustom;
       });
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = avatarErrorText(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -368,7 +374,7 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
       if (error is AgentWriteException && error.createdAgent != null) {
         _agent = error.createdAgent;
       }
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = avatarErrorText(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -378,6 +384,7 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
     final previous = AgentAvatar.byId(_avatarId);
     setState(() {
       _avatarId = avatar.id;
+      _generateOpen = false;
       // Templates only seed new agents; changing an existing avatar never
       // replaces that agent's independent SOUL or display name.
       if (widget.profile == null) {
@@ -386,6 +393,58 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
           _prompt.text = avatar.defaultPrompt;
         }
       }
+    });
+  }
+
+  /// Generate tile: opens the Generate view, and picks the generated
+  /// portrait when the agent has one.
+  void _selectGenerated(bool hasPortrait) => setState(() {
+    _generateOpen = true;
+    if (hasPortrait) _avatarId = AgentAvatar.customId;
+  });
+
+  /// Generation is per profile: a new agent is created first (with the
+  /// bundled portrait chosen so far) and the editor keeps editing it.
+  Future<String?> _ensureProfile() async {
+    if (_agent case final agent?) return agent.profile;
+    final notifier = ref.read(
+      agentProfilesProvider(widget.instanceId).notifier,
+    );
+    try {
+      final created = await notifier.create(
+        name: _name.text.trim(),
+        avatarId: _avatarId,
+        prompt: _prompt.text,
+      );
+      if (mounted) setState(() => _agent = created);
+      return created.profile;
+    } on AgentWriteException catch (error) {
+      if (error.createdAgent case final created?) {
+        if (mounted) setState(() => _agent = created);
+      }
+      rethrow;
+    }
+  }
+
+  /// A candidate was picked: the agent shows its generated portrait now,
+  /// before the animations exist.
+  Future<void> _useGenerated() async {
+    final agent = _agent!;
+    await ref
+        .read(agentProfilesProvider(widget.instanceId).notifier)
+        .saveAgent(
+          agent: agent,
+          name: _name.text.trim(),
+          avatarId: AgentAvatar.customId,
+          prompt: _prompt.text,
+        );
+    if (!mounted) return;
+    setState(() {
+      _avatarId = AgentAvatar.customId;
+      // Saving bumped the profile's metadata revision.
+      _agent =
+          ref.read(agentProfileProvider(widget.instanceId, agent.profile)) ??
+          agent;
     });
   }
 
@@ -445,40 +504,36 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
                       runSpacing: YsSpace.sm,
                       children: [
                         for (final avatar in AgentAvatar.available)
-                          YsPressable(
-                            semanticLabel:
-                                '${avatar.name} avatar${avatar.id == _avatarId ? ', selected' : ''}',
+                          _PortraitTile(
+                            semanticLabel: avatar.name,
+                            selected: avatar.id == _avatarId,
                             onPressed: () => _selectAvatar(avatar),
-                            builder: (context, state) => YsFocusRing(
-                              visible: state.focused,
-                              radius: YsRadius.navRow,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                    color: avatar.id == _avatarId
-                                        ? palette.contentColor
-                                        : palette.lineColor,
-                                    width: ysHairline,
-                                  ),
-                                  borderRadius: BorderRadius.circular(
-                                    YsRadius.navRow,
-                                  ),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(YsSpace.xs),
-                                  child: YsAvatar(
-                                    AssetImage(
-                                      'assets/images/${avatar.assetPath}',
-                                    ),
-                                    size: 48,
-                                    semanticLabel: avatar.name,
-                                  ),
-                                ),
-                              ),
+                            child: YsAvatar(
+                              AssetImage('assets/images/${avatar.assetPath}'),
+                              size: 48,
                             ),
                           ),
+                        _generateTile(palette),
                       ],
                     ),
+                    if (_generateOpen) ...[
+                      const SizedBox(height: YsSpace.lg),
+                      AvatarGenerator(
+                        instanceId: widget.instanceId,
+                        profile: _agent?.profile,
+                        ensureProfile: _ensureProfile,
+                        onPicked: _useGenerated,
+                        onOpenSettings: switch (SettingsLauncher.maybeOf(
+                          context,
+                        )) {
+                          final open? => () {
+                            widget.onClose();
+                            open(SettingsSection.imageGeneration);
+                          },
+                          null => null,
+                        },
+                      ),
+                    ],
                     const SizedBox(height: YsSpace.lg),
                     Text(
                       'SOUL prompt',
@@ -506,6 +561,94 @@ final class _AgentEditorState extends ConsumerState<_AgentEditor> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  /// After the bundled portraits: the generated portrait once the agent
+  /// has one, else the Generate glyph.
+  Widget _generateTile(YsPalette palette) {
+    final profile = _agent?.profile;
+    final avatar = profile == null
+        ? null
+        : ref
+              .watch(agentAvatarProvider(widget.instanceId, profile: profile))
+              .value;
+    final hasPortrait = avatar?.hasPortrait ?? false;
+    return _PortraitTile(
+      semanticLabel: hasPortrait ? 'Generated' : 'Generate',
+      selected: _avatarId == AgentAvatar.customId,
+      open: _generateOpen,
+      onPressed: () => _selectGenerated(hasPortrait),
+      child: hasPortrait
+          ? AgentPortrait(
+              instanceId: widget.instanceId,
+              profile: profile!,
+              avatarId: AgentAvatar.customId,
+              size: 48,
+            )
+          : SizedBox.square(
+              dimension: 48,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: palette.neutralFilmColor,
+                ),
+                child: Center(
+                  child: YsIconWidget(
+                    YsIcon.sparkles,
+                    size: 24,
+                    color: palette.contentColor,
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+/// One portrait choice of the agent editor.
+final class _PortraitTile extends StatelessWidget {
+  const _PortraitTile({
+    required this.semanticLabel,
+    required this.selected,
+    required this.onPressed,
+    required this.child,
+    this.open = false,
+  });
+
+  final String semanticLabel;
+  final bool selected;
+
+  /// Its view is open below the portraits (Generate) without being the
+  /// chosen portrait.
+  final bool open;
+  final VoidCallback onPressed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return YsPressable(
+      semanticLabel: '$semanticLabel avatar${selected ? ', selected' : ''}',
+      onPressed: onPressed,
+      builder: (context, state) => YsFocusRing(
+        visible: state.focused,
+        radius: YsRadius.navRow,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: open && !selected ? palette.neutralWashColor : null,
+            border: Border.all(
+              color: selected ? palette.contentColor : palette.lineColor,
+              width: ysHairline,
+            ),
+            borderRadius: BorderRadius.circular(YsRadius.navRow),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(YsSpace.xs),
+            child: child,
+          ),
+        ),
       ),
     );
   }

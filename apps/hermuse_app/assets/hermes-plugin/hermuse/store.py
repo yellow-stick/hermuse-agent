@@ -18,6 +18,7 @@ import os
 import re
 import tempfile
 import threading
+import unicodedata
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -345,6 +346,41 @@ def feed_image(root: Path, post_id: str) -> Optional[tuple[Path, str]]:
     return (path, mime) if mime and path.is_file() else None
 
 
+def attach_feed_image(root: Path, post_id: str, image: tuple[bytes, str]) -> Optional[dict[str, Any]]:
+    """Store *image* (``(bytes, ext)``) as the image of an existing post that
+    has none yet (the Feed illustration fallback); returns the post's view, or
+    None when the post is gone or already has an image."""
+    data, ext = image
+    if ext not in FEED_IMAGE_TYPES:
+        raise ValueError(f"unsupported image type: {ext}")
+    record = _read_index(root, "feed").get(post_id)
+    if record is None or record.get("image_file"):
+        return None
+    image_file = f"{post_id}{ext}"
+    atomic_write_bytes(root / "feed" / FEED_IMAGES_DIR / image_file, data)
+    items = _read_index(root, "feed")  # re-read: the post may have changed meanwhile
+    record = items.get(post_id)
+    if record is None or record.get("image_file"):
+        _unlink_in(root / "feed" / FEED_IMAGES_DIR, image_file)
+        return None
+    record.update(image_file=image_file, image_url=None)
+    _write_index(root, "feed", items)
+    _add_front_matter(root / "feed" / str(record.get("file") or ""),
+                      "image_file", f"{FEED_IMAGES_DIR}/{image_file}")
+    return _feed_view(record)
+
+
+def _add_front_matter(path: Path, key: str, value: str) -> None:
+    """Append ``key: "value"`` to the front matter of a Markdown record."""
+    if not path.name.endswith(".md") or not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    end = text.find("\n---\n", 3)
+    if not text.startswith("---\n") or end < 0:
+        return
+    atomic_write_text(path, f"{text[:end]}\n{key}: {json.dumps(value)}{text[end:]}")
+
+
 def list_feed(root: Path, limit: int = 50) -> list[dict[str, Any]]:
     items = sorted(
         _read_index(root, "feed").values(),
@@ -595,6 +631,56 @@ def list_ideas(root: Path, limit: int = 200) -> list[dict[str, Any]]:
     merged = [_idea_view(r) for r in agent]
     merged.extend(dict(seed) for seed in SEED_IDEAS if seed["id"] not in hidden)
     return merged[: max(0, limit)]
+
+
+# Function words skipped when comparing ideas (French and English: the agent
+# writes ideas in the user's language).
+_IDEA_STOPWORDS = frozenset((
+    "les des une pour avec dans sur par que qui est pas plus ton tes mon mes vos votre toi moi "
+    "peux peut vais veux aux ces cette son ses leur nos notre tout tous "
+    "the and for with you your can will let from into this that some about our".split()))
+IDEA_TITLE_SIMILARITY = 0.6
+IDEA_PITCH_SIMILARITY = 0.6
+
+
+def _idea_terms(text: str) -> frozenset[str]:
+    """Accent- and case-folded content words cut to a 5-letter stem, so "Je cherche les
+    vols" and "Je peux te chercher des vols" share ``cherc`` and ``vol``."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text.lower())
+                    if not unicodedata.combining(c))
+    terms = set()
+    for word in re.findall(r"[a-z0-9]+", plain):
+        if len(word) < 3 or word in _IDEA_STOPWORDS:
+            continue
+        if len(word) > 3 and word.endswith("s"):
+            word = word[:-1]
+        terms.add(word[:5])
+    return frozenset(terms)
+
+
+def _overlap(a: frozenset[str], b: frozenset[str]) -> float:
+    return len(a & b) / len(a | b) if a and b else 0.0
+
+
+def find_similar_idea(root: Path, *, title: str, pitch: str) -> Optional[dict[str, Any]]:
+    """The live (not dismissed) agent idea that says the same thing, best match first:
+    title terms overlapping by ``IDEA_TITLE_SIMILARITY`` or pitch terms by
+    ``IDEA_PITCH_SIMILARITY`` (Jaccard). None when the idea is new."""
+    hidden = _dismissed(root)
+    title_terms, pitch_terms = _idea_terms(title), _idea_terms(pitch)
+    best: Optional[dict[str, Any]] = None
+    best_score = 0.0
+    for record in _read_index(root, "ideas").values():
+        if record.get("id") in hidden:
+            continue
+        by_title = _overlap(title_terms, _idea_terms(str(record.get("title", ""))))
+        by_pitch = _overlap(pitch_terms, _idea_terms(str(record.get("pitch", ""))))
+        if by_title < IDEA_TITLE_SIMILARITY and by_pitch < IDEA_PITCH_SIMILARITY:
+            continue
+        score = max(by_title, by_pitch)
+        if score > best_score:
+            best, best_score = record, score
+    return _idea_view(best) if best is not None else None
 
 
 def get_idea(root: Path, idea_id: str) -> Optional[dict[str, Any]]:

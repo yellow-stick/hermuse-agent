@@ -14,6 +14,7 @@ import 'package:hermuse_web/components.dart' as _components;
 import 'package:hermuse_web/computer_viewer.dart' as _computer_viewer;
 import 'package:hermuse_web/connections.dart' as _connections;
 import 'package:hermuse_web/feed.dart' as _feed;
+import 'package:hermuse_web/generated_avatar.dart' as _generated_avatar;
 import 'package:hermuse_web/goals.dart' as _goals;
 import 'package:hermuse_web/ideas.dart' as _ideas;
 import 'package:hermuse_web/identity.dart' as _identity;
@@ -93,6 +94,7 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._connections.HermuseConnections.styles,
     ..._feed.HermuseFeed.styles,
     ..._feed.HermusePluginMissing.styles,
+    ..._generated_avatar.HermuseAvatarGenerator.styles,
     ..._goals.HermuseGoals.styles,
     ..._ideas.HermuseIdeas.styles,
     ..._identity.HermuseIdentity.styles,
@@ -111,6 +113,7 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._route.HermuseRouteSkeleton.styles,
     ..._scope.HermuseScope.styles,
     ..._screens.HermuseRelayRequired.styles,
+    ..._settings.HermuseImageGenerationSection.styles,
     ..._settings.HermuseSettings.styles,
     ..._settings.HermuseSettingsMenu.styles,
     ..._sidebar.HermuseSidebar.styles,

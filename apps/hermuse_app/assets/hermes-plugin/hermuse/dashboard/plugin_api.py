@@ -2,13 +2,13 @@
 
 Loaded by the dashboard plugin system (``hermes_cli/web_server_dashboard.py``)
 from this file path via ``importlib`` — NOT as part of the plugin package — so
-it adds its parent dir to ``sys.path`` to import the sibling ``store`` and
-``subscription_bridge`` modules (stdlib-only, shared with the agent plugin),
-``dashboard_restart`` and the ``computer`` package. HTTP auth (the
-``/bridge/*`` and ``/dashboard/*`` routes included) is enforced by Hermes'
-existing ``/api/`` gate; the computer WebSocket (which that gate does not
-cover) takes a single-use ticket from ``POST /computer/ticket``, like Hermes'
-own ``/api/display/ws``.
+it adds its parent dir to ``sys.path`` to import the sibling ``store``,
+``media``, ``avatar`` and ``subscription_bridge`` modules (shared with the
+agent plugin), ``dashboard_restart`` and the ``computer`` package. HTTP auth
+(the ``/bridge/*``, ``/media/*`` and ``/dashboard/*`` routes included) is
+enforced by Hermes' existing ``/api/`` gate; the computer WebSocket (which
+that gate does not cover) takes a single-use ticket from
+``POST /computer/ticket``, like Hermes' own ``/api/display/ws``.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import logging
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import FileResponse, Response
@@ -28,8 +28,10 @@ from starlette.requests import HTTPConnection
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import avatar  # noqa: E402
 import dashboard_restart  # noqa: E402
 import feed_images  # noqa: E402
+import media  # noqa: E402
 import store  # noqa: E402
 import subscription_bridge  # noqa: E402
 from computer import runtime as computer_runtime  # noqa: E402
@@ -122,8 +124,9 @@ def get_feed_post(post_id: str):
 @router.post("/feed", status_code=201)
 def create_feed_post(payload: FeedPostBody):
     sources = [s for s in (s.strip() for s in payload.sources) if s]
-    return store.post_feed(
-        _root(),
+    root = _root()
+    record = store.post_feed(
+        root,
         title=payload.title.strip(),
         body=payload.body,
         topic=payload.topic.strip(),
@@ -131,6 +134,8 @@ def create_feed_post(payload: FeedPostBody):
         why=payload.why.strip(),
         image=feed_images.find_post_image(payload.image_url, sources),
     )
+    media.illustrate_feed_post(root, record)  # no image found: one may come later
+    return record
 
 
 @router.get("/feed/{post_id}/image")
@@ -172,6 +177,127 @@ def react_feed_post(post_id: str, payload: ReactBody):
     if record is None:
         raise _not_found("feed post")
     return record
+
+
+# --- Media provider (server-wide) ---------------------------------------------
+
+
+class MediaConfigBody(BaseModel):
+    endpoint: str = Field(max_length=2000)
+    token: Optional[str] = Field(default=None, max_length=4000)
+    image_model: Optional[str] = Field(default=None, max_length=120)
+    video_model: Optional[str] = Field(default=None, max_length=120)
+    feed_fallback: Optional[bool] = None
+
+
+@router.get("/media/config")
+def get_media_config():
+    return media.load_config().view()
+
+
+@router.put("/media/config")
+def put_media_config(payload: MediaConfigBody):
+    changes = payload.model_dump(exclude_unset=True)
+    try:
+        return media.save_config(**changes).view()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/media/status")
+def get_media_status():
+    return media.status()
+
+
+# --- Avatar (per profile) -----------------------------------------------------
+
+_AVATAR_CACHE = {"Cache-Control": "private, no-cache"}  # same URL, new picture after a change
+_CANDIDATE_CACHE = {"Cache-Control": "private, max-age=86400"}  # never changes
+
+AvatarState = Literal["idle", "thinking", "replying", "working"]
+
+
+class AvatarPortraitBody(BaseModel):
+    description: str = Field(min_length=1, max_length=avatar.DESCRIPTION_MAX)
+    count: int = Field(default=4, ge=1, le=4)
+
+
+class AvatarSelectBody(BaseModel):
+    candidate: int = Field(ge=0, le=3)
+
+
+class AvatarAnimateBody(BaseModel):
+    states: Optional[list[AvatarState]] = Field(default=None, min_length=1, max_length=4)
+
+
+def _avatar_call(action: Callable[..., Any], *args: Any) -> Any:
+    """Avatar refusals as HTTP: busy/unavailable 409, no portrait or bad input 422, unknown 404."""
+    try:
+        return action(*args)
+    except (avatar.AvatarBusy, avatar.AvatarUnavailable) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (avatar.NoPortrait, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/avatar")
+def get_avatar():
+    return avatar.get_avatar(_root())
+
+
+@router.delete("/avatar")
+def delete_avatar():
+    _avatar_call(avatar.clear, _root())
+    return {"ok": True}
+
+
+@router.post("/avatar/portrait", status_code=202)
+def start_avatar_portrait(payload: AvatarPortraitBody):
+    return _avatar_call(avatar.start_portrait, _root(), payload.description, payload.count)
+
+
+@router.get("/avatar/portrait")
+def get_avatar_portrait():
+    path = avatar.portrait_file(_root())
+    if path is None:
+        raise _not_found("portrait")
+    return FileResponse(path=str(path), media_type="image/jpeg", headers=_AVATAR_CACHE)
+
+
+@router.post("/avatar/select")
+def select_avatar_portrait(payload: AvatarSelectBody):
+    return _avatar_call(avatar.select, _root(), payload.candidate)
+
+
+@router.post("/avatar/animate", status_code=202)
+def start_avatar_animation(payload: AvatarAnimateBody):
+    return _avatar_call(avatar.start_animate, _root(), payload.states)
+
+
+@router.get("/avatar/jobs/{job_id}")
+def get_avatar_job(job_id: str):
+    job = avatar.get_job(_root(), job_id)
+    if job is None:
+        raise _not_found("avatar job")
+    return job
+
+
+@router.get("/avatar/candidates/{job_id}/{n}")
+def get_avatar_candidate(job_id: str, n: int):
+    path = avatar.candidate_file(_root(), job_id, n)
+    if path is None:
+        raise _not_found("candidate")
+    return FileResponse(path=str(path), media_type="image/jpeg", headers=_CANDIDATE_CACHE)
+
+
+@router.get("/avatar/states/{state}")
+def get_avatar_state(state: str):
+    path = avatar.state_file(_root(), state)
+    if path is None:
+        raise _not_found("animation")
+    return FileResponse(path=str(path), media_type="image/webp", headers=_AVATAR_CACHE)
 
 
 # --- Ideas -----------------------------------------------------------------

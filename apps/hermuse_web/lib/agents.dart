@@ -9,11 +9,17 @@ import 'package:universal_web/web.dart' as web;
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'generated_avatar.dart';
 import 'scope.dart';
+import 'screens.dart';
 
 /// The active profile's portrait, with a static reduced-motion fallback.
+///
+/// A generated (`custom`) avatar is loaded from [instanceId]'s plugin
+/// ([HermuseCustomAvatarImage]); bundled ones are app assets.
 class HermuseAgentAvatar extends StatelessComponent {
   const HermuseAgentAvatar({
+    required this.instanceId,
     required this.profile,
     required this.avatarId,
     this.chat,
@@ -23,6 +29,7 @@ class HermuseAgentAvatar extends StatelessComponent {
     super.key,
   });
 
+  final String instanceId;
   final String profile;
   final String avatarId;
   final ChatState? chat;
@@ -35,27 +42,36 @@ class HermuseAgentAvatar extends StatelessComponent {
     classes: 'ys-avatar',
     styles: Styles(width: size.px, height: size.px),
     [
-      .element(
-        tag: 'picture',
-        children: [
-          if (profile == 'default' && avatarId == 'hermuse' && chat != null)
-            source(
-              attributes: {
-                'media': '(prefers-reduced-motion: no-preference)',
-                'srcset':
-                    '/images/${agentAvatarAsset(avatarId, chat: chat, animate: true)}',
-              },
+      if (AgentAvatar.byId(avatarId).isCustom)
+        HermuseCustomAvatarImage(
+          instanceId: instanceId,
+          profile: profile,
+          chat: chat,
+          size: size,
+          alt: alt,
+        )
+      else
+        .element(
+          tag: 'picture',
+          children: [
+            if (profile == 'default' && avatarId == 'hermuse' && chat != null)
+              source(
+                attributes: {
+                  'media': '(prefers-reduced-motion: no-preference)',
+                  'srcset':
+                      '/images/${agentAvatarAsset(avatarId, chat: chat, animate: true)}',
+                },
+              ),
+            img(
+              classes: 'ys-avatar-img',
+              src: '/images/${agentAvatarAsset(avatarId)}',
+              alt: alt,
+              width: size.round(),
+              height: size.round(),
+              attributes: {'decoding': 'async'},
             ),
-          img(
-            classes: 'ys-avatar-img',
-            src: '/images/${agentAvatarAsset(avatarId)}',
-            alt: alt,
-            width: size.round(),
-            height: size.round(),
-            attributes: {'decoding': 'async'},
-          ),
-        ],
-      ),
+          ],
+        ),
       if (onEdit != null)
         YsPressable(
           onPressed: onEdit,
@@ -86,6 +102,9 @@ class HermuseAgentPicker extends StatefulComponent {
   final ChatState chat;
   final VoidCallback onCreate;
   final ValueChanged<AgentProfile> onEdit;
+
+  /// Hides "Add agent" (the read-only demo); "Edit agent" stays, the editor
+  /// shows the server's refusal when saving.
   final bool readOnly;
 
   /// Set in the phone top bar: the trigger renders as a centered two-line
@@ -219,6 +238,7 @@ class _HermuseAgentPickerState extends State<HermuseAgentPicker> {
           builder: (context, press) => subtitle == null
               ? .fragment([
                   HermuseAgentAvatar(
+                    instanceId: component.instanceId,
                     profile: component.profile,
                     avatarId: current?.avatarId ?? 'hermuse',
                     chat: component.chat,
@@ -264,19 +284,18 @@ class _HermuseAgentPickerState extends State<HermuseAgentPicker> {
                   agentProfilesProvider(component.instanceId),
                 ),
               ),
-            if (!component.readOnly) ...[
-              if (current != null)
-                YsMenuItem(
-                  label: 'Edit agent',
-                  icon: YsIcon.pencil,
-                  onSelected: () => component.onEdit(current),
-                ),
+            if (current != null)
+              YsMenuItem(
+                label: 'Edit agent',
+                icon: YsIcon.pencil,
+                onSelected: () => component.onEdit(current),
+              ),
+            if (!component.readOnly)
               YsMenuItem(
                 label: 'Add agent',
                 icon: YsIcon.plus,
                 onSelected: component.onCreate,
               ),
-            ],
           ],
         ),
     ]);
@@ -289,12 +308,16 @@ class HermuseAgentEditor extends StatefulComponent {
     required this.instanceId,
     required this.onClose,
     this.agent,
+    this.onOpenSettings,
     super.key,
   });
 
   final String instanceId;
   final AgentProfile? agent;
   final VoidCallback onClose;
+
+  /// Opens Settings (Image generation) from the Generate view's setup line.
+  final VoidCallback? onOpenSettings;
 
   @override
   State<HermuseAgentEditor> createState() => _HermuseAgentEditorState();
@@ -326,6 +349,16 @@ class HermuseAgentEditor extends StatefulComponent {
         'outline-offset': '${YsSpace.xxs}px',
       },
     ),
+    css('.hermuse-agent-generate-icon').styles(
+      display: .flex,
+      width: 48.px,
+      height: 48.px,
+      radius: .circular(YsRadius.pill.px),
+      justifyContent: .center,
+      alignItems: .center,
+      color: .variable('--primary-ink'),
+      backgroundColor: .variable('--avatar-surface'),
+    ),
     css('.hermuse-agent-note').styles(
       margin: .zero,
       color: .variable('--content-muted'),
@@ -345,6 +378,9 @@ class _HermuseAgentEditorState extends State<HermuseAgentEditor> {
   String? _error;
   AgentProfile? _savedAgent;
 
+  /// The Generate tile is selected: the generator shows below the portraits.
+  late bool _generate;
+
   @override
   void initState() {
     super.initState();
@@ -352,6 +388,7 @@ class _HermuseAgentEditorState extends State<HermuseAgentEditor> {
     _savedAgent = agent;
     final template = agent?.avatar ?? AgentAvatar.byId('noah');
     _avatarId = template.id;
+    _generate = template.isCustom;
     _name = agent?.displayName ?? template.name;
     _prompt = agent == null ? template.defaultPrompt : '';
     if (agent != null) unawaited(_loadPrompt());
@@ -386,12 +423,85 @@ class _HermuseAgentEditorState extends State<HermuseAgentEditor> {
 
   void _selectAvatar(AgentAvatar avatar) => setState(() {
     _avatarId = avatar.id;
+    _generate = false;
     // Editing artwork must never silently replace an existing SOUL.
     if (_savedAgent == null) {
       if (!_nameEdited) _name = avatar.name;
       if (!_promptEdited) _prompt = avatar.defaultPrompt;
     }
   });
+
+  /// The Generate tile: the generated portrait once there is one.
+  Component _generateTile({
+    required String? profile,
+    required bool hasPortrait,
+  }) => YsPressable(
+    onPressed: _busy
+        ? null
+        : () => setState(() {
+            _generate = true;
+            if (hasPortrait) _avatarId = AgentAvatar.customId;
+          }),
+    label: hasPortrait ? 'Generated portrait' : 'Generate a portrait',
+    classes: 'hermuse-agent-choice',
+    attributes: {'aria-pressed': '$_generate'},
+    builder: (context, state) => .fragment([
+      if (profile != null && hasPortrait)
+        div(classes: 'ys-avatar', styles: Styles(width: 48.px, height: 48.px), [
+          HermuseCustomAvatarImage(
+            instanceId: component.instanceId,
+            profile: profile,
+            size: 48,
+          ),
+        ])
+      else
+        span(classes: 'hermuse-agent-generate-icon', [
+          YsIconView(YsIcon.sparkles, size: YsLayout.inlineIcon),
+        ]),
+      span([.text(hasPortrait ? 'Generated' : 'Generate')]),
+    ]),
+  );
+
+  /// The new agent's profile, created on the first Generate (avatar
+  /// endpoints are profile-scoped); null with the reason shown.
+  Future<String?> _ensureProfile() async {
+    if (_savedAgent case final agent?) return agent.profile;
+    setState(() => _error = null);
+    try {
+      final created = await context
+          .readProvider(agentProfilesProvider(component.instanceId).notifier)
+          .create(name: _name.trim(), avatarId: _avatarId, prompt: _prompt);
+      if (mounted) setState(() => _savedAgent = created);
+      return created.profile;
+    } on AgentWriteException catch (error) {
+      if (mounted) {
+        setState(() {
+          _savedAgent = error.createdAgent ?? _savedAgent;
+          _error = error.message;
+        });
+      }
+      return error.createdAgent?.profile;
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = hermuseMediaErrorText(error));
+      return null;
+    }
+  }
+
+  /// Saves the agent with the portrait just picked (animations may still
+  /// be running).
+  Future<void> _savePicked() async {
+    final agent = _savedAgent;
+    if (agent == null) return;
+    await context
+        .readProvider(agentProfilesProvider(component.instanceId).notifier)
+        .saveAgent(
+          agent: agent,
+          name: _name.trim(),
+          avatarId: AgentAvatar.customId,
+          prompt: _prompt,
+        );
+    if (mounted) setState(() => _avatarId = AgentAvatar.customId);
+  }
 
   Future<void> _save() async {
     if (_busy || _loading || _name.trim().isEmpty) return;
@@ -509,14 +619,38 @@ class _HermuseAgentEditorState extends State<HermuseAgentEditor> {
                 onPressed: _busy ? null : () => _selectAvatar(avatar),
                 label: '${avatar.name} avatar',
                 classes: 'hermuse-agent-choice',
-                attributes: {'aria-pressed': '${_avatarId == avatar.id}'},
+                attributes: {
+                  'aria-pressed': '${!_generate && _avatarId == avatar.id}',
+                },
                 builder: (context, state) => .fragment([
                   YsAvatar(src: '/images/${avatar.assetPath}', size: 48),
                   span([.text(avatar.name)]),
                 ]),
               ),
+            if (_savedAgent case final agent?)
+              HermuseWatch(
+                provider: agentAvatarProvider(
+                  component.instanceId,
+                  profile: agent.profile,
+                ),
+                builder: (context, avatar) => _generateTile(
+                  profile: agent.profile,
+                  hasPortrait: avatar.value?.hasPortrait ?? false,
+                ),
+              )
+            else
+              _generateTile(profile: null, hasPortrait: false),
           ]),
         ),
+        if (_generate)
+          HermuseAvatarGenerator(
+            instanceId: component.instanceId,
+            profile: _savedAgent?.profile,
+            disabled: _busy,
+            onEnsureProfile: _ensureProfile,
+            onPicked: _savePicked,
+            onOpenSettings: component.onOpenSettings,
+          ),
         YsField(
           label: 'Name',
           child: YsInputBox(

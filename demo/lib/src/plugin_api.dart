@@ -31,7 +31,9 @@ final class DemoComputer {
 /// An HTTP client answering the Hermuse plugin routes of [instance] from the
 /// demo content: GETs return its feed, ideas, goals, tasks, memory, library,
 /// reflections and system files, Hermes' cron jobs (`GET /api/cron/jobs`,
-/// `/{id}`, `/{id}/runs`) and the messages of their run sessions; every
+/// `/{id}`, `/{id}/runs`) and the messages of their run sessions, an
+/// unconfigured image service (`/media/config`, `/media/status`) and no
+/// generated avatar (`/avatar`); every
 /// write is refused with 405 [demoReadOnlyMessage] (not 401/403, which the
 /// app reads as a sign-in problem).
 http.Client demoPluginClient(
@@ -287,6 +289,33 @@ Map<String, Object?>? _get(
       return {'artifacts': dated(instance.artifacts)};
     case '/reflections':
       return {'reflections': dated(instance.reflections)};
+    // No image service in the demo: the agent editor's Generate view and
+    // Settings → Image generation show their not-configured state.
+    case '/media/config':
+      return {
+        'provider': 'contentflow',
+        'endpoint': '',
+        'has_token': false,
+        'image_model': '',
+        'video_model': '',
+        'feed_fallback': false,
+        'from_env': false,
+      };
+    case '/media/status':
+      return {
+        'configured': false,
+        'reachable': false,
+        'credits': null,
+        'video_cost': null,
+        'error': null,
+      };
+    case '/avatar':
+      return {
+        'portrait_url': null,
+        'states': <String, Object?>{},
+        'job': null,
+        'updated_at': null,
+      };
   }
   const filesPrefix = '/files/';
   if (route.startsWith(filesPrefix)) {

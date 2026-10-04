@@ -719,6 +719,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
               label: 'Open profile panel',
               classes: 'hermuse-avatar-btn',
               builder: (context, press) => HermuseAgentAvatar(
+                instanceId: controller.instanceId,
                 profile: controller.profile,
                 avatarId: avatarId,
                 chat: state,
@@ -755,6 +756,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
               label: 'Open profile panel',
               classes: 'hermuse-avatar-btn hermuse-avatar-btn-sm',
               builder: (context, press) => HermuseAgentAvatar(
+                instanceId: controller.instanceId,
                 profile: controller.profile,
                 avatarId: avatarId,
                 chat: state,
@@ -793,7 +795,7 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
           profile: controller.profile,
           avatarId: avatarId,
           chat: state,
-          onEditAgent: hermuseDemo || agent == null
+          onEditAgent: agent == null
               ? null
               : () => _editAgent(instance.id, agent),
           instanceId: controller.instanceId,
@@ -834,6 +836,13 @@ class _HermuseChatRootState extends State<HermuseChatRoot>
             _agentEditorInstanceId = null;
             _editingAgent = null;
           }),
+          onOpenSettings: () {
+            setState(() {
+              _agentEditorInstanceId = null;
+              _editingAgent = null;
+            });
+            _openSettings();
+          },
         ),
     ]);
   }

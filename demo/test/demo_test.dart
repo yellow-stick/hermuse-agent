@@ -290,6 +290,29 @@ void main() {
     );
   });
 
+  test('image generation is not set up; saving it is refused', () async {
+    final config = await container.read(mediaConfigProvider(ava.id).future);
+    expect(config.configured, isFalse);
+    final status = await container.read(mediaStatusProvider(ava.id).future);
+    expect(status.configured, isFalse);
+    final avatar = await container.read(
+      agentAvatarProvider(ava.id, profile: 'default').future,
+    );
+    expect(avatar.hasPortrait, isFalse);
+    await expectLater(
+      container
+          .read(mediaConfigProvider(ava.id).notifier)
+          .save(endpoint: 'https://contentflow.example.com'),
+      throwsA(
+        isA<HermesHttpError>().having(
+          (e) => hermesReason(e),
+          'reason',
+          demoReadOnlyMessage,
+        ),
+      ),
+    );
+  });
+
   test('goals, feed and ideas carry the proactive fields', () async {
     final goals = await container.read(goalsProvider(ava.id).future);
     final sections = goalSections(goals);

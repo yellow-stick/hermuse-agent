@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import feed_images, store
+from . import feed_images, media, store
 
 TOOLSET = "hermuse"
 
@@ -78,9 +78,11 @@ def handle_feed_post(args: dict, **kwargs: Any) -> str:
         why = _nonblank(args, "why", "why", 1000)
         image_url = _image_url(args)
         # The image is copied now (the agent's named image, else the first
-        # sources' share image); none found leaves the post without one.
+        # sources' share image); none found leaves the post without one,
+        # unless the media provider illustrates it in the background.
+        root = _resolve_root()
         record = store.post_feed(
-            _resolve_root(),
+            root,
             title=title,
             body=body,
             topic=topic,
@@ -90,19 +92,26 @@ def handle_feed_post(args: dict, **kwargs: Any) -> str:
         )
     except ValueError as exc:
         return _fail(str(exc))
-    return _ok({"ok": True, "id": record["id"], "file": record["file"], "image": record["image_url"] is not None})
+    illustrating = media.illustrate_feed_post(root, record) is not None
+    return _ok({"ok": True, "id": record["id"], "file": record["file"],
+                "image": record["image_url"] is not None, "illustrating": illustrating})
 
 
 def handle_idea_propose(args: dict, **kwargs: Any) -> str:
     try:
+        title = _nonblank(args, "title", "title", 200)
+        pitch = _nonblank(args, "pitch", "pitch", 8000)
+        group = _nonblank(args, "group", "group", 80)
+        first_step = _optional(args, "first_step", 2000)
+        icon = _optional(args, "icon", 40).lower()
+        root = _resolve_root()
+        # Re-proposing a live idea returns it instead of listing it twice.
+        existing = store.find_similar_idea(root, title=title, pitch=pitch)
+        if existing is not None:
+            return _ok({"ok": True, "id": existing["id"], "duplicate": True,
+                        "existing_title": existing["title"]})
         record = store.propose_idea(
-            _resolve_root(),
-            title=_nonblank(args, "title", "title", 200),
-            pitch=_nonblank(args, "pitch", "pitch", 8000),
-            group=_nonblank(args, "group", "group", 80),
-            first_step=_optional(args, "first_step", 2000),
-            icon=_optional(args, "icon", 40).lower(),
-        )
+            root, title=title, pitch=pitch, group=group, first_step=first_step, icon=icon)
     except ValueError as exc:
         return _fail(str(exc))
     return _ok({"ok": True, "id": record["id"]})
@@ -119,6 +128,7 @@ def handle_goal_track(args: dict, **kwargs: Any) -> str:
             source=(_optional(args, "source", 10) or "agent").lower(),
             parent_id=_optional(args, "parent_id", 64) or None,
             cron_job_id=_optional(args, "cron_job_id", 64) or None,
+            status_line=_optional(args, "status_line", 300),
         )
     except ValueError as exc:
         return _fail(str(exc))
@@ -209,7 +219,9 @@ FEED_POST_SCHEMA = _schema(
 
 IDEA_PROPOSE_SCHEMA = _schema(
     "idea_propose",
-    "Propose an idea for the Hermuse Ideas surface (stored under HERMES_HOME/hermuse/ideas/).",
+    "Propose an idea for the Hermuse Ideas surface (stored under HERMES_HOME/hermuse/ideas/). "
+    "An idea matching a live one (similar title or pitch) is not added again: the result "
+    "returns the existing id with duplicate=true.",
     {
         "title": {**_STR, "description": "Idea title, first person when it reads well."},
         "pitch": {**_STR, "description": "What the agent would do, in Markdown."},
@@ -226,9 +238,11 @@ IDEA_PROPOSE_SCHEMA = _schema(
 
 GOAL_TRACK_SCHEMA = _schema(
     "goal_track",
-    "Start tracking a goal on the Hermuse Goals surface (stored under HERMES_HOME/hermuse/goals/). "
+    "Track a trip, deadline or commitment the user wants kept in mind, or a goal. "
+    "Shown on the Hermuse Goals surface (stored under HERMES_HOME/hermuse/goals/). "
     "Use source=\"agent\" for commitments you track on your own initiative (a trip, a deadline, "
-    "a scheduled briefing) and source=\"user\" when the user asked you to track the goal.",
+    "a scheduled briefing) and source=\"user\" when the user asked you to track the goal. "
+    "Give its status_line from the start; keep it current with goal_update.",
     {
         "title": {**_STR, "description": "Goal title."},
         "category": {
@@ -245,6 +259,9 @@ GOAL_TRACK_SCHEMA = _schema(
         },
         "parent_id": {**_STR, "description": "Id of the goal this one is a step of (optional)."},
         "cron_job_id": {**_STR, "description": "Id of the cron job scheduled for this goal (optional)."},
+        "status_line": {**_STR, "description": (
+            "Current state in one short line, shown under the title "
+            "(e.g. 'Vol non réservé ; départ mercredi 7 octobre').")},
     },
     ("title", "category", "why"),
 )

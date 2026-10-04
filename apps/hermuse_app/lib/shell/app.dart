@@ -34,6 +34,7 @@ import '../sidebar/side_chats.dart';
 import '../thread/thread_view.dart';
 import 'app_update.dart';
 import 'app_update_dialog.dart';
+import 'agent_avatar.dart';
 import 'agents.dart';
 import 'chat_scope.dart';
 import 'instances.dart';
@@ -838,6 +839,17 @@ final class _ShellState extends ConsumerState<_Shell> {
   bool? _panelOpenOverride;
   bool _drawerOpen = false;
   bool _settingsOpen = false;
+  SettingsSection? _settingsSection;
+
+  /// The open agent's generated portrait, when it has one.
+  late final _customAvatar = CustomAvatarImage(() {
+    if (mounted) setState(() {});
+  });
+
+  void _openSettings([SettingsSection? section]) => setState(() {
+    _settingsOpen = true;
+    _settingsSection = section;
+  });
 
   /// Keeps the thread (scroll, composer draft) across layout changes, e.g.
   /// docking it beside a route.
@@ -1002,6 +1014,7 @@ final class _ShellState extends ConsumerState<_Shell> {
   @override
   void dispose() {
     widget.controller.removeListener(_onChatChanged);
+    _customAvatar.dispose();
     super.dispose();
   }
 
@@ -1035,7 +1048,10 @@ final class _ShellState extends ConsumerState<_Shell> {
               excluding: _settingsOpen,
               child: Offstage(
                 offstage: _settingsOpen,
-                child: _buildShell(context, palette, width, shell),
+                child: SettingsLauncher(
+                  open: _openSettings,
+                  child: _buildShell(context, palette, width, shell),
+                ),
               ),
             ),
             if (_settingsOpen)
@@ -1043,6 +1059,7 @@ final class _ShellState extends ConsumerState<_Shell> {
                 instanceId: widget.controller.instanceId,
                 profile: widget.controller.profile,
                 agentName: widget.controller.state.agentName,
+                section: _settingsSection,
                 onClose: () => setState(() => _settingsOpen = false),
               ),
           ],
@@ -1064,12 +1081,15 @@ final class _ShellState extends ConsumerState<_Shell> {
         : ref.watch(
             agentProfileProvider(widget.controller.instanceId, profile),
           );
-    final avatar = agentImage(
-      context,
-      profile: profile,
-      agent: agent,
-      chat: state,
-    );
+    final avatar = agent != null && agent.isCustom
+        ? _customAvatar.resolve(
+            ref,
+            instanceId: widget.controller.instanceId,
+            profile: profile,
+            chat: state,
+            animate: !MediaQuery.disableAnimationsOf(context),
+          )
+        : agentImage(context, profile: profile, agent: agent, chat: state);
     final switcher = widget.thread == null
         ? null
         : AgentSwitcher(
@@ -1146,7 +1166,7 @@ final class _ShellState extends ConsumerState<_Shell> {
     final rail = HermuseRail(
       destination: _destination,
       onDestination: _goTo,
-      onSettings: () => setState(() => _settingsOpen = true),
+      onSettings: _openSettings,
       onInstances: widget.onManageInstances,
     );
     // The agent's computer replaces everything right of the rail.
@@ -1175,7 +1195,7 @@ final class _ShellState extends ConsumerState<_Shell> {
           destination: _destination,
           onDestination: _goTo,
           settingsMenu: SettingsMenu(
-            onSettings: () => setState(() => _settingsOpen = true),
+            onSettings: _openSettings,
             onInstances: widget.onManageInstances,
             builder: (context, menu) => YsButton.icon(
               icon: YsIcon.more,

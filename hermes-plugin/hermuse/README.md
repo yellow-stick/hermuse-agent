@@ -3,9 +3,10 @@
 Product layer on top of Hermes Agent: **Feed, Ideas, Goals, Activity tasks,
 Library** (artifacts + system files), **Reflections**, **proactive
 preferences** and the **heartbeat**, plus the agent's **computer** (a Docker
-browser + desktop the user can watch and take over from Hermuse). Data lives
-as human-readable Markdown + JSON under `HERMES_HOME/hermuse/` so the user can
-read and edit it with any tool.
+browser + desktop the user can watch and take over from Hermuse) and
+**generated avatars** (portrait + state animations through a media provider
+the user runs). Data lives as human-readable Markdown + JSON under
+`HERMES_HOME/hermuse/` so the user can read and edit it with any tool.
 
 Requires Hermes `>=0.21.5,<0.22` (see `requires_hermes` in `plugin.yaml`).
 
@@ -32,10 +33,15 @@ hermes-plugin/hermuse/
 │                          #   incl. the starter Ideas catalog and memory-file access
 ├── task_recorder.py       # Activity: pre/post_llm_call + on_session_end hooks, one task
 │                          #   per turn, summaries by the `hermuse_task_summary` aux task
+├── turn_clock.py          # pre_llm_call: the local date, time and timezone on every turn
 ├── subscription_bridge.py # pinned CLIProxyAPI next to Hermes (see "Subscription bridge")
 ├── dashboard_restart.py   # in-place restart of the dashboard (see "Restarting the dashboard")
 ├── feed_images.py         # feed card image: the source's share image (og:image) or the named
 │                          #   image, fetched with SSRF guards and stored beside the post
+├── media.py               # media provider (ContentFlow) client + server-wide config, status,
+│                          #   Feed illustration fallback (see "Generated avatars and images")
+├── avatar.py              # generated avatars: portrait candidates, selection, state animations
+│                          #   (background jobs, ffmpeg export)
 ├── agent_tools.py         # feed_post / idea_propose / goal_track / goal_update /
 │                          #   artifact_save / reflection_write (toolset "hermuse")
 ├── cron_specs.py          # feed/ideas/goals/reflection/heartbeat specs + idempotent registration
@@ -141,8 +147,8 @@ left untouched).
 | Tool | Params |
 | --- | --- |
 | `feed_post` | `title`, `body` (Markdown), `why` ("Why I created this"), `topic?`, `sources?[]` (main page first: its share image becomes the card image), `image_url?` (http(s), a direct image that wins over the source's) |
-| `idea_propose` | `title`, `pitch` (Markdown), `group`, `first_step?`, `icon?` (`workout`\|`shopping`\|`people`\|`city`\|`documents`\|`returns`\|`inbox`\|`money`\|`health`\|`travel`) |
-| `goal_track` | `title`, `category` (`health`\|`relationships`\|`finance`\|`career`\|`interests`\|`productivity`\|`something_else`), `why`, `target_date?`, `source?` (`agent` default \| `user`), `parent_id?`, `cron_job_id?` |
+| `idea_propose` | `title`, `pitch` (Markdown), `group`, `first_step?`, `icon?` (`workout`\|`shopping`\|`people`\|`city`\|`documents`\|`returns`\|`inbox`\|`money`\|`health`\|`travel`); an idea matching a live (not dismissed) one — title or pitch terms overlapping ≥ 60 % after accent/case folding and stemming — is not stored again: the result is `{"ok": true, "id": <existing>, "duplicate": true, "existing_title"}` |
+| `goal_track` | `title`, `category` (`health`\|`relationships`\|`finance`\|`career`\|`interests`\|`productivity`\|`something_else`), `why`, `target_date?`, `source?` (`agent` default \| `user`), `parent_id?`, `cron_job_id?`, `status_line?` (current state under the title, from creation) |
 | `goal_update` | `goal_id`, `note?`, `progress?`, `status_line?` (at least one of `note` / `status_line`) |
 | `artifact_save` | `title`, `kind` (`document`\|`web`\|`image`\|`video`\|`podcast`\|`other`), exactly one of `content`/`path`, `filename?`, `tags?[]` |
 | `reflection_write` | `date` (`YYYY-MM-DD`), `body` (Markdown) |
@@ -156,18 +162,38 @@ publish worthwhile, grounded chat results with `feed_post` according to the
 profile's preferences; create requested reminders and recurring work through
 Hermes' built-in `cronjob_manage`; confirm success only after the tool succeeds.
 Jobs intended to publish to Feed must explicitly call `feed_post`, rather than
-only returning a chat response. `hermuse_behaviour` (proactive agent): the
-user's main chat is the `Bot Chat` session; every reminder or later/recurring
-action, even a minute away, is a `cronjob_manage` `action="create"` job with
-`deliver="bot-chat"` (one-shot `in 2m` / ISO time, recurring `every day 8am` /
-cron) whose final response is the message to the user, never a wait or
-`sleep` inside the turn, confirmed with its fire time; the agent never asks
-which platform or channel to deliver to; scheduled briefs saying `Ask the
-user` are asked through `clarify` and not acted on; multi-day commitments and things to keep in
-mind are tracked with `goal_track source="agent"` (linked to the job through
-`cron_job_id`) and their `status_line` kept current; choices are offered with
-`clarify`; feed posts carry `why`. Loading the plugin itself creates neither
-posts nor schedules and never bypasses approval requirements.
+only returning a chat response. `hermuse_behaviour` (proactive agent, under
+2200 characters): the user's main chat is the `Bot Chat` session; every
+reminder or later/recurring action, even a minute away, is a `cronjob_manage`
+`action="create"` job with `deliver="bot-chat"` (one-shot `in 2m` / local ISO
+time, recurring `every day 8am` / 5-field cron, never 6 fields), after listing
+jobs so a matching one is updated instead of duplicated, never a wait or
+`sleep` inside the turn; "tomorrow morning" is 09:00 local, nothing is
+scheduled between 23:00 and 07:00 unless asked, and the confirmation gives the
+weekday, date and local time; unclear timing is offered as `clarify` choices;
+a job's final response is the deliverable itself, never narration of its
+steps; the agent never asks which platform or channel to deliver to; "keep
+this in mind" writes a `memory` entry (fact, preference or commitment) and a
+multi-day commitment is tracked with `goal_track source="agent"` with a
+`status_line` (linked to its job through `cron_job_id`) kept current with
+`goal_update`; a deferred tool is described (`tool_describe`) before its first
+`tool_call`, which gets one entry per local tool (Hermes defers plugin tools
+behind its `tool_search` bridge and has no per-plugin way to load them
+directly); ideas suggested in chat are saved with `idea_propose` and offered
+as `clarify` choices; feed posts carry `why` and sources, main page first;
+the Bot Chat turn relaying a scheduled run (`[Cronjob "<name>" output — …`)
+IS that content for the user (language, tone, formatting and links kept, no
+"received"/summary of the job), `NO_REPLY` when nothing is for the user, and
+briefs saying `Ask the user` are asked through `clarify` and not acted on.
+Loading the plugin itself creates neither posts nor schedules and never
+bypasses approval requirements.
+
+Hermes freezes a session's system prompt (the sections above included) at
+creation and keeps only the date there — the Bot Chat prompt only the
+timezone. `turn_clock.py` therefore adds a `pre_llm_call` context line to
+every turn: `Local time now: Sunday 4 October 2026, 00:47 (Europe/Berlin,
+UTC+02:00; ISO 2026-10-04T00:47). Tomorrow is Monday 5 October 2026.` (Hermes'
+configured `timezone`, else the server's), persisted with that user message.
 
 ## Activity tasks
 
@@ -196,7 +222,7 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | Method | Path | Body → Result |
 | --- | --- | --- |
 | `GET` | `/feed?limit=` | → `{"posts": […]}` (newest first) |
-| `POST` | `/feed` | `{title, body, topic?, sources?[], why?, image_url?}` → post (`201`); the image is copied as for `feed_post` |
+| `POST` | `/feed` | `{title, body, topic?, sources?[], why?, image_url?}` → post (`201`); the image is copied as for `feed_post`, or generated afterwards (see "Generated avatars and images") |
 | `GET` | `/feed/{id}/image` | → the post's stored image (`image/jpeg\|png\|gif\|webp`) / `404` |
 | `POST` | `/feed/generate` | marks the feed job due now (`cron.jobs.trigger_job`; the scheduler fires it on its next tick) → `{"job_id", "started": true}`; `409` feed job not registered |
 | `GET` | `/feed/{id}` | → post / `404` |
@@ -244,6 +270,18 @@ that gate does not cover) takes a single-use ticket from `POST /computer/ticket`
 | `GET` | `/bridge/models` | → `{object: "list", data: [{id, object, owned_by}]}` (models of usable accounts); `409` not set up |
 | `GET` | `/dashboard` | → `{"boot": …}`: this start of the dashboard process (another value once it restarted) |
 | `POST` | `/dashboard/restart` | restart the dashboard in place once the answer is out → `202 {"boot": …}`; `409` a restart is already on its way; `501` this process cannot restart in place (Windows, a backend a desktop app spawned, anything but `hermes dashboard`/`serve`) |
+| `GET` | `/media/config` | → `{provider: "contentflow", endpoint, has_token, image_model, video_model, feed_fallback, from_env}` (server-wide, whatever `profile`; the token is never returned) |
+| `PUT` | `/media/config` | `{endpoint, token?, image_model?, video_model?, feed_fallback?}` → config; `endpoint` "" disables, `token` omitted keeps it, "" clears it; not an `http(s)` URL → `422` |
+| `GET` | `/media/status` | → `{configured, reachable, credits, video_cost, error}` (`video_cost`: credits per animation clip with the video model; `error`: the provider's message, or ffmpeg missing) |
+| `GET` | `/avatar` | → `{portrait_url, states: {<state>: url}, job, updated_at}` (`job`: the latest job) |
+| `POST` | `/avatar/portrait` | `{description (1..1000), count? 1..4 (4)}` → `202` job (`portrait`); `409` a job runs / provider not configured |
+| `POST` | `/avatar/select` | `{candidate}` (index into the latest finished portrait job) → avatar; old animations are removed; `404` no such candidate, `409` a job runs |
+| `POST` | `/avatar/animate` | `{states?: [idle\|thinking\|replying\|working]}` (default all four) → `202` job (`animate`); `409` a job runs / provider not configured / no ffmpeg, `422` no portrait |
+| `GET` | `/avatar/jobs/{id}` | → `{id, kind, status: running\|done\|failed, candidates: [url], states: {<state>: queued\|running\|done\|failed}, error, started_at, finished_at}` / `404` |
+| `DELETE` | `/avatar` | → `{"ok": true}` (back to a bundled portrait); `409` a job runs |
+| `GET` | `/avatar/portrait` | → square JPEG (512 px) / `404` |
+| `GET` | `/avatar/candidates/{job}/{n}` | → candidate JPEG (16:9) / `404` |
+| `GET` | `/avatar/states/{state}` | → looping animated WebP (256 px, 20 fps, silent) / `404` |
 
 Shapes:
 
@@ -273,6 +311,10 @@ hermuse/
 ├── reflections/<date>.md  +  index.json
 ├── computer/                 # runtime.json, control.json, build.json + build.log,
 │                             #   snapshots/<tool_call_id>.jpg (newest 200)
+├── avatar/                   # avatar.json, jobs.json (newest 10), candidates/<job>/<n>.jpg,
+│                             #   portrait.jpg (16:9) + portrait-square.jpg, clips/<state>.mp4
+│                             #   (as downloaded), states/<state>.webp
+├── media.json                # default profile only: the media provider (0600)
 └── bridge/                   # subscription bridge (0700): bin/cliproxy-<version>,
                               #   keys.json + config.yaml (0600), auth/ (account files),
                               #   cliproxy.json + cliproxy.log, bridge.lock
@@ -289,11 +331,11 @@ Five specs in `cron_specs.py`, authored through the real `cron.jobs` API
 
 | Key | Schedule | Deliver | What |
 | --- | --- | --- | --- |
-| `feed` | `0 8 * * *` | `local` | daily feed edition from `FEED_PROMPT.md` + web/news |
+| `feed` | `0 8 * * *` | `local` | daily feed edition from `FEED_PROMPT.md` + web/news; every post has `why` and sources with the main article first (its share image becomes the card image) |
 | `ideas` | `0 9 * * 1` | `local` | weekly ideas refresh |
 | `goals` | `0 9 * * 0` | `local` | weekly goal check-ins + `HEARTBEAT.md` watches |
 | `reflection` | `0 2 * * *` | `local` | nightly reflection journal + memory pass |
-| `heartbeat` | `*/30 * * * *` | `bot-chat` | reviews memory, user profile, goals, the checklist and upcoming jobs without acting; when something needs the user it hands the main chat a brief (`Ask the user: …` / `Offer these choices with clarify: A \| B \| C` / `Do not act before the user answers.`), which the main-chat agent asks through `clarify` and then waits; otherwise answers `NO_REPLY` |
+| `heartbeat` | `*/30 * * * *` | `bot-chat` | reviews memory, user profile, goals, the checklist and upcoming jobs without acting, keeping each open goal's `status_line` current with `goal_update`; when something needs the user it hands the main chat a brief (`Ask the user: …` / `Offer these choices with clarify: A \| B \| C` / `Do not act before the user answers.`), which the main-chat agent asks through `clarify` and then waits; otherwise answers `NO_REPLY` |
 
 Jobs run the `hermuse:hermuse` skill and are tagged
 `origin: {source: hermuse, key}` so registration is idempotent. The four
@@ -451,11 +493,14 @@ time, refused where it cannot run in place), real-backend cron
 registration idempotence (heartbeat delivering `bot-chat`, maintenance jobs
 `hidden`), entry-point wiring (tools + skill + system-prompt sections + CLI +
 browser provider + hooks + auxiliary task) and the live mount of the routes
-into a running dashboard, Activity tasks (one per turn, tools of the turn,
+into a running dashboard, the behaviour rules (schedule forms Hermes' parser
+accepts, time, memory, relay), the per-turn local clock, Activity tasks (one
+per turn, tools of the turn,
 cron/heartbeat/chat sources, silent heartbeats skipped, model summary with
 heuristic fallback, interrupted/failed turns), memory files under Hermes'
-lock, goal patch/cascading delete and legacy records, feed `why`/delete/
-generate, the Ideas catalog merge and dismissals,
+lock, goal patch/cascading delete, status line at creation and legacy
+records, feed `why`/delete/generate, the Ideas catalog merge, dismissals and
+duplicate proposals,
 and the computer: Take control lease, `pre_tool_call` gate and readiness
 guard, snapshots, Docker states against a scripted `docker` (incl. the
 `sg docker` wrapper), the bootstrap (Docker install through `sudo`, pull,
@@ -466,7 +511,13 @@ fake `screend`; the subscription bridge: pins equal to the desktop lock, a
 release off its checksums never installed, private files, the detached
 process (reused, restarted on its persisted port at plugin load, moved off a
 taken port, never confused with a recycled pid) and the account/model routes
-with name validation, all against a fake CLIProxyAPI executable (no network).
+with name validation, all against a fake CLIProxyAPI executable (no network);
+the media provider and avatars against a fake ContentFlow on loopback: config
+(token write-only, env override, server-wide), status and clip cost, portrait
+candidates and the square crop, animations exported by the real ffmpeg (a
+failed clip neither stops the others nor is retried, an unknown portrait
+media id uploaded again), one job at a time, interrupted jobs, and the Feed
+illustration attached in the background (nothing when disabled or failing).
 
 ## Feed images
 
@@ -475,10 +526,53 @@ for a card image: the `image_url` the agent named, else the share image
 (`og:image`, `twitter:image`, `<link rel="image_src">`) of the first two
 source pages. The bytes are copied to `feed/images/<id>.<ext>` and served by
 `GET /feed/{id}/image`, so they keep working behind the relay and after the
-original link expires; they are deleted with the post. Nothing is generated.
+original link expires; they are deleted with the post. When none is found,
+see the illustration fallback below.
 
 The URLs come from the model, so fetching is guarded: `http(s)` only; every
 hop, redirects included, must resolve to public addresses only and is
 connected to the checked address; 5 s per request and 10 s in total; pages up
 to 512 KiB and images up to 2 MiB; JPEG, PNG, GIF or WebP recognised by their
 bytes (no SVG). When anything fails the post is published without an image.
+
+## Generated avatars and images
+
+Generation goes through an image/video service the user runs; the first
+provider is ContentFlow (`GET`/`POST /image` and `/video`, Google Flow driven
+in a signed-in browser). It is
+set once per server: `PUT /media/config` writes `hermuse/media.json` (0600)
+in the default profile's home, whatever profile the request is scoped to;
+`HERMUSE_MEDIA_ENDPOINT` / `HERMUSE_MEDIA_TOKEN` in the dashboard's
+environment override it (`from_env`). Requests carry
+`Authorization: Bearer <token>` when set and never an `Origin` header; they
+are sent one at a time. **Nothing is ever resubmitted after an error** (the
+credits may already be spent): the provider's message is kept as the job's
+`error`.
+
+- **Portrait** (`POST /avatar/portrait`): one image request with `count`
+  candidates, 16:9, the description plus fixed framing (one character, head
+  and shoulders centred with headroom and margins, facing the camera, plain
+  light background, no text). 16:9 because the video model keeps the first
+  frame's framing: the apps show the centre square.
+- **Select**: keeps the 16:9 original and its provider media id, writes the
+  512 px centre square, and removes the previous animations.
+- **Animate**: one clip per state, `Omni 1.1 Flash`, 16:9, 4 s, first frame
+  = the portrait (uploaded again when the provider no longer knows its media
+  id), locked-off camera, starting and ending in the neutral pose (`idle`
+  breathes and blinks with the mouth closed). Each clip is polled every 5 s,
+  downloaded, then exported by ffmpeg: the same centre square for every
+  state, 256 px, 20 fps, the last 0.4 s crossfaded into the first for a
+  seamless loop, animated WebP (libwebp), no audio. A failed clip marks its
+  state `failed` and the job goes on; the job is `failed` only when no state
+  succeeded. ffmpeg (installed on servers Hermuse sets up) is required:
+  without it `/media/status` says so and `/avatar/animate` answers `409`.
+- Jobs run one at a time per profile on a background thread of the
+  dashboard; a job left `running` by a dashboard that restarted reads as
+  `failed`, `interrupted`.
+
+**Feed illustration fallback.** When a post (`feed_post` or `POST /feed`)
+gets no image, the provider is configured and `feed_fallback` is on, the post
+is stored at once and a background thread generates one 16:9 wordless
+editorial illustration from its title and `why` (no text, logos or real
+likeness), then stores it as the post's image. On failure the post stays as
+it is. The tool result says `illustrating: true` when one is on its way.

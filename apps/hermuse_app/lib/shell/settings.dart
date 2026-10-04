@@ -1,8 +1,30 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
+
+import 'agent_avatar.dart' show avatarErrorText;
+
+/// A part of Settings another surface can open directly.
+enum SettingsSection { imageGeneration }
+
+/// Opens Settings from anywhere under the shell (e.g. the agent editor's
+/// "Open Settings" when no image service is set up).
+final class SettingsLauncher extends InheritedWidget {
+  const SettingsLauncher({required this.open, required super.child, super.key});
+
+  final void Function([SettingsSection? section]) open;
+
+  static void Function([SettingsSection? section])? maybeOf(
+    BuildContext context,
+  ) => context.dependOnInheritedWidgetOfExactType<SettingsLauncher>()?.open;
+
+  @override
+  bool updateShouldNotify(SettingsLauncher oldWidget) => open != oldWidget.open;
+}
 
 /// The same preferences menu on the rail and compact navigation.
 final class SettingsMenu extends StatelessWidget {
@@ -29,14 +51,15 @@ final class SettingsMenu extends StatelessWidget {
   );
 }
 
-/// Device appearance, the open agent's permissions, connectors and the
-/// upcoming Yellow Stick account.
+/// Device appearance, the open agent's permissions, connectors, the
+/// server's image generation and the upcoming Yellow Stick account.
 final class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({
     required this.onClose,
     this.instanceId = '',
     this.profile = 'default',
     this.agentName = '',
+    this.section,
     super.key,
   });
 
@@ -48,6 +71,9 @@ final class SettingsScreen extends ConsumerStatefulWidget {
   final String profile;
   final String agentName;
 
+  /// Scrolled into view on open.
+  final SettingsSection? section;
+
   @override
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
@@ -55,6 +81,20 @@ final class SettingsScreen extends ConsumerStatefulWidget {
 final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _saving = false;
   String? _saveError;
+  final _imageGeneration = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.section == SettingsSection.imageGeneration) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final target = _imageGeneration.currentContext;
+        if (target != null && target.mounted) {
+          unawaited(Scrollable.ensureVisible(target));
+        }
+      });
+    }
+  }
 
   Future<void> _select(YsThemeMode mode) async {
     if (_saving) return;
@@ -229,6 +269,13 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ],
                         const SizedBox(height: YsSpace.lg),
                         const _ConnectorsSection(),
+                        if (widget.instanceId.isNotEmpty) ...[
+                          const SizedBox(height: YsSpace.lg),
+                          _ImageGenerationSection(
+                            key: _imageGeneration,
+                            instanceId: widget.instanceId,
+                          ),
+                        ],
                         const SizedBox(height: YsSpace.lg),
                         _SectionCard(
                           child: Column(
@@ -450,19 +497,24 @@ final class _PermissionsSectionState
   }
 }
 
-/// One choice of a radio group: ring, label and a line of help.
+/// One choice of a radio group (or, with [checkbox], an on/off option):
+/// ring, label and a line of help.
 final class _RadioRow extends StatelessWidget {
   const _RadioRow({
     required this.label,
     required this.help,
     required this.selected,
     required this.onPressed,
+    this.checkbox = false,
   });
 
   final String label;
   final String help;
   final bool selected;
   final VoidCallback? onPressed;
+
+  /// Toggles on its own: a filled ring with a tick when on.
+  final bool checkbox;
 
   @override
   Widget build(BuildContext context) {
@@ -471,7 +523,7 @@ final class _RadioRow extends StatelessWidget {
       onPressed: onPressed,
       // Inside the pressable: the radio state joins the button's own node.
       builder: (context, state) => Semantics(
-        inMutuallyExclusiveGroup: true,
+        inMutuallyExclusiveGroup: !checkbox,
         checked: selected,
         child: YsFocusRing(
           visible: state.focused,
@@ -496,6 +548,9 @@ final class _RadioRow extends StatelessWidget {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
+                        color: checkbox && selected
+                            ? palette.primaryInkColor
+                            : null,
                         border: Border.all(
                           color: selected
                               ? palette.primaryInkColor
@@ -503,16 +558,22 @@ final class _RadioRow extends StatelessWidget {
                           width: ysHairline,
                         ),
                       ),
-                      child: selected
-                          ? Container(
+                      child: !selected
+                          ? null
+                          : checkbox
+                          ? YsIconWidget(
+                              YsIcon.check,
+                              size: YsLayout.inlineIcon - YsSpace.xs,
+                              color: palette.canvasColor,
+                            )
+                          : Container(
                               width: YsLayout.statusDot,
                               height: YsLayout.statusDot,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 color: palette.primaryInkColor,
                               ),
-                            )
-                          : null,
+                            ),
                     ),
                   ),
                   const SizedBox(width: YsSpace.md),
@@ -565,6 +626,302 @@ final class _ConnectorsSection extends StatelessWidget {
               color: palette.contentMutedColor,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Settings → Image generation: the server's ContentFlow service that
+/// draws agent portraits, their animations and Feed illustrations.
+final class _ImageGenerationSection extends ConsumerStatefulWidget {
+  const _ImageGenerationSection({required this.instanceId, super.key});
+
+  final String instanceId;
+
+  @override
+  ConsumerState<_ImageGenerationSection> createState() =>
+      _ImageGenerationSectionState();
+}
+
+final class _ImageGenerationSectionState
+    extends ConsumerState<_ImageGenerationSection> {
+  final _endpoint = TextEditingController();
+  final _token = TextEditingController();
+  final _imageModel = TextEditingController();
+  final _videoModel = TextEditingController();
+  bool? _feedFallback;
+
+  /// The fields hold the loaded config (filled once).
+  bool _filled = false;
+  String? _busy;
+  String? _message;
+  String? _error;
+  bool _tested = false;
+
+  /// Keeps the status alive once tested (Save refreshes it).
+  ProviderSubscription<AsyncValue<MediaStatus>>? _status;
+
+  @override
+  void dispose() {
+    _status?.close();
+    _endpoint.dispose();
+    _token.dispose();
+    _imageModel.dispose();
+    _videoModel.dispose();
+    super.dispose();
+  }
+
+  void _fill(MediaConfig config) {
+    _filled = true;
+    _endpoint.text = config.endpoint;
+    _imageModel.text = config.imageModel;
+    _videoModel.text = config.videoModel;
+    _feedFallback = config.feedFallback;
+  }
+
+  Future<void> _run(String action, Future<String?> Function() body) async {
+    setState(() {
+      _busy = action;
+      _message = null;
+      _error = null;
+    });
+    try {
+      final message = await body();
+      if (mounted) setState(() => _message = message);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = avatarErrorText(error));
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<void> _save({bool clearToken = false}) => _run('save', () async {
+    final token = _token.text.trim();
+    await ref
+        .read(mediaConfigProvider(widget.instanceId).notifier)
+        .save(
+          endpoint: _endpoint.text,
+          token: clearToken ? '' : (token.isEmpty ? null : token),
+          imageModel: _imageModel.text.trim(),
+          videoModel: _videoModel.text.trim(),
+          feedFallback: _feedFallback,
+        );
+    _token.clear();
+    _tested = false;
+    return 'Saved.';
+  });
+
+  Future<void> _test() => _run('test', () async {
+    final provider = mediaStatusProvider(widget.instanceId);
+    if (_status == null) {
+      // The first probe is the provider's own load.
+      _status = ref.listenManual(provider, (_, _) {});
+      await ref.read(provider.future);
+    } else {
+      await ref.read(provider.notifier).refresh();
+    }
+    _tested = true;
+    return null;
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final muted = YsType.body.flutter.copyWith(
+      color: palette.contentMutedColor,
+    );
+    final errorStyle = YsType.body.flutter.copyWith(color: palette.errorColor);
+    final provider = mediaConfigProvider(widget.instanceId);
+    final setting = ref.watch(provider);
+    final config = setting.value;
+    if (config != null && !_filled) _fill(config);
+    final status = _tested
+        ? ref.watch(mediaStatusProvider(widget.instanceId)).value
+        : null;
+    final locked = config?.fromEnv ?? false;
+    final busy = _busy != null;
+    return _SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Image generation', style: YsType.title.flutter),
+          const SizedBox(height: YsSpace.sm),
+          Text(
+            'Uses a ContentFlow service you run to draw portraits, '
+            'animations and Feed illustrations.',
+            style: muted,
+          ),
+          const SizedBox(height: YsSpace.lg),
+          if (config == null && setting.hasError) ...[
+            Text(
+              'Image generation could not be loaded: '
+              '${avatarErrorText(setting.error!)}',
+              style: errorStyle,
+            ),
+            const SizedBox(height: YsSpace.sm),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: YsButton.neutral(
+                label: 'Try again',
+                onPressed: () => ref.invalidate(provider),
+              ),
+            ),
+          ] else if (config == null)
+            Text('Loading image generation…', style: YsType.caption.flutter)
+          else ...[
+            if (locked) ...[
+              Text(
+                "Set by the server's environment (HERMUSE_MEDIA_ENDPOINT); "
+                'edit it there.',
+                style: muted,
+              ),
+              const SizedBox(height: YsSpace.md),
+            ] else if (!config.configured) ...[
+              Text(
+                'Not set up: nothing is generated until you enter an '
+                'endpoint.',
+                style: muted,
+              ),
+              const SizedBox(height: YsSpace.md),
+            ],
+            ExcludeFocus(
+              excluding: locked || busy,
+              child: AbsorbPointer(
+                absorbing: locked || busy,
+                child: Opacity(
+                  opacity: locked ? 0.6 : 1,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      YsField(
+                        label: 'Endpoint',
+                        child: YsInputBox(
+                          controller: _endpoint,
+                          semanticLabel: 'Endpoint',
+                          placeholder: 'https://contentflow.example.com',
+                          url: true,
+                        ),
+                      ),
+                      const SizedBox(height: YsSpace.md),
+                      YsField(
+                        label: 'Token',
+                        child: YsInputBox(
+                          controller: _token,
+                          semanticLabel: 'Token',
+                          placeholder: config.hasToken
+                              ? 'Leave empty to keep'
+                              : 'Leave empty if the service has none',
+                          obscure: true,
+                        ),
+                      ),
+                      if (config.hasToken) ...[
+                        const SizedBox(height: YsSpace.xs),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Token saved',
+                                style: YsType.caption.flutter.copyWith(
+                                  color: palette.contentMutedColor,
+                                ),
+                              ),
+                            ),
+                            YsButton.neutral(
+                              label: 'Remove token',
+                              onPressed: () =>
+                                  unawaited(_save(clearToken: true)),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: YsSpace.md),
+                      YsDisclosure(
+                        label: 'Advanced',
+                        openLabel: 'Hide advanced',
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: YsSpace.sm),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              YsField(
+                                label: 'Image model',
+                                child: YsInputBox(
+                                  controller: _imageModel,
+                                  semanticLabel: 'Image model',
+                                  placeholder: 'Service default',
+                                ),
+                              ),
+                              const SizedBox(height: YsSpace.md),
+                              YsField(
+                                label: 'Video model',
+                                child: YsInputBox(
+                                  controller: _videoModel,
+                                  semanticLabel: 'Video model',
+                                  placeholder: 'Service default',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: YsSpace.sm),
+                      _RadioRow(
+                        label: 'Illustrate Feed posts that have no image',
+                        help:
+                            'A post whose source has no picture gets a '
+                            'generated illustration.',
+                        selected: _feedFallback ?? config.feedFallback,
+                        checkbox: true,
+                        onPressed: () => setState(
+                          () => _feedFallback =
+                              !(_feedFallback ?? config.feedFallback),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: YsSpace.md),
+            Wrap(
+              spacing: YsSpace.sm,
+              runSpacing: YsSpace.sm,
+              children: [
+                YsButton.primary(
+                  label: _busy == 'save' ? 'Saving…' : 'Save',
+                  onPressed: busy || locked ? null : () => unawaited(_save()),
+                ),
+                YsButton.neutral(
+                  label: _busy == 'test' ? 'Testing…' : 'Test',
+                  onPressed: busy || !config.configured
+                      ? null
+                      : () => unawaited(_test()),
+                ),
+              ],
+            ),
+            if (_error case final error?) ...[
+              const SizedBox(height: YsSpace.sm),
+              Text(error, style: errorStyle),
+            ] else if (_message case final message?) ...[
+              const SizedBox(height: YsSpace.sm),
+              Text(message, style: muted),
+            ] else if (status != null && _busy == null) ...[
+              const SizedBox(height: YsSpace.sm),
+              Text(
+                status.reachable
+                    ? switch (status.credits) {
+                        final credits? =>
+                          'Reachable · $credits credit${credits == 1 ? '' : 's'}',
+                        null => 'Reachable',
+                      }
+                    : 'Not reachable: ${status.error ?? 'no answer'}',
+                style: status.reachable
+                    ? YsType.body.flutter.copyWith(color: palette.successColor)
+                    : errorStyle,
+              ),
+            ],
+          ],
         ],
       ),
     );

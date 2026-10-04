@@ -2,6 +2,10 @@ import 'controller.dart';
 import 'models.dart';
 
 /// Bundled portraits; choosing one does not create a server profile.
+///
+/// [custom] stands for a portrait the Hermuse plugin generated for one
+/// profile: it is not in [available] and its images are loaded from the
+/// plugin (`/avatar/portrait`, `/avatar/states/<state>`), not bundled.
 final class AgentAvatar {
   const AgentAvatar({
     required this.id,
@@ -10,12 +14,31 @@ final class AgentAvatar {
     required this.defaultPrompt,
   });
 
+  /// `ui_meta.hermuse.avatar_id` of a generated portrait.
+  static const customId = 'custom';
+
+  /// The generated portrait served by the plugin for the agent's profile.
+  static const custom = AgentAvatar(
+    id: customId,
+    name: 'Generated',
+    description: 'Portrait generated from a description',
+    defaultPrompt:
+        'You are a thoughtful personal assistant. Help the user turn '
+        'questions and intentions into useful answers and actions.',
+  );
+
   final String id;
   final String name;
   final String description;
   final String defaultPrompt;
 
-  String get assetPath => 'agents/$id.webp';
+  /// Whether this is the generated portrait ([custom]).
+  bool get isCustom => id == customId;
+
+  /// The bundled image. [custom] has none: it names the original portrait
+  /// as the stand-in for when the generated one cannot be shown.
+  String get assetPath =>
+      isCustom ? available.first.assetPath : 'agents/$id.webp';
 
   static const available = <AgentAvatar>[
     AgentAvatar(
@@ -100,7 +123,10 @@ final class AgentAvatar {
     ),
   ];
 
+  /// The avatar named [id]: [custom] for [customId], else a bundled one;
+  /// the original portrait for an unknown or missing id.
   static AgentAvatar byId(String? id) {
+    if (id == customId) return custom;
     for (final avatar in available) {
       if (avatar.id == id) return avatar;
     }
@@ -122,6 +148,44 @@ String agentAvatarAsset(
   }
   final motion = _motion(chat, paused: paused);
   return motion == null ? avatar.assetPath : 'agents/hermuse/$motion.webp';
+}
+
+/// Animation states a generated avatar can have, in generation order
+/// (`POST /avatar/animate` defaults to all of them).
+const customAvatarStates = ['idle', 'thinking', 'replying', 'working'];
+
+/// Motions without a generated clip of their own, shown with another one.
+const _customFallback = {
+  'searching': 'working',
+  'reading': 'working',
+  'coding': 'working',
+  'browsing': 'working',
+  'magic-action': 'working',
+  'awaiting-user': 'idle',
+  'connecting': 'idle',
+  'paused': 'idle',
+};
+
+/// The state clip a generated ([AgentAvatar.custom]) avatar shows for
+/// [chat], among the [states] the agent has a clip for; null means the
+/// static portrait.
+///
+/// Same motion as [agentAvatarAsset]: tool motions fall back to `working`,
+/// waiting motions to `idle`, and a motion without a clip (or an error,
+/// reduced motion via `animate: false`) to the portrait.
+String? customAvatarState(
+  Iterable<String> states, {
+  ChatState? chat,
+  bool animate = false,
+  bool paused = false,
+}) {
+  if (!animate || chat == null) return null;
+  final motion = _motion(chat, paused: paused);
+  if (motion == null) return null;
+  final available = states.toSet();
+  if (available.contains(motion)) return motion;
+  final fallback = _customFallback[motion];
+  return fallback != null && available.contains(fallback) ? fallback : null;
 }
 
 String? _motion(ChatState chat, {required bool paused}) {
