@@ -25,11 +25,14 @@ List<Override> localHostOverrides(LocalHermesHost host) => [
     (ref) => (instance) async {
       var target = instance;
       if (instance.id == localInstanceId) {
-        target =
+        final booted =
             await host.boot(await ref.read(registryProvider.future)) ??
             (throw const HermesUnreachable(
               'Hermes is no longer installed on this computer',
             ));
+        // Boot returns the registered instance; keep the agent profile this
+        // connection was opened for.
+        target = booted.copyWith(profile: () => instance.profile);
       }
       return DashboardTransport.connect(
         instance: target,
