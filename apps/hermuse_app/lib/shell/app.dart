@@ -17,6 +17,7 @@ import '../computer/computer_viewer.dart';
 import '../host/install_flow.dart';
 import '../host/linux_setup.dart';
 import '../host/linux_setup_gate.dart';
+import '../host/local_uninstall.dart';
 import '../host/remote_install.dart';
 import '../platform/local_host.dart';
 import '../onboarding/components.dart';
@@ -33,11 +34,13 @@ import '../sidebar/side_chats.dart';
 import '../thread/thread_view.dart';
 import 'app_update.dart';
 import 'app_update_dialog.dart';
-import 'brand.dart';
+import 'agent_avatar.dart';
+import 'agents.dart';
 import 'chat_scope.dart';
 import 'instances.dart';
 import 'rail.dart';
 import 'screens.dart';
+import 'settings.dart';
 
 /// App root: theme, chat scope, responsive shell.
 ///
@@ -83,9 +86,21 @@ final class HermuseAppState extends State<HermuseApp>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.keystoreError != null) {
+      return _themedApp(context, YsThemeMode.dark);
+    }
+    return Consumer(
+      builder: (context, ref, _) => _themedApp(
+        context,
+        ref.watch(appThemeProvider).value ?? YsThemeMode.dark,
+      ),
+    );
+  }
+
+  Widget _themedApp(BuildContext context, YsThemeMode mode) {
     final keystoreError = widget.keystoreError;
     final palette = resolveTheme(
-      YsThemeMode.system,
+      mode,
       platformDark:
           View.of(context).platformDispatcher.platformBrightness ==
           Brightness.dark,
@@ -96,8 +111,8 @@ final class HermuseAppState extends State<HermuseApp>
         title: 'Hermuse Agent',
         color: Color(palette.canvas.value),
         debugShowCheckedModeBanner: false,
-        builder: (context, child) => MediaQuery(
-          data: MediaQueryData.fromView(View.of(context)),
+        builder: (context, child) => MediaQuery.fromView(
+          view: View.of(context),
           child: DefaultTextStyle(
             style: YsType.body.flutter.copyWith(color: palette.contentColor),
             // No Navigator (single screen), so no route Overlay: provide one
@@ -133,6 +148,7 @@ enum _Route {
   addInstance,
   remoteInstall,
   remoteUninstall,
+  localUninstall,
   install,
   instances,
   onboarding,
@@ -191,6 +207,12 @@ final class _RootState extends ConsumerState<_Root> {
   /// Takes the user where a finished setup leads.
   void _setupChanged(LinuxSetupState? previous, LinuxSetupState next) {
     if (next.phase is! SetupFinished) return;
+    // A chat of this computer opened before setup restored its access holds
+    // the connection error; it reconnects now.
+    final open = ref.read(activeThreadProvider).value;
+    if (open?.instanceId == localInstanceId) {
+      unawaited(ref.read(chatSessionProvider(open!)).value?.retry());
+    }
     switch (next.goal) {
       case LinuxSetupGoal.connect:
         setState(
@@ -271,6 +293,7 @@ final class _RootState extends ConsumerState<_Root> {
       );
     }
     if (ref.watch(linuxSetupServicesProvider) == null) return _routes(palette);
+    if (_route == _Route.localUninstall) return _routes(palette);
     final setup = ref.watch(linuxSetupProvider);
     ref.listen(linuxSetupProvider, _setupChanged);
     final instances = ref.watch(instancesProvider).value;
@@ -299,6 +322,10 @@ final class _RootState extends ConsumerState<_Root> {
     final active = ref.watch(activeThreadProvider);
     final instanceList = instances.value;
     final thread = active.value;
+    final localHost = ref.read(localHostProvider);
+    final selectedInstance = instanceList
+        ?.where((instance) => instance.id == _overlayInstanceId)
+        .firstOrNull;
     // Connection setup does not depend on an open chat. Keep its form alive
     // while the first instance saves to the keystore and registry.
     final connection = switch (_route) {
@@ -307,15 +334,28 @@ final class _RootState extends ConsumerState<_Root> {
         onCancel: () => setState(() => _route = _connectReturn),
         onDashboard: () => setState(() => _route = _Route.addInstance),
       ),
-      _Route.remoteUninstall when _desktop => RemoteInstallScreen(
-        remove: true,
-        initialHost: instanceList
-            ?.where((i) => i.id == _overlayInstanceId)
-            .map((i) => i.baseUrl.host)
-            .firstOrNull,
-        onDone: _remoteInstalled,
-        onCancel: () => setState(() => _route = _Route.instances),
-      ),
+      _Route.remoteUninstall
+          when _desktop && selectedInstance?.kind == InstanceKind.remote =>
+        RemoteInstallScreen(
+          remove: true,
+          initialHost: instanceList
+              ?.where((i) => i.id == _overlayInstanceId)
+              .map((i) => i.baseUrl.host)
+              .firstOrNull,
+          onDone: _remoteInstalled,
+          onCancel: () => setState(() => _route = _Route.instances),
+        ),
+      _Route.localUninstall
+          when _linux &&
+              localHost?.canonicalService == true &&
+              (_overlayInstanceId == null ||
+                  _overlayInstanceId == localInstanceId) &&
+              (selectedInstance == null ||
+                  selectedInstance.kind != InstanceKind.remote) =>
+        LocalUninstallScreen(
+          host: localHost!,
+          onClose: () => setState(() => _route = _Route.instances),
+        ),
       _Route.addInstance => AddInstanceScreen(
         initialUrl: _remoteOutcome?.baseUrl,
         initialUsername: _remoteOutcome?.username,
@@ -339,11 +379,12 @@ final class _RootState extends ConsumerState<_Root> {
       return ColoredBox(
         color: palette.canvasColor,
         child: switch (_route) {
-          _Route.install when host != null => _InstallRoute(
-            host: host,
-            onDone: () => setState(() => _route = _Route.chat),
-            onCancel: () => setState(() => _route = _Route.chat),
-          ),
+          _Route.install when host != null && !host.canonicalService =>
+            _InstallRoute(
+              host: host,
+              onDone: () => setState(() => _route = _Route.chat),
+              onCancel: () => setState(() => _route = _Route.chat),
+            ),
           _ => WelcomeScreen(
             onConnect: _connect,
             onInstall: host == null
@@ -355,6 +396,12 @@ final class _RootState extends ConsumerState<_Root> {
                         .prepare(LinuxSetupGoal.local),
                   )
                 : () => setState(() => _route = _Route.install),
+            onUninstall: _linux && host?.canonicalService == true
+                ? () => setState(() {
+                    _overlayInstanceId = null;
+                    _route = _Route.localUninstall;
+                  })
+                : null,
           ),
         },
       );
@@ -593,7 +640,7 @@ final class _ChatRoute extends ConsumerWidget {
             onAdd: onConnect,
             onInstall:
                 ref.read(localHostProvider) != null &&
-                    !instances.any((i) => i.kind == InstanceKind.local)
+                    !instances.any((i) => i.kind != InstanceKind.remote)
                 ? ref.read(linuxSetupServicesProvider) != null
                       ? () => unawaited(
                           ref
@@ -609,11 +656,33 @@ final class _ChatRoute extends ConsumerWidget {
                 ref.read(activeThreadProvider.notifier).openInstance(id),
               );
             },
-            onSetup: (id) => onRoute(_Route.onboarding, id),
+            onSetup: (id) {
+              if (id == localInstanceId &&
+                  ref.read(linuxSetupServicesProvider) != null) {
+                unawaited(
+                  ref
+                      .read(linuxSetupProvider.notifier)
+                      .prepare(LinuxSetupGoal.local),
+                );
+              } else {
+                onRoute(_Route.onboarding, id);
+              }
+            },
             onComponents: (id) => onRoute(_Route.components, id),
             onConnections: (id) => onRoute(_Route.connections, id),
             onRemoveFromServer: ref.read(localHostProvider) != null
                 ? (id) => onRoute(_Route.remoteUninstall, id)
+                : null,
+            onRemoveFromComputer:
+                ref.read(linuxSetupServicesProvider) != null &&
+                    ref.read(localHostProvider)?.canonicalService == true
+                ? (id) => onRoute(_Route.localUninstall, id)
+                : null,
+            onReviewLocalInstallation:
+                ref.read(linuxSetupServicesProvider) != null &&
+                    ref.read(localHostProvider)?.canonicalService == true &&
+                    !instances.any((i) => i.kind != InstanceKind.remote)
+                ? () => onRoute(_Route.localUninstall)
                 : null,
           ),
         );
@@ -636,14 +705,14 @@ final class _ChatRoute extends ConsumerWidget {
                           : active.openSetup(setup));
                     },
                     onSkipToChat: () => onRoute(_Route.chat),
-                    onServerSetup: instance.kind == InstanceKind.remote
+                    onServerSetup: instance.kind != InstanceKind.local
                         ? () => onRoute(_Route.components, instance.id)
                         : null,
                   )
                 : ConnectionsScreen(
                     instance: instance,
                     onBack: () => onRoute(_Route.instances),
-                    onServerSetup: instance.kind == InstanceKind.remote
+                    onServerSetup: instance.kind != InstanceKind.local
                         ? () => onRoute(_Route.components, instance.id)
                         : null,
                   ),
@@ -652,7 +721,7 @@ final class _ChatRoute extends ConsumerWidget {
         break;
       case _Route.install:
         final host = ref.read(localHostProvider);
-        if (host != null) {
+        if (host != null && !host.canonicalService) {
           return ColoredBox(
             color: palette.canvasColor,
             child: _InstallRoute(
@@ -667,6 +736,7 @@ final class _ChatRoute extends ConsumerWidget {
       case _Route.addInstance:
       case _Route.remoteInstall:
       case _Route.remoteUninstall:
+      case _Route.localUninstall:
       case _Route.welcome:
       case _Route.chat:
         break;
@@ -774,6 +844,18 @@ final class _ShellState extends ConsumerState<_Shell> {
   // Null = follow the shell default: open on wide, closed elsewhere.
   bool? _panelOpenOverride;
   bool _drawerOpen = false;
+  bool _settingsOpen = false;
+  SettingsSection? _settingsSection;
+
+  /// The open agent's generated portrait, when it has one.
+  late final _customAvatar = CustomAvatarImage(() {
+    if (mounted) setState(() {});
+  });
+
+  void _openSettings([SettingsSection? section]) => setState(() {
+    _settingsOpen = true;
+    _settingsSection = section;
+  });
 
   /// Keeps the thread (scroll, composer draft) across layout changes, e.g.
   /// docking it beside a route.
@@ -846,6 +928,19 @@ final class _ShellState extends ConsumerState<_Shell> {
     );
   }
 
+  /// Try it (Ideas): [seed] is sent in the main chat, which opens.
+  void _tryIdea(String seed) {
+    final chat = widget.controller;
+    chat.openThread(chat.state.mainThread.id);
+    final shell = YsShell.forWidth(MediaQuery.sizeOf(context).width);
+    setState(() {
+      if (!(shell == YsShell.wide && _splitChat)) {
+        _destination = HermuseDestination.chat;
+      }
+    });
+    unawaited(chat.send(seed));
+  }
+
   /// The product page for [_destination], or null for the chat. A new page
   /// enters with [YsEntrance].
   Widget? _product() {
@@ -859,20 +954,36 @@ final class _ShellState extends ConsumerState<_Shell> {
       ),
       HermuseDestination.ideas => IdeasScreen(
         instance: instance,
-        onStartInChat: _discuss,
+        onStartInChat: _tryIdea,
       ),
       HermuseDestination.goals => GoalsScreen(instance: instance),
       HermuseDestination.library => LibraryScreen(instance: instance),
     };
     return page == null
         ? null
-        : YsEntrance(key: ValueKey(_destination), child: page);
+        : ProviderScope(
+            key: ValueKey((
+              widget.controller.instanceId,
+              widget.controller.profile,
+              _destination,
+            )),
+            overrides: [
+              nativeAgentProfileProvider.overrideWithValue(
+                widget.controller.profile,
+              ),
+            ],
+            child: YsEntrance(key: ValueKey(_destination), child: page),
+          );
   }
 
   KeyEventResult _onKeyFor(YsShell shell, FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent ||
         event.logicalKey != LogicalKeyboardKey.escape) {
       return KeyEventResult.ignored;
+    }
+    if (_settingsOpen) {
+      setState(() => _settingsOpen = false);
+      return KeyEventResult.handled;
     }
     if (_drawerOpen) {
       setState(() => _drawerOpen = false);
@@ -909,6 +1020,7 @@ final class _ShellState extends ConsumerState<_Shell> {
   @override
   void dispose() {
     widget.controller.removeListener(_onChatChanged);
+    _customAvatar.dispose();
     super.dispose();
   }
 
@@ -935,7 +1047,29 @@ final class _ShellState extends ConsumerState<_Shell> {
       onKeyEvent: (node, event) => _onKeyFor(shell, node, event),
       child: ColoredBox(
         color: palette.canvasColor,
-        child: _buildShell(context, palette, width, shell),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            ExcludeFocus(
+              excluding: _settingsOpen,
+              child: Offstage(
+                offstage: _settingsOpen,
+                child: SettingsLauncher(
+                  open: _openSettings,
+                  child: _buildShell(context, palette, width, shell),
+                ),
+              ),
+            ),
+            if (_settingsOpen)
+              SettingsScreen(
+                instanceId: widget.controller.instanceId,
+                profile: widget.controller.profile,
+                agentName: widget.controller.state.agentName,
+                section: _settingsSection,
+                onClose: () => setState(() => _settingsOpen = false),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -947,6 +1081,28 @@ final class _ShellState extends ConsumerState<_Shell> {
     YsShell shell,
   ) {
     final state = widget.controller.state;
+    final profile = widget.controller.profile;
+    final agent = widget.thread == null
+        ? null
+        : ref.watch(
+            agentProfileProvider(widget.controller.instanceId, profile),
+          );
+    final avatar = agent != null && agent.isCustom
+        ? _customAvatar.resolve(
+            ref,
+            instanceId: widget.controller.instanceId,
+            profile: profile,
+            chat: state,
+            animate: !MediaQuery.disableAnimationsOf(context),
+          )
+        : agentImage(context, profile: profile, agent: agent, chat: state);
+    final switcher = widget.thread == null
+        ? null
+        : AgentSwitcher(
+            instanceId: widget.controller.instanceId,
+            key: ValueKey((widget.controller.instanceId, profile)),
+            profile: profile,
+          );
     final prefs = ref.watch(chatPanelProvider).value ?? const ChatPanelPrefs();
     final chatsShown = _chatsShown(shell, prefs);
     final compact = shell == YsShell.compact;
@@ -960,9 +1116,15 @@ final class _ShellState extends ConsumerState<_Shell> {
     void closePanel() => setState(() => _panelOpenOverride = false);
     void openPanel() => setState(() => _panelOpenOverride = true);
     final panel = ProfilePanel(
+      key: ValueKey((widget.controller.instanceId, profile)),
       instanceId: widget.controller.instanceId,
-      agentName: state.agentName,
+      agentName: agent?.displayName ?? state.agentName,
+      profile: profile,
+      avatar: avatar,
       approvals: state.approvals,
+      runningTasks: state.runningTasks,
+      agentStep: state.agentStep,
+      onStop: (threadId) => unawaited(widget.controller.interrupt(threadId)),
       threadIds: {for (final thread in state.threads) thread.id},
       onOpenThread: _openFromPanel,
       onOpenComputer: widget.controller.openComputer,
@@ -979,6 +1141,8 @@ final class _ShellState extends ConsumerState<_Shell> {
         child: ThreadView(
           key: _threadKey,
           instanceId: widget.controller.instanceId,
+          agentSwitcher: switcher,
+          avatar: avatar,
           thread: state.activeThread,
           replyTo: state.replyTo,
           selectedOffers: state.selectedOffers,
@@ -1008,7 +1172,8 @@ final class _ShellState extends ConsumerState<_Shell> {
     final rail = HermuseRail(
       destination: _destination,
       onDestination: _goTo,
-      onSettings: widget.onManageInstances ?? () {},
+      onSettings: _openSettings,
+      onInstances: widget.onManageInstances,
     );
     // The agent's computer replaces everything right of the rail.
     if (state.computerOpen) {
@@ -1017,7 +1182,7 @@ final class _ShellState extends ConsumerState<_Shell> {
           if (!compact) rail,
           Expanded(
             child: ComputerViewer(
-              key: ValueKey(widget.controller.instanceId),
+              key: ValueKey((widget.controller.instanceId, profile)),
               controller: widget.controller,
               instanceId: widget.controller.instanceId,
             ),
@@ -1035,9 +1200,21 @@ final class _ShellState extends ConsumerState<_Shell> {
           ),
           destination: _destination,
           onDestination: _goTo,
-          onMore: widget.onManageInstances ?? () {},
+          settingsMenu: SettingsMenu(
+            onSettings: _openSettings,
+            onInstances: widget.onManageInstances,
+            builder: (context, menu) => YsButton.icon(
+              icon: YsIcon.more,
+              onPressed: menu.open,
+              semanticLabel: 'Settings',
+              size: 44,
+              iconSize: YsLayout.bottomNavIconSize,
+            ),
+          ),
           state: state,
           controller: widget.controller,
+          agentSwitchable: switcher != null,
+          avatar: avatar,
           sideChats: sideChats,
           panel: panel,
           panelOpen: panelOpen,
@@ -1162,7 +1339,7 @@ final class _CompactShell extends StatelessWidget {
     required this.thread,
     required this.destination,
     required this.onDestination,
-    required this.onMore,
+    required this.settingsMenu,
     required this.state,
     required this.controller,
     required this.sideChats,
@@ -1172,6 +1349,8 @@ final class _CompactShell extends StatelessWidget {
     required this.onOpenPanel,
     required this.onCloseDrawer,
     required this.onOpenDrawer,
+    required this.agentSwitchable,
+    required this.avatar,
   });
 
   /// Product page replacing the thread, or null for the chat.
@@ -1179,7 +1358,7 @@ final class _CompactShell extends StatelessWidget {
   final Widget thread;
   final HermuseDestination destination;
   final ValueChanged<HermuseDestination> onDestination;
-  final VoidCallback onMore;
+  final Widget settingsMenu;
   final ChatState state;
   final ChatController controller;
   final SideChats sideChats;
@@ -1189,6 +1368,10 @@ final class _CompactShell extends StatelessWidget {
   final VoidCallback onOpenPanel;
   final VoidCallback onCloseDrawer;
   final VoidCallback onOpenDrawer;
+
+  /// Whether the title opens the agent switcher (a thread is loaded).
+  final bool agentSwitchable;
+  final ImageProvider avatar;
 
   @override
   Widget build(BuildContext context) {
@@ -1200,12 +1383,17 @@ final class _CompactShell extends StatelessWidget {
     // A side chat on screen: back to the main chat, titled after it.
     final sideChat =
         product == null && state.activeThreadId != state.mainThread.id;
+    final subtitle = product != null
+        ? destination.label
+        : sideChat
+        ? sideChatLabel(state.activeThread.title)
+        : 'Main chat';
     return Stack(
       children: [
         Column(
           children: [
             SizedBox(
-              height: 52,
+              height: YsLayout.topBarHeight,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border(
@@ -1216,48 +1404,81 @@ final class _CompactShell extends StatelessWidget {
                   ),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      if (sideChat)
+                  padding: const EdgeInsets.symmetric(horizontal: YsSpace.sm),
+                  // The title stays centered on the bar whatever sits left.
+                  child: NavigationToolbar(
+                    middleSpacing: YsSpace.sm,
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (sideChat)
+                          YsButton.icon(
+                            icon: YsIcon.arrowLeft,
+                            onPressed: () =>
+                                controller.openThread(state.mainThread.id),
+                            semanticLabel: 'Back to main chat',
+                            size: 40,
+                            iconSize: 20,
+                          ),
                         YsButton.icon(
-                          icon: YsIcon.arrowLeft,
-                          onPressed: () =>
-                              controller.openThread(state.mainThread.id),
-                          semanticLabel: 'Back to main chat',
-                          size: 36,
+                          icon: YsIcon.menu,
+                          onPressed: onOpenDrawer,
+                          semanticLabel: 'Open chats',
+                          size: 40,
                           iconSize: 20,
                         ),
-                      YsButton.icon(
-                        icon: YsIcon.menu,
-                        onPressed: onOpenDrawer,
-                        semanticLabel: 'Open chats',
-                        size: 36,
-                        iconSize: 20,
-                      ),
-                      Expanded(
-                        child: Text(
-                          sideChat
-                              ? sideChatLabel(state.activeThread.title)
-                              : state.agentName,
-                          style: YsType.heading.flutter.copyWith(
-                            color: palette.contentColor,
+                      ],
+                    ),
+                    middle: agentSwitchable
+                        ? AgentSwitcher(
+                            instanceId: controller.instanceId,
+                            key: ValueKey((
+                              controller.instanceId,
+                              controller.profile,
+                            )),
+                            profile: controller.profile,
+                            subtitle: subtitle,
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                state.agentName,
+                                style: YsType.heading.flutter.copyWith(
+                                  color: palette.contentColor,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                subtitle,
+                                style: YsType.caption.flutter.copyWith(
+                                  color: palette.contentMutedColor,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      YsPressable(
-                        onPressed: onOpenPanel,
-                        semanticLabel: 'Open panel',
-                        builder: (context, state) => YsAvatar(
-                          hermuseAvatar,
-                          size: 32,
+                    trailing: SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: Center(
+                        child: YsPressable(
+                          onPressed: onOpenPanel,
                           semanticLabel: 'Open panel',
+                          builder: (context, state) => YsFocusRing(
+                            visible: state.focused,
+                            radius: YsRadius.pill,
+                            child: YsAvatar(
+                              avatar,
+                              size: 32,
+                              semanticLabel: 'Open panel',
+                            ),
+                          ),
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -1266,7 +1487,7 @@ final class _CompactShell extends StatelessWidget {
             _BottomNav(
               destination: destination,
               onDestination: onDestination,
-              onMore: onMore,
+              settingsMenu: settingsMenu,
             ),
           ],
         ),
@@ -1289,16 +1510,16 @@ final class _CompactShell extends StatelessWidget {
                   child: Column(
                     children: [
                       SizedBox(
-                        height: 52,
+                        height: YsLayout.topBarHeight,
                         child: Align(
                           alignment: Alignment.centerLeft,
                           child: Padding(
-                            padding: const EdgeInsets.only(left: 8),
+                            padding: const EdgeInsets.only(left: YsSpace.sm),
                             child: YsButton.icon(
                               icon: YsIcon.close,
                               onPressed: onCloseDrawer,
                               semanticLabel: 'Close chats',
-                              size: 36,
+                              size: 40,
                               iconSize: 20,
                             ),
                           ),
@@ -1317,17 +1538,17 @@ final class _CompactShell extends StatelessWidget {
 }
 
 /// Phone bottom navigation: h52 bar, 6 icon-only 28px items (the five
-/// destinations + More → instances).
+/// destinations + Settings menu).
 final class _BottomNav extends StatelessWidget {
   const _BottomNav({
     required this.destination,
     required this.onDestination,
-    required this.onMore,
+    required this.settingsMenu,
   });
 
   final HermuseDestination destination;
   final ValueChanged<HermuseDestination> onDestination;
-  final VoidCallback onMore;
+  final Widget settingsMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -1351,13 +1572,7 @@ final class _BottomNav extends StatelessWidget {
                 active: item == destination,
                 onPressed: () => onDestination(item),
               ),
-            _item(
-              palette,
-              YsIcon.more,
-              'More',
-              active: false,
-              onPressed: onMore,
-            ),
+            Expanded(child: Center(child: settingsMenu)),
           ],
         ),
       ),

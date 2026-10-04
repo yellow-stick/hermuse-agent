@@ -6,6 +6,7 @@
 
 import 'package:jaspr/server.dart';
 import 'package:hermuse_web/add_instance.dart' as _add_instance;
+import 'package:hermuse_web/agents.dart' as _agents;
 import 'package:hermuse_web/app.dart' as _app;
 import 'package:hermuse_web/browser_card.dart' as _browser_card;
 import 'package:hermuse_web/chat_root.dart' as _chat_root;
@@ -13,8 +14,10 @@ import 'package:hermuse_web/components.dart' as _components;
 import 'package:hermuse_web/computer_viewer.dart' as _computer_viewer;
 import 'package:hermuse_web/connections.dart' as _connections;
 import 'package:hermuse_web/feed.dart' as _feed;
+import 'package:hermuse_web/generated_avatar.dart' as _generated_avatar;
 import 'package:hermuse_web/goals.dart' as _goals;
 import 'package:hermuse_web/ideas.dart' as _ideas;
+import 'package:hermuse_web/identity.dart' as _identity;
 import 'package:hermuse_web/instances.dart' as _instances;
 import 'package:hermuse_web/library.dart' as _library;
 import 'package:hermuse_web/markdown_view.dart' as _markdown_view;
@@ -26,8 +29,10 @@ import 'package:hermuse_web/rail.dart' as _rail;
 import 'package:hermuse_web/route.dart' as _route;
 import 'package:hermuse_web/scope.dart' as _scope;
 import 'package:hermuse_web/screens.dart' as _screens;
+import 'package:hermuse_web/settings.dart' as _settings;
 import 'package:hermuse_web/sidebar.dart' as _sidebar;
 import 'package:hermuse_web/thread.dart' as _thread;
+import 'package:hermuse_web/upcoming.dart' as _upcoming;
 import 'package:yellow_stick_ui_web/src/art.dart' as _art;
 import 'package:yellow_stick_ui_web/src/avatar.dart' as _avatar;
 import 'package:yellow_stick_ui_web/src/burst.dart' as _burst;
@@ -80,6 +85,8 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._motion.ysMotionStyles,
     ..._theme.ysThemeStyles,
     ..._add_instance.HermuseAddInstance.styles,
+    ..._agents.HermuseAgentEditor.styles,
+    ..._agents.HermuseAgentPicker.styles,
     ..._app.App.styles,
     ..._browser_card.HermuseBrowserCard.styles,
     ..._components.HermuseComponents.styles,
@@ -87,8 +94,10 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._connections.HermuseConnections.styles,
     ..._feed.HermuseFeed.styles,
     ..._feed.HermusePluginMissing.styles,
+    ..._generated_avatar.HermuseAvatarGenerator.styles,
     ..._goals.HermuseGoals.styles,
     ..._ideas.HermuseIdeas.styles,
+    ..._identity.HermuseIdentity.styles,
     ..._instances.HermuseInstances.styles,
     ..._instances.HermuseWelcome.styles,
     ..._library.HermuseLibrary.styles,
@@ -104,9 +113,13 @@ ServerOptions get defaultServerOptions => ServerOptions(
     ..._route.HermuseRouteSkeleton.styles,
     ..._scope.HermuseScope.styles,
     ..._screens.HermuseRelayRequired.styles,
+    ..._settings.HermuseImageGenerationSection.styles,
+    ..._settings.HermuseSettings.styles,
+    ..._settings.HermuseSettingsMenu.styles,
     ..._sidebar.HermuseSidebar.styles,
     ..._thread.HermuseThread.styles,
     ..._thread.HermuseThreadHeader.styles,
+    ..._upcoming.HermuseUpcoming.styles,
     ..._art.YsArtView.styles,
     ..._avatar.YsAvatar.styles,
     ..._burst.YsBurstView.styles,

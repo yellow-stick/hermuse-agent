@@ -4,6 +4,7 @@ import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hermes_client/hermes_client.dart';
+import 'package:hermuse_host/hermuse_host.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:uuid/uuid.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
@@ -79,6 +80,8 @@ final class InstancesScreen extends ConsumerWidget {
     this.addOverSsh = false,
     this.onInstall,
     this.onRemoveFromServer,
+    this.onRemoveFromComputer,
+    this.onReviewLocalInstallation,
     super.key,
   });
 
@@ -106,6 +109,12 @@ final class InstancesScreen extends ConsumerWidget {
 
   /// Desktop only: uninstalls Hermes from a remote instance's server.
   final ValueChanged<String>? onRemoveFromServer;
+
+  /// Linux only: reverts the selected local installation, not this app.
+  final ValueChanged<String>? onRemoveFromComputer;
+
+  /// Reviews an unfinished local install without a saved local instance.
+  final VoidCallback? onReviewLocalInstallation;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -159,6 +168,11 @@ final class InstancesScreen extends ConsumerWidget {
                         label: 'Install Hermes on this computer',
                         onPressed: install,
                       ),
+                    if (onReviewLocalInstallation case final review?)
+                      YsButton.neutral(
+                        label: 'Review local installation',
+                        onPressed: review,
+                      ),
                   ],
                 ),
               ],
@@ -198,6 +212,7 @@ final class InstancesScreen extends ConsumerWidget {
                 onComponents: onComponents,
                 onConnections: onConnections,
                 onRemoveFromServer: onRemoveFromServer,
+                onRemoveFromComputer: onRemoveFromComputer,
               ),
               const SizedBox(height: YsSpace.sm),
             ],
@@ -227,6 +242,7 @@ final class _InstanceRow extends ConsumerStatefulWidget {
     required this.onComponents,
     required this.onConnections,
     this.onRemoveFromServer,
+    this.onRemoveFromComputer,
     super.key,
   });
 
@@ -239,6 +255,7 @@ final class _InstanceRow extends ConsumerStatefulWidget {
   final ValueChanged<String> onComponents;
   final ValueChanged<String> onConnections;
   final ValueChanged<String>? onRemoveFromServer;
+  final ValueChanged<String>? onRemoveFromComputer;
 
   @override
   ConsumerState<_InstanceRow> createState() => _InstanceRowState();
@@ -537,7 +554,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 label: 'Model accounts',
                 onPressed: () => widget.onConnections(instance.id),
               ),
-              if (instance.kind == InstanceKind.remote)
+              if (instance.kind != InstanceKind.local)
                 YsButton.neutral(
                   label: "What's installed",
                   onPressed: () => widget.onComponents(instance.id),
@@ -572,6 +589,13 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
                 when instance.kind == InstanceKind.remote)
               YsMenuItem(
                 label: 'Uninstall from server…',
+                icon: YsIcon.package,
+                onSelected: () => uninstall(instance.id),
+              ),
+            if (widget.onRemoveFromComputer case final uninstall?
+                when instance.kind != InstanceKind.remote)
+              YsMenuItem(
+                label: 'Uninstall from this computer…',
                 icon: YsIcon.package,
                 onSelected: () => uninstall(instance.id),
               ),
@@ -655,7 +679,7 @@ final class _InstanceRowState extends ConsumerState<_InstanceRow> {
   Widget _removeConfirmation(BuildContext context) {
     final palette = YsTheme.of(context);
     final instance = widget.instance;
-    final where = instance.kind == InstanceKind.local
+    final where = instance.kind != InstanceKind.remote
         ? 'this computer'
         : 'the server';
     return YsDialog(
@@ -749,6 +773,7 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
     this.initialUsername,
     this.initialPassword,
     this.autoProbe = false,
+    this.localSystem = false,
     this.webUrl,
     super.key,
   });
@@ -769,6 +794,9 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
   final String? initialPassword;
   final bool autoProbe;
 
+  /// Connects the canonical local service without installing or adopting it.
+  final bool localSystem;
+
   /// The web app SSH setup published on the same server, if any.
   final String? webUrl;
 
@@ -779,7 +807,7 @@ final class AddInstanceScreen extends ConsumerStatefulWidget {
 final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   final _url = TextEditingController();
   final _label = TextEditingController();
-  final _username = TextEditingController();
+  final _username = TextEditingController(text: 'admin');
   final _password = TextEditingController();
   final _token = TextEditingController();
   final _labelEdited = ValueNotifier(false);
@@ -801,8 +829,15 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   @override
   void initState() {
     super.initState();
-    _url.text = widget.initialUrl ?? '';
-    _initialAddress = _parsedUrl;
+    _url.text = widget.localSystem
+        ? 'http://127.0.0.1:9119'
+        : widget.initialUrl ?? '';
+    _initialAddress =
+        widget.localSystem &&
+            widget.initialUrl != null &&
+            widget.initialUrl != _url.text
+        ? null
+        : _parsedUrl;
     if (widget.autoProbe) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && !_cancelled) _probe();
@@ -866,7 +901,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
   }
 
   void _failProbe(String message) => setState(() {
-    _error = widget.initialUrl != null && _isInitialUrl
+    _error = !widget.localSystem && widget.initialUrl != null && _isInitialUrl
         ? '$message\n\nMake sure TCP ports 80 and 443 are reachable from '
               'the internet in both the server and provider firewalls.'
         : message;
@@ -904,9 +939,11 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       }
       setState(() {
         _status = status;
-        if (!_labelEdited.value) _label.text = url.host;
+        if (!_labelEdited.value) {
+          _label.text = widget.localSystem ? 'This computer' : url.host;
+        }
         if (_initialCredentialsPending && _isInitialUrl) {
-          _username.text = widget.initialUsername ?? '';
+          _username.text = widget.initialUsername ?? 'admin';
           _password.text = widget.initialPassword ?? '';
           _initialCredentialsPending = false;
         }
@@ -939,6 +976,11 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       return;
     }
     final token = login == AuthMethod.loopbackToken;
+    final username = _username.text.trim();
+    if (!token && username.isEmpty) {
+      setState(() => _error = 'Enter the dashboard username');
+      return;
+    }
     final secret = token ? _token.text.trim() : _password.text;
     if (secret.isEmpty) {
       setState(
@@ -952,26 +994,34 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
       _busy = true;
       _error = null;
     });
-    final candidate = HermesInstance(
-      id: const Uuid().v4(),
-      label: label,
-      kind: InstanceKind.remote,
-      baseUrl: url,
-      auth: login,
-    );
     try {
       // Proved on a real connection before anything is stored; the secret
       // then goes to the keystore only.
+      final registry = await ref.read(registryProvider.future);
+      final existing = widget.localSystem
+          ? registry.byId(localInstanceId)
+          : null;
+      if (existing?.kind == InstanceKind.remote) {
+        throw StateError(
+          'The local registration belongs to a remote instance.',
+        );
+      }
+      final candidate = HermesInstance(
+        id: widget.localSystem ? localInstanceId : const Uuid().v4(),
+        label: label,
+        kind: widget.localSystem ? InstanceKind.system : InstanceKind.remote,
+        baseUrl: url,
+        auth: login,
+        profile: existing?.profile,
+      );
       await ref
           .read(instanceAuthProvider)
           .add(
             candidate,
+            replaceExisting: existing != null,
             secrets: token
                 ? {SecretKeys.sessionToken: secret}
-                : {
-                    SecretKeys.username: _username.text,
-                    SecretKeys.password: secret,
-                  },
+                : {SecretKeys.username: username, SecretKeys.password: secret},
           );
       if (!mounted || _cancelled) return;
       _token.clear();
@@ -1043,8 +1093,12 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                   YsDialogHead(
                     art: _probeFailed ? YsArt.unreachable : YsArt.remote,
                     busy: _busy,
-                    title: 'Add a Hermes',
-                    helper: 'Paste the web address of your Hermes dashboard.',
+                    title: widget.localSystem
+                        ? 'Connect to this computer'
+                        : 'Add a Hermes',
+                    helper: widget.localSystem
+                        ? 'This computer already has a running dashboard. Sign in with its existing account. Nothing will be reinstalled or restarted.'
+                        : 'Paste the web address of your Hermes dashboard.',
                     trailing: YsButton.icon(
                       icon: YsIcon.close,
                       onPressed: _cancel,
@@ -1053,17 +1107,25 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
                     ),
                   ),
                   const SizedBox(height: YsSpace.lg),
-                  _Field(
-                    label: 'Instance URL',
-                    controller: _url,
-                    placeholder: 'https://hermes.example.com',
-                    semanticLabel: 'Instance URL',
-                    icon: YsIcon.link,
-                    url: true,
-                    autofocus: true,
-                    onChanged: _urlChanged,
-                    onSubmitted: (_) => _probe(),
-                  ),
+                  if (widget.localSystem)
+                    SelectableText(
+                      'http://127.0.0.1:9119',
+                      style: YsType.body.flutter.copyWith(
+                        color: palette.contentMutedColor,
+                      ),
+                    )
+                  else
+                    _Field(
+                      label: 'Instance URL',
+                      controller: _url,
+                      placeholder: 'https://hermes.example.com',
+                      semanticLabel: 'Instance URL',
+                      icon: YsIcon.link,
+                      url: true,
+                      autofocus: true,
+                      onChanged: _urlChanged,
+                      onSubmitted: (_) => _probe(),
+                    ),
                   const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.centerLeft,
@@ -1169,7 +1231,7 @@ final class AddInstanceScreenState extends ConsumerState<AddInstanceScreen> {
         _Field(
           label: 'Username',
           controller: _username,
-          placeholder: 'admin',
+          placeholder: 'Dashboard username',
           semanticLabel: 'Username',
           icon: YsIcon.user,
         ),

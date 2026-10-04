@@ -10,6 +10,9 @@ extension YsFlutterPalette on YsPalette {
   Color get paperClearColor => Color(paperClear.value);
   Color get paperEdgeColor => Color(paperEdge.value);
   Color get paperShadowColor => Color(paperShadow.value);
+  Color get glassColor => Color(glass.value);
+  Color get glassShineColor => Color(glassShine.value);
+  Color get glassRimColor => Color(glassRim.value);
   Color get neutralAmbientColor => Color(neutralAmbient.value);
   Color get neutralFilmColor => Color(neutralFilm.value);
   Color get neutralWashColor => Color(neutralWash.value);
@@ -34,6 +37,11 @@ extension YsFlutterPalette on YsPalette {
   Color get logoSurfaceColor => Color(logoSurface.value);
   Color get avatarSurfaceColor => Color(avatarSurface.value);
   Color get shadowColor => Color(shadow.value);
+  Color get soulStartColor => Color(soulStart.value);
+  Color get soulEndColor => Color(soulEnd.value);
+  Color get memoryStartColor => Color(memoryStart.value);
+  Color get memoryEndColor => Color(memoryEnd.value);
+  Color get identityContentColor => Color(identityContent.value);
 
   /// Resting elevation of a raised [paper]/[paperClear] surface on [canvas]:
   /// a hairline ring and a soft two-step shadow (empty for a palette with
@@ -57,10 +65,15 @@ extension YsFlutterPalette on YsPalette {
 }
 
 extension YsFlutterType on YsTextStyle {
-  /// Converts a core text style to a Flutter [TextStyle] in Inter.
+  /// Converts a core text style to a Flutter [TextStyle] in Inter, falling
+  /// back to the platform's color emoji font ([YsType.emoji]).
+  ///
+  /// The bundled family is named with its `packages/yellow_stick_ui/`
+  /// prefix rather than `package:`, which would prefix the system emoji
+  /// fallbacks too (and a `copyWith(fontFamily:)` face such as monospace).
   TextStyle get flutter => TextStyle(
-    fontFamily: YsType.family,
-    package: 'yellow_stick_ui',
+    fontFamily: 'packages/yellow_stick_ui/${YsType.family}',
+    fontFamilyFallback: YsType.emoji,
     fontSize: size,
     height: heightFactor,
     fontWeight: switch (weight) {

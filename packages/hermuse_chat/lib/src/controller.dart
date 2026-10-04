@@ -1,16 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:hermes_client/hermes_client.dart';
 
 import 'models.dart';
+import 'tools.dart';
 
-/// Identifies a conversation: a Hermes instance and a stored session id
-/// (empty until the first message creates the session).
+/// Identifies a profile's conversation on a registered Hermes instance.
+/// The session id is empty until the first message creates the session.
 final class ThreadRef {
-  const ThreadRef({required this.instanceId, required this.sessionId});
+  const ThreadRef({
+    required this.instanceId,
+    required this.sessionId,
+    this.profile = 'default',
+  });
 
   final String instanceId;
   final String sessionId;
+  final String profile;
 
   bool get isNew => sessionId.isEmpty;
 
@@ -18,13 +25,14 @@ final class ThreadRef {
   bool operator ==(Object other) =>
       other is ThreadRef &&
       other.instanceId == instanceId &&
+      other.profile == profile &&
       other.sessionId == sessionId;
 
   @override
-  int get hashCode => Object.hash(instanceId, sessionId);
+  int get hashCode => Object.hash(instanceId, profile, sessionId);
 
   @override
-  String toString() => 'ThreadRef($instanceId, $sessionId)';
+  String toString() => 'ThreadRef($instanceId, $profile, $sessionId)';
 }
 
 /// Persistence hooks of a [ChatController] (session index, transcript cache).
@@ -49,8 +57,14 @@ abstract interface class ChatObserver {
   /// A side chat was deleted on the server.
   void sessionDeleted(ThreadRef ref);
 
-  /// The agent finished a tool in [ref] (the profile panel's Activity).
-  void toolCompleted(ThreadRef ref, ActivityItem item);
+  /// The agent finished the tool [tool] in [ref] (refreshes the product
+  /// surfaces it writes: the feed, scheduled jobs).
+  void toolCompleted(ThreadRef ref, String tool);
+
+  /// The main chat moved to the profile's "Bot Chat" session [main], found
+  /// on the server; [previousId], the main chat until now, became a side
+  /// chat of it (null when that one was not created yet).
+  void mainSessionChanged(ThreadRef main, {String? previousId});
 }
 
 /// Immutable snapshot of the chat.
@@ -68,6 +82,8 @@ final class ChatState {
     this.models = const {},
     this.needsSignIn = false,
     this.computerOpen = false,
+    this.turnMessageIds = const {},
+    this.turnStartIds = const {},
   });
 
   final String agentName;
@@ -102,6 +118,14 @@ final class ChatState {
   /// The agent's computer viewer replaces the chat area.
   final bool computerOpen;
 
+  /// Agent message of the running turn, per thread.
+  final Map<String, String> turnMessageIds;
+
+  /// First agent message of the running turn, per thread: a turn that
+  /// waited on a request card continues in a new message below it, so it
+  /// differs from [turnMessageIds] once the turn went on past a card.
+  final Map<String, String> turnStartIds;
+
   /// Model of the active thread, when known.
   ChatModel? get model => models[activeThreadId];
 
@@ -134,6 +158,58 @@ final class ChatState {
                 ),
   ];
 
+  /// What the agent is doing in [threadId] ([agentStepLabel]); null while
+  /// no turn runs there.
+  String? stepOf(String threadId) {
+    if (!busyThreads.contains(threadId)) return null;
+    final turnId = turnMessageIds[threadId];
+    final turn = threads
+        .where((t) => t.id == threadId)
+        .expand((t) => t.messages)
+        .where((m) => m.id == turnId)
+        .firstOrNull;
+    return agentStepLabel(turn?.blocks ?? const []);
+  }
+
+  /// Turns running now: the active thread's first, then in thread order.
+  List<RunningTask> get runningTasks => [
+    for (final thread in [
+      activeThread,
+      for (final t in threads)
+        if (t.id != activeThreadId) t,
+    ])
+      if (busyThreads.contains(thread.id))
+        RunningTask(
+          threadId: thread.id,
+          isMain: thread.id == mainThread.id,
+          threadTitle: thread.id == mainThread.id ? '' : thread.title,
+          request: _requestOf(thread),
+          step: stepOf(thread.id)!,
+        ),
+  ];
+
+  /// The task shown under the agent's name: the active thread's, else the
+  /// first running one.
+  RunningTask? get currentTask => runningTasks.firstOrNull;
+
+  /// [currentTask]'s step ("Searching the web"); null while idle.
+  String? get agentStep => currentTask?.step;
+
+  /// First line of the user message right before [thread]'s running turn
+  /// (its last message while the turn has not started); '' when the turn
+  /// follows no user message (the server started it).
+  String _requestOf(Thread thread) {
+    final turnId = turnStartIds[thread.id] ?? turnMessageIds[thread.id];
+    final index = thread.messages.indexWhere((m) => m.id == turnId);
+    final before = index < 0
+        ? thread.messages.lastOrNull
+        : index > 0
+        ? thread.messages[index - 1]
+        : null;
+    if (before == null || before.author != Author.user) return '';
+    return before.plainText.trim().split('\n').first;
+  }
+
   ChatState copyWith({
     String? agentName,
     List<Thread>? threads,
@@ -147,6 +223,8 @@ final class ChatState {
     Map<String, ChatModel>? models,
     bool? needsSignIn,
     bool? computerOpen,
+    Map<String, String>? turnMessageIds,
+    Map<String, String>? turnStartIds,
   }) => ChatState(
     agentName: agentName ?? this.agentName,
     threads: threads ?? this.threads,
@@ -162,6 +240,8 @@ final class ChatState {
     models: models ?? this.models,
     needsSignIn: needsSignIn ?? this.needsSignIn,
     computerOpen: computerOpen ?? this.computerOpen,
+    turnMessageIds: turnMessageIds ?? this.turnMessageIds,
+    turnStartIds: turnStartIds ?? this.turnStartIds,
   );
 }
 
@@ -193,15 +273,20 @@ final class ChatController {
     List<Thread> sideThreads = const [],
     String? initialThreadId,
     String Function()? clock,
-    DateTime Function()? now,
+    this._clarifyResults,
   }) : _instanceId = ref.instanceId,
-       _clock = clock ?? _wallClock,
-       _now = now ?? DateTime.now {
+       _profile = ref.profile,
+       _clock = clock ?? _wallClock {
     final mainId = ref.isNew ? _draftId() : ref.sessionId;
     _state = ChatState(
       agentName: agentName,
       threads: [
-        Thread(id: mainId, title: 'Chat', startedAt: _clock(), messages: []),
+        Thread(
+          id: mainId,
+          title: mainThreadTitle,
+          startedAt: _clock(),
+          messages: [],
+        ),
         ...sideThreads,
       ],
       activeThreadId: sideThreads.any((t) => t.id == initialThreadId)
@@ -223,9 +308,14 @@ final class ChatController {
 
   final HermesConnections _connections;
   final String _instanceId;
+  final String _profile;
   final ChatObserver? _observer;
   final String Function() _clock;
-  final DateTime Function() _now;
+
+  /// Raw results of the `clarify` calls of a stored session, by tool call
+  /// id: the transcript keeps the question but not the answer.
+  final Future<Map<String, Object?>> Function(String sessionId)?
+  _clarifyResults;
   late ChatState _state;
   final _listeners = <void Function()>[];
   var _seq = 0;
@@ -252,14 +342,52 @@ final class ChatController {
   /// Threads whose transcript was fetched.
   final Set<String> _loaded = {};
 
-  /// Thread id → id of the agent message of the running turn.
+  /// Thread id → id of the agent message of the running turn (the one
+  /// content streams into: the last one when the turn went on past a card).
   final Map<String, String> _turn = {};
+
+  /// Thread id → the agent messages of the running turn, in order: one,
+  /// plus one more each time it goes on below a request card.
+  final Map<String, List<String>> _segments = {};
+
+  /// Threads whose running turn got a request card below its message: what
+  /// it streams next goes into a new message under the card.
+  final Set<String> _continueBelow = {};
+
+  /// Server-started turns whose brief (the scheduled job's notice) is not on
+  /// screen yet: it is read from the transcript once the turn streams.
+  final Set<String> _briefPending = {};
+
+  /// Messages put on screen from a transcript, never streamed here: a later
+  /// read of the transcript replaces or drops them.
+  final Set<String> _transcriptIds = {};
+
+  /// Transcript message id (`row-<n>`) → the streamed message showing that
+  /// row, for rows of turns streamed here.
+  final Map<String, String> _shownRows = {};
+
+  /// The user's answer per `clarify` tool call id ('' when unanswered).
+  final Map<String, String> _clarifyAnswers = {};
 
   /// Choice message id → unanswered server request.
   final Map<String, _PendingRequest> _pending = {};
 
   /// Model picked for a draft thread, applied right after its session exists.
   final Map<String, ChatModel> _pendingModels = {};
+
+  /// Threads whose prompt was submitted and whose turn has not started yet.
+  final Set<String> _localPrompts = {};
+
+  /// Threads running a turn the server started (a scheduled job delivered
+  /// to the main chat, the heartbeat): no local message asked for it.
+  final Set<String> _serverTurns = {};
+
+  /// The server has no "Bot Chat" session: the main chat takes that title
+  /// once it exists ([_resolveMain]).
+  bool _mainTitlePending = false;
+
+  /// Debounces `sessions.changed` before the main chat is fetched again.
+  Timer? _sessionsChanged;
 
   /// One tear-off so `HermesConnection.unregister` can match it.
   late final ServerRequestHandler _handler = _onRequest;
@@ -275,24 +403,54 @@ final class ChatController {
   /// Instance this chat talks to.
   String get instanceId => _instanceId;
 
+  /// Hermes profile whose sessions and approvals this controller owns.
+  String get profile => _profile;
+
+  /// The current stored main session (empty while it remains a draft).
+  ThreadRef get ref =>
+      _refOf(_isDraft(_state.mainThread.id) ? '' : _state.mainThread.id);
+
+  /// Updates display metadata without rebuilding an in-flight conversation.
+  void setAgentName(String name) {
+    if (_state.agentName != name) _emit(_state.copyWith(agentName: name));
+  }
+
   ChatState get state => _state;
 
   void addListener(void Function() listener) => _listeners.add(listener);
   void removeListener(void Function() listener) => _listeners.remove(listener);
 
-  ThreadRef _refOf(String threadId) =>
-      ThreadRef(instanceId: _instanceId, sessionId: threadId);
+  ThreadRef _refOf(String threadId) => ThreadRef(
+    instanceId: _instanceId,
+    profile: _profile,
+    sessionId: threadId,
+  );
 
   bool _isDraft(String threadId) => threadId.startsWith('draft-');
   String _draftId() => 'draft-${_seq++}';
 
   void _emit(ChatState next) {
     if (_disposed) return;
-    _state = next;
+    final starts = next.turnStartIds;
+    final sameStarts =
+        starts.length == _segments.length &&
+        _segments.entries.every((e) => starts[e.key] == e.value.first);
+    _state = sameStarts && _same(next.turnMessageIds, _turn)
+        ? next
+        : next.copyWith(
+            turnMessageIds: Map.unmodifiable(_turn),
+            turnStartIds: Map.unmodifiable({
+              for (final e in _segments.entries) e.key: e.value.first,
+            }),
+          );
     for (final listener in List.of(_listeners)) {
       listener();
     }
   }
+
+  static bool _same(Map<String, String> shown, Map<String, String> actual) =>
+      shown.length == actual.length &&
+      actual.entries.every((e) => shown[e.key] == e.value);
 
   // ------------------------------------------------------------ connection
 
@@ -306,7 +464,10 @@ final class ChatController {
     );
     final HermesConnection connection;
     try {
-      connection = await _connections.connectionFor(_instanceId);
+      connection = await _connections.connectionFor(
+        _instanceId,
+        profile: _profile,
+      );
     } on Object catch (e) {
       _emit(
         _state.copyWith(
@@ -323,8 +484,127 @@ final class ChatController {
     _eventsSub = transport.events.listen(_onEvent);
     _stateSub = transport.state.listen(_onConnectionState);
     _onConnectionState(transport.currentState);
+    final resolved = await _resolveMain(transport);
     final active = _state.activeThreadId;
-    if (!_isDraft(active)) await _resume(active);
+    if (!_isDraft(active) && !_loaded.contains(active)) await _resume(active);
+    if (resolved) await _openMain(transport);
+  }
+
+  /// Makes the main chat the profile's [botChatTitle] session, where Hermes
+  /// delivers scheduled jobs and the heartbeat (`deliver: bot-chat`): adopts
+  /// the server's, else creates it (for a main chat not created yet) or
+  /// marks the stored one for renaming ([_openMain]). Returns whether the
+  /// lookup answered; an unreadable one keeps the stored main chat as is.
+  Future<bool> _resolveMain(HermesTransport transport) async {
+    final found = await _lookupBotChat(transport);
+    if (found == null || _disposed) return false;
+    final mainId = _state.mainThread.id;
+    final row = found.sessions.firstOrNull;
+    if (row == null) {
+      _mainTitlePending = true;
+      if (_isDraft(mainId)) {
+        try {
+          await _createSession(mainId);
+        } on Object {
+          // Still a draft: its first message creates it, under that title.
+        }
+      }
+      return true;
+    }
+    if (row.id != mainId && row.resolvedId != mainId) _adoptMain(row.id);
+    return true;
+  }
+
+  /// The profile's [botChatTitle] sessions, or null when the lookup failed.
+  Future<SessionListResult?> _lookupBotChat(HermesTransport transport) async {
+    try {
+      return await transport.call(
+        HermesMethods.sessionList,
+        const SessionListParams(title: botChatTitle),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Looks the profile's [botChatTitle] session up again (sessions changed
+  /// on the server, the socket came back): when another session holds the
+  /// title now (the main chat was renamed away and a new one created), it
+  /// becomes the main chat and opens; the previous one stays as a side chat.
+  /// No Bot Chat at all keeps the main chat as it is: renaming it back is
+  /// left to the next start. Returns whether the main chat changed.
+  Future<bool> _recheckMain(HermesTransport transport) async {
+    final row = (await _lookupBotChat(transport))?.sessions.firstOrNull;
+    final mainId = _state.mainThread.id;
+    if (_disposed ||
+        row == null ||
+        row.id == mainId ||
+        row.resolvedId == mainId) {
+      return false;
+    }
+    _mainTitlePending = false;
+    _adoptMain(row.id);
+    await _openMain(transport);
+    return true;
+  }
+
+  /// The main chat becomes the server's Bot Chat session [mainId]. A main
+  /// chat created before stays, as a side chat of it.
+  void _adoptMain(String mainId) {
+    final previous = _state.mainThread;
+    final keep = !_isDraft(previous.id);
+    for (final e in _parents.entries.toList()) {
+      if (e.value == previous.id) _parents[e.key] = mainId;
+    }
+    if (keep) _parents[previous.id] = mainId;
+    _emit(
+      _state.copyWith(
+        threads: [
+          Thread(
+            id: mainId,
+            title: previous.title,
+            startedAt: previous.startedAt,
+            messages: keep ? const [] : previous.messages,
+          ),
+          ..._state.sideThreads,
+          if (keep)
+            Thread(
+              id: previous.id,
+              title: previous.title == mainThreadTitle ? '' : previous.title,
+              startedAt: previous.startedAt,
+              messages: previous.messages,
+            ),
+        ],
+        activeThreadId: _state.activeThreadId == previous.id
+            ? mainId
+            : _state.activeThreadId,
+      ),
+    );
+    _observer?.mainSessionChanged(
+      _refOf(mainId),
+      previousId: keep ? previous.id : null,
+    );
+  }
+
+  /// Opens the stored main chat in the background, so its live session is
+  /// the one Hermes hands scheduled turns to, and gives it the Bot Chat
+  /// title when the server had none. A title refused (taken meanwhile)
+  /// leaves the main chat as it is.
+  Future<void> _openMain(HermesTransport transport) async {
+    final mainId = _state.mainThread.id;
+    if (_isDraft(mainId) || _disposed) return;
+    if (!_loaded.contains(mainId)) await _resume(mainId);
+    final live = _live[mainId];
+    if (!_mainTitlePending || live == null || _disposed) return;
+    try {
+      await transport.call(
+        HermesMethods.sessionTitle,
+        SessionTitleParams(sessionId: live, title: botChatTitle),
+      );
+      _mainTitlePending = false;
+    } on Object {
+      // Kept under its own title; the next connection tries again.
+    }
   }
 
   /// Retries after a terminal connection error.
@@ -332,6 +612,9 @@ final class ChatController {
     if (_state.connection != ChatConnection.error) return;
     await _eventsSub?.cancel();
     await _stateSub?.cancel();
+    for (final live in _live.values) {
+      _connection?.unregister(live, _handler);
+    }
     _connection = null;
     _live.clear();
     _threadOfLive.clear();
@@ -349,6 +632,7 @@ final class ChatController {
       ConnectionState.error => ChatConnection.error,
     };
     final wasDown = _state.connection == ChatConnection.reconnecting;
+    if (mapped != ChatConnection.ready) _detachRequests();
     _emit(
       _state.copyWith(
         connection: mapped,
@@ -363,12 +647,16 @@ final class ChatController {
     if (mapped == ChatConnection.ready && wasDown) {
       // Live session ids do not survive a new socket: resume what was open.
       final loaded = _loaded.toList();
+      for (final live in _live.values) {
+        _connection?.unregister(live, _handler);
+      }
       _live.clear();
       _threadOfLive.clear();
       _loaded.clear();
       for (final threadId in loaded) {
         unawaited(_resume(threadId));
       }
+      if (transport != null) unawaited(_recheckMain(transport));
     }
   }
 
@@ -399,14 +687,33 @@ final class ChatController {
         SessionResumeParams(sessionId: threadId),
       );
     } on Object catch (e) {
+      if (_disposed) return;
+      if (e is HermesRpcError &&
+          e.code == _sessionNotFound &&
+          threadId != _state.mainThread.id) {
+        // A side chat whose session the server never stored (an empty main
+        // chat filed under the Bot Chat, deleted elsewhere): nothing to load.
+        _observer?.sessionDeleted(_refOf(threadId));
+        _dropThread(threadId);
+        return;
+      }
       _appendNotice(threadId, 'Could not load this chat: ${_describe(e)}');
       return;
     }
     if (_disposed) return;
     _bindLive(threadId, result.sessionId);
     _loaded.add(threadId);
-    final history = _fromTranscript(threadId, result.messages);
-    final title = result.info.title;
+    final rows = _settledRows(threadId, result.messages);
+    if (_loadClarifyAnswers(threadId, rows) case final loading?) {
+      await loading;
+      if (_disposed) return;
+    }
+    final history = _fromTranscript(threadId, rows);
+    final title = _serverTitle(threadId, result.info.title);
+    final shown = _state.threads.where((t) => t.id == threadId).firstOrNull;
+    // What streamed here stays as it was shown; unanswered request cards
+    // are not part of the transcript either.
+    final messages = shown == null ? history : _merge(shown.messages, history);
     _emit(
       _state.copyWith(
         threads: [
@@ -416,11 +723,7 @@ final class ChatController {
                 id: t.id,
                 title: title.isEmpty ? t.title : title,
                 startedAt: _startedAt(result) ?? t.startedAt,
-                // Unanswered request cards are not part of the transcript.
-                messages: [
-                  ...history,
-                  ...t.messages.where((m) => _pending.containsKey(m.id)),
-                ],
+                messages: messages,
               )
             else
               t,
@@ -439,7 +742,7 @@ final class ChatController {
             : ({..._state.busyThreads}..remove(threadId)),
       ),
     );
-    _observer?.messagesSettled(_refOf(threadId), history);
+    _observer?.messagesSettled(_refOf(threadId), messages);
     if (title.isNotEmpty) _observer?.sessionTitled(_refOf(threadId), title);
     for (final request in result.openRequests ?? const <OpenRequestEntry>[]) {
       transport.redeliverServerRequest(
@@ -450,6 +753,17 @@ final class ChatController {
     }
     if (result.running != true) _settled(threadId);
   }
+
+  /// A session title from the server, '' for the main chat's [botChatTitle]
+  /// (an address for Hermes, not a name to show).
+  String _serverTitle(String threadId, String title) =>
+      threadId == _state.mainThread.id && title == botChatTitle ? '' : title;
+
+  /// Whether a transcript row of the agent extends [last] (the same turn's
+  /// bubble); a notice row stands alone.
+  static bool _joinsTurn(Message last) =>
+      last.author == Author.agent &&
+      !(last.blocks.length == 1 && last.blocks.single is NoticeBlock);
 
   /// Display time of the session's first message (`started_at`, else the
   /// first transcript timestamp), in epoch seconds from the server.
@@ -473,8 +787,21 @@ final class ChatController {
       final text = m.text ?? (m.content is String ? m.content as String : '');
       switch (m.role) {
         case 'user':
+          // A scheduled job's output handed to the main chat is no message
+          // of the user: a notice line before the agent's turn on it.
+          final job = cronBriefJobName(text);
           out.add(
-            Message(id: id, author: Author.user, blocks: [TextBlock(text)]),
+            job == null
+                ? Message(
+                    id: id,
+                    author: Author.user,
+                    blocks: [TextBlock(text)],
+                  )
+                : Message(
+                    id: id,
+                    author: Author.agent,
+                    blocks: [NoticeBlock('Scheduled: $job')],
+                  ),
           );
         case 'assistant':
           final reasoning = m.reasoning ?? '';
@@ -485,8 +812,7 @@ final class ChatController {
           // One agent turn is one bubble, as when it streamed live: the
           // tool-calling rows and the final answer merge; the message takes
           // the last row id (the turn's `final_assistant_row_id`).
-          if (out.lastOrNull case final last?
-              when last.author == Author.agent) {
+          if (out.lastOrNull case final last? when _joinsTurn(last)) {
             final hasReasoning = last.blocks.any((b) => b is ReasoningBlock);
             out[out.length - 1] = Message(
               id: id,
@@ -504,15 +830,14 @@ final class ChatController {
         case 'tool' when isBrowserTool(m.name ?? ''):
           // Browser calls fold into one card, first in the turn's bubble.
           final toolId = m.toolCallId ?? id;
-          final host = _urlHost(m.args?['url']);
+          final host = urlHost(m.args?['url']);
           BrowserBlock update(BrowserBlock? current) {
             final kept = host.isEmpty ? current?.host ?? '' : host;
             return current?.copyWith(lastToolId: toolId, host: kept) ??
                 BrowserBlock(lastToolId: toolId, running: false, host: kept);
           }
 
-          if (out.lastOrNull case final last?
-              when last.author == Author.agent) {
+          if (out.lastOrNull case final last? when _joinsTurn(last)) {
             out[out.length - 1] = last.copyWith(
               blocks: _upsertBrowser(last.blocks, update),
             );
@@ -522,20 +847,34 @@ final class ChatController {
             );
           }
         case 'tool':
+          // The transcript keeps tool results only for file edits.
+          final result = m.text ?? m.content;
+          final outcome = toolOutcome(result);
           final block = ToolCallBlock(
             toolId: m.toolCallId ?? id,
             name: m.name ?? 'tool',
             summary: m.context ?? '',
+            detail: toolDetail(m.args),
+            output: outcome.output,
+            error: outcome.error,
+            outcomeKnown: result != null,
             running: false,
           );
           // Tool rows attach to the assistant turn that called them.
-          if (out.lastOrNull case final last?
-              when last.author == Author.agent) {
+          if (out.lastOrNull case final last? when _joinsTurn(last)) {
             out[out.length - 1] = last.copyWith(
               blocks: [...last.blocks, block],
             );
           } else {
             out.add(Message(id: id, author: Author.agent, blocks: [block]));
+          }
+          // The answer to a question of the agent is the user's message,
+          // where it was given; the turn goes on in a bubble below it.
+          if (m.name == 'clarify') {
+            final answer = _clarifyAnswers[block.toolId] ?? '';
+            if (answer.isNotEmpty) {
+              out.add(_answerMessage(block.toolId, answer));
+            }
           }
       }
     }
@@ -545,9 +884,134 @@ final class ChatController {
     ];
   }
 
+  /// The user's answer to the `clarify` call [toolId] as their message.
+  static Message _answerMessage(String toolId, String answer) => Message(
+    id: 'answer-$toolId',
+    author: Author.user,
+    blocks: [TextBlock(answer)],
+  );
+
+  /// [rows] without the turn running in [threadId]: it is on screen as it
+  /// streams. A turn the server started keeps its brief (the user row that
+  /// started it), which nothing here showed.
+  List<TranscriptMessage> _settledRows(
+    String threadId,
+    List<TranscriptMessage> rows,
+  ) {
+    if (!_turn.containsKey(threadId)) return rows;
+    final user = rows.lastIndexWhere((m) => m.role == 'user');
+    if (user < 0) return const [];
+    return rows.sublist(0, _serverTurns.contains(threadId) ? user + 1 : user);
+  }
+
+  /// Fetches the answers of the `clarify` calls in [rows] not known yet
+  /// ([_clarifyResults]); null when there is nothing to fetch.
+  Future<void>? _loadClarifyAnswers(
+    String threadId,
+    List<TranscriptMessage> rows,
+  ) {
+    final load = _clarifyResults;
+    if (load == null || _isDraft(threadId)) return null;
+    final missing = {
+      for (final m in rows)
+        if (m.role == 'tool' &&
+            m.name == 'clarify' &&
+            m.toolCallId != null &&
+            !_clarifyAnswers.containsKey(m.toolCallId))
+          m.toolCallId!,
+    };
+    if (missing.isEmpty) return null;
+    return () async {
+      final Map<String, Object?> results;
+      try {
+        results = await load(threadId);
+      } on Object {
+        return; // Unreadable: the questions show without their answers.
+      }
+      for (final id in missing) {
+        _clarifyAnswers[id] = _clarifyAnswerText(results[id]);
+      }
+    }();
+  }
+
+  /// [shown] updated with [history], a fresh read of the transcript, without
+  /// degrading what is on screen: messages streamed here (with their live
+  /// tool outcomes, reasoning, request cards and notices) stay as they are;
+  /// messages from an earlier read are replaced or dropped; transcript rows
+  /// nothing shows are inserted after the row they follow (a scheduled job's
+  /// brief right before the turn on it). Returns [shown] itself when
+  /// nothing changed.
+  List<Message> _merge(List<Message> shown, List<Message> history) {
+    final fresh = {for (final m in history) m.id: m};
+    var changed = false;
+    final out = <Message>[];
+    for (final m in shown) {
+      if (!_transcriptIds.contains(m.id)) {
+        out.add(m);
+        continue;
+      }
+      final next = fresh[m.id];
+      if (next == null) {
+        _transcriptIds.remove(m.id);
+        changed = true;
+      } else if (next.blocks.length != m.blocks.length ||
+          next.plainText != m.plainText) {
+        out.add(next);
+        changed = true;
+      } else {
+        out.add(m);
+      }
+    }
+    var anchor = -1;
+    for (final (i, m) in history.indexed) {
+      final at = _indexShowing(out, m.id);
+      if (at >= 0) {
+        anchor = at;
+        continue;
+      }
+      // The part of a turn above a question answered here (its rows carry
+      // no ids to match): the streamed turn shows it.
+      final answer = i + 1 < history.length ? history[i + 1] : null;
+      if (m.author == Author.agent &&
+          answer != null &&
+          answer.id.startsWith('answer-') &&
+          !_transcriptIds.contains(answer.id) &&
+          out.any((x) => x.id == answer.id)) {
+        continue;
+      }
+      // A message sent here whose turn reported no rows reads the same.
+      final next = anchor + 1 < out.length ? out[anchor + 1] : null;
+      if (m.author == Author.user &&
+          next != null &&
+          next.author == Author.user &&
+          next.id.startsWith('local-') &&
+          next.plainText == m.plainText) {
+        anchor++;
+        continue;
+      }
+      out.insert(++anchor, m);
+      changed = true;
+    }
+    if (!changed) return shown;
+    for (final m in out) {
+      if (identical(fresh[m.id], m)) _transcriptIds.add(m.id);
+    }
+    return out;
+  }
+
+  /// Index in [messages] of the message showing the transcript message [id]:
+  /// itself, or the streamed message of the turn that wrote that row.
+  int _indexShowing(List<Message> messages, String id) {
+    final at = messages.indexWhere((m) => m.id == id);
+    if (at >= 0) return at;
+    final owner = _shownRows[id];
+    return owner == null ? -1 : messages.indexWhere((m) => m.id == owner);
+  }
+
   // ---------------------------------------------------------------- events
 
   void _onEvent(HermesEvent event) {
+    if (event is SessionsChangedEvent) return _onSessionsChanged();
     final threadId = _threadOfLive[event.sessionId];
     if (threadId == null) return;
     switch (event) {
@@ -565,7 +1029,7 @@ final class ChatController {
         // Non-streaming providers deliver the whole block at once.
         _addReasoning(threadId, payload.text, whole: true);
       case ToolStartEvent(:final payload) when isBrowserTool(payload.name):
-        final host = _urlHost(payload.args?['url']);
+        final host = urlHost(payload.args?['url']);
         _updateTurn(
           threadId,
           (blocks) => _upsertBrowser(
@@ -586,40 +1050,49 @@ final class ChatController {
               toolId: payload.toolId,
               name: payload.name,
               summary: payload.preview ?? payload.context ?? '',
+              detail: toolDetail(payload.args),
             ),
           ],
         );
       case ToolCompleteEvent(:final payload):
         final summary = payload.summary ?? '';
-        _updateTurn(
-          threadId,
-          (blocks) => [
-            for (final b in blocks)
-              if (b is BrowserBlock && isBrowserTool(payload.name))
-                b.copyWith(lastToolId: payload.toolId)
-              else if (b is ToolCallBlock && b.toolId == payload.toolId)
-                b.done(summary.isEmpty ? b.summary : summary)
-              else
-                b,
-          ],
-        );
-        _observer?.toolCompleted(
-          _refOf(threadId),
-          ActivityItem(
-            tool: payload.name,
-            summary: summary,
-            at: _now(),
-            sessionId: _isDraft(threadId) ? '' : threadId,
-          ),
-        );
+        final detail = toolDetail(payload.args);
+        final outcome = toolOutcome(payload.result);
+        final seconds = payload.durationS;
+        final duration = seconds == null
+            ? null
+            : Duration(milliseconds: (seconds * 1000).round());
+        List<Block> complete(List<Block> blocks) => [
+          for (final b in blocks)
+            if (b is BrowserBlock && isBrowserTool(payload.name))
+              b.copyWith(lastToolId: payload.toolId)
+            else if (b is ToolCallBlock && b.toolId == payload.toolId)
+              b.done(
+                summary: summary.isEmpty ? b.summary : summary,
+                detail: detail,
+                output: outcome.output,
+                error: outcome.error,
+                duration: duration,
+              )
+            else
+              b,
+        ];
+        // The call may sit above a card the turn waited on.
+        if (_turn.containsKey(threadId)) {
+          _updateSegments(threadId, complete);
+        } else {
+          _updateTurn(threadId, complete);
+        }
+        _observer?.toolCompleted(_refOf(threadId), payload.name);
       case MessageCompleteEvent(:final payload):
         _completeTurn(threadId, payload);
       case HermesErrorEvent(:final payload):
         _appendNotice(threadId, payload.message, isError: true);
         _endTurn(threadId);
       case SessionTitleEvent(:final payload):
-        _setTitle(threadId, payload.title);
-        _observer?.sessionTitled(_refOf(threadId), payload.title);
+        final title = _serverTitle(threadId, payload.title);
+        _setTitle(threadId, title);
+        if (title.isNotEmpty) _observer?.sessionTitled(_refOf(threadId), title);
       // Model switches (`/model`, `config.set`) announce the new model here.
       // Hermes also sends one when a turn is over and its session idle again
       // (`running` is cleared after `message.complete`).
@@ -643,11 +1116,98 @@ final class ChatController {
       default:
         break;
     }
+    // The model answers: the turn's input is in the transcript by now.
+    if (event is MessageDeltaEvent ||
+        event is ReasoningDeltaEvent ||
+        event is ReasoningAvailableEvent ||
+        event is ToolStartEvent) {
+      _showBrief(threadId);
+    }
+  }
+
+  /// Shows the brief of the server-started turn running in [threadId] (the
+  /// `Scheduled: <job>` notice) as soon as the turn streams: Hermes sends
+  /// no prompt with `message.start`, and writes the turn's user row before
+  /// its first model call, so the transcript has it once the model answers.
+  /// Read too early, the brief joins when the turn ends ([_endTurn]).
+  void _showBrief(String threadId) {
+    if (_briefPending.remove(threadId)) {
+      unawaited(_refreshHistory(threadId, duringTurn: true));
+    }
+  }
+
+  /// Hermes wrote sessions (`state.db moved`): a scheduled job or the
+  /// heartbeat may have answered in the main chat through another client
+  /// or the CLI, not this live session, or the Bot Chat session changed.
+  /// Debounced, then [_recheckMain] and [_refreshMain].
+  void _onSessionsChanged() {
+    _sessionsChanged?.cancel();
+    _sessionsChanged = Timer(sessionsChangedDebounce, () {
+      unawaited(_sessionsSettled());
+    });
+  }
+
+  Future<void> _sessionsSettled() async {
+    final transport = _connection?.transport;
+    if (transport == null || _disposed) return;
+    // A new main chat opened with its fresh transcript.
+    if (await _recheckMain(transport)) return;
+    await _refreshMain();
+  }
+
+  /// Fetches the main chat's transcript again while it is idle; turns
+  /// streamed here are already shown (their messages carry the transcript
+  /// row ids), so only rows written elsewhere change it.
+  Future<void> _refreshMain() => _refreshHistory(_state.mainThread.id);
+
+  /// Reads [threadId]'s durable transcript again (`session.history`) and
+  /// [_merge]s the rows it does not show yet. An unopened or unreadable
+  /// thread stays as it is; so does a running one, unless [duringTurn]
+  /// (the rows before its turn are read for a server-started turn's brief).
+  Future<void> _refreshHistory(
+    String threadId, {
+    bool duringTurn = false,
+  }) async {
+    final live = _live[threadId];
+    final transport = _connection?.transport;
+    bool skip() =>
+        _disposed || (!duringTurn && _state.busyThreads.contains(threadId));
+    if (live == null || transport == null || skip()) return;
+    final SessionHistoryResult result;
+    try {
+      result = await transport.call(
+        HermesMethods.sessionHistory,
+        SessionHistoryParams(sessionId: live),
+      );
+    } on Object {
+      return;
+    }
+    if (skip()) return;
+    final rows = _settledRows(threadId, result.messages);
+    if (!duringTurn) {
+      if (_loadClarifyAnswers(threadId, rows) case final loading?) {
+        await loading;
+        if (skip()) return;
+      }
+    }
+    final thread = _state.threads.where((t) => t.id == threadId).firstOrNull;
+    if (thread == null) return;
+    final merged = _merge(thread.messages, _fromTranscript(threadId, rows));
+    if (identical(merged, thread.messages)) return;
+    _emit(_updateThread(threadId, (_) => merged));
+    _observer?.messagesSettled(_refOf(threadId), merged);
   }
 
   String _startTurn(String threadId) {
     final id = 'turn-${_seq++}';
     _turn[threadId] = id;
+    _segments[threadId] = [id];
+    _continueBelow.remove(threadId);
+    // No prompt of ours waits for it: the server started this turn.
+    if (!_localPrompts.remove(threadId)) {
+      _serverTurns.add(threadId);
+      _briefPending.add(threadId);
+    }
     _emit(
       _updateThread(
         threadId,
@@ -657,10 +1217,26 @@ final class ChatController {
     return id;
   }
 
+  /// The running turn of [threadId] goes on in a new agent message at the
+  /// end of the thread, below the request card (and answer) it waited on.
+  String _continueTurn(String threadId) {
+    final id = 'turn-${_seq++}';
+    _turn[threadId] = id;
+    (_segments[threadId] ??= []).add(id);
+    _emit(
+      _updateThread(
+        threadId,
+        (m) => [...m, Message(id: id, author: Author.agent, blocks: const [])],
+      ),
+    );
+    return id;
+  }
+
   /// Applies [update] to the running turn's blocks, starting a turn when none
   /// runs. Whatever the turn shows next replaces its wait line.
   void _updateTurn(String threadId, List<Block> Function(List<Block>) update) {
-    final id = _turn[threadId] ?? _startTurn(threadId);
+    var id = _turn[threadId] ?? _startTurn(threadId);
+    if (_continueBelow.remove(threadId)) id = _continueTurn(threadId);
     _emit(
       _updateMessage(
         threadId,
@@ -674,6 +1250,35 @@ final class ChatController {
       ),
     );
   }
+
+  /// Applies [update] to every message of the running turn of [threadId]
+  /// (each part of a turn that went on below request cards).
+  void _updateSegments(
+    String threadId,
+    List<Block> Function(List<Block>) update,
+  ) {
+    final ids = _segments[threadId] ?? const <String>[];
+    _emit(
+      _updateThread(threadId, (messages) => _updateAll(messages, ids, update)),
+    );
+  }
+
+  /// [messages] with [update] applied to those in [ids]; a message whose
+  /// blocks come back unchanged stays the same object.
+  static List<Message> _updateAll(
+    List<Message> messages,
+    List<String> ids,
+    List<Block> Function(List<Block>) update,
+  ) => [
+    for (final m in messages)
+      if (!ids.contains(m.id))
+        m
+      else if (update(m.blocks) case final blocks
+          when !identical(blocks, m.blocks))
+        m.copyWith(blocks: blocks)
+      else
+        m,
+  ];
 
   /// Shows [status] as the running turn's wait line; '' clears it.
   void _setWait(String threadId, String status) {
@@ -735,6 +1340,8 @@ final class ChatController {
 
   void _completeTurn(String threadId, MessageCompletePayload payload) {
     if (!_turn.containsKey(threadId)) _startTurn(threadId);
+    // The final answer goes below the card the turn waited on.
+    if (_continueBelow.remove(threadId)) _continueTurn(threadId);
     _adoptRowIds(threadId, payload.persistedTurn);
     final finalText = payload.text is String ? payload.text as String : '';
     _updateTurn(threadId, (blocks) {
@@ -755,12 +1362,22 @@ final class ChatController {
         default:
           break;
       }
-      return [
-        for (final b in next)
-          if (b is ToolCallBlock && b.running) b.done(b.summary) else b,
-      ];
+      return next;
     });
-    _endTurn(threadId);
+    // A call still open (the stop came during it) reads as ended.
+    _updateSegments(
+      threadId,
+      (blocks) => blocks.any((b) => b is ToolCallBlock && b.running)
+          ? [
+              for (final b in blocks)
+                if (b is ToolCallBlock && b.running)
+                  b.done(summary: b.summary)
+                else
+                  b,
+            ]
+          : blocks,
+    );
+    _endTurn(threadId, persisted: payload.persistedTurn);
   }
 
   /// Renames the turn's messages to their transcript row ids (`row-<n>`), the
@@ -772,10 +1389,16 @@ final class ChatController {
     if (persisted == null || turnId == null) return;
     final thread = _state.threads.firstWhere((t) => t.id == threadId);
     final turnIndex = thread.messages.indexWhere((m) => m.id == turnId);
-    final userIndex = thread.messages
-        .take(turnIndex < 0 ? thread.messages.length : turnIndex)
-        .toList()
-        .lastIndexWhere((m) => m.author == Author.user);
+    final startId = _segments[threadId]?.first ?? turnId;
+    final startIndex = thread.messages.indexWhere((m) => m.id == startId);
+    // A turn the server started answers no message shown here: its user
+    // row (a scheduled job's brief) arrives with the transcript.
+    final userIndex = _serverTurns.contains(threadId)
+        ? -1
+        : thread.messages
+              .take(startIndex < 0 ? thread.messages.length : startIndex)
+              .toList()
+              .lastIndexWhere((m) => m.author == Author.user);
     final renamed = [
       for (final (i, m) in thread.messages.indexed)
         if (i == turnIndex && agentRow != null)
@@ -785,7 +1408,13 @@ final class ChatController {
         else
           m,
     ];
-    if (agentRow != null) _turn[threadId] = 'row-$agentRow';
+    if (agentRow != null) {
+      _turn[threadId] = 'row-$agentRow';
+      final segments = _segments[threadId];
+      if (segments != null && segments.isNotEmpty) {
+        segments[segments.length - 1] = 'row-$agentRow';
+      }
+    }
     _emit(
       _state.copyWith(
         threads: [
@@ -797,26 +1426,62 @@ final class ChatController {
   }
 
   /// Every way a turn ends (complete, error, stop) settles its browser card
-  /// and drops its wait line.
-  void _endTurn(String threadId) {
+  /// and drops its wait line. [persisted] rows of the turn are remembered as
+  /// shown by its messages, so a later read of the transcript keeps them.
+  void _endTurn(String threadId, {PersistedTurn? persisted}) {
     final turnId = _turn.remove(threadId);
-    final settled = turnId == null
-        ? _state
-        : _updateMessage(
-            threadId,
-            turnId,
-            (m) => m.blocks.any((b) => b is BrowserBlock || b is WaitBlock)
-                ? m.copyWith(
-                    blocks: [
-                      for (final b in m.blocks)
-                        if (b is BrowserBlock)
-                          b.copyWith(running: false, step: '')
-                        else if (b is! WaitBlock)
-                          b,
-                    ],
-                  )
-                : m,
-          );
+    final segments = _segments.remove(threadId) ?? const <String>[];
+    _continueBelow.remove(threadId);
+    _briefPending.remove(threadId);
+    final parts = segments.isEmpty && turnId != null ? [turnId] : segments;
+    var settled = _updateThread(
+      threadId,
+      (messages) => _updateAll(
+        messages,
+        parts,
+        (blocks) => blocks.any((b) => b is BrowserBlock || b is WaitBlock)
+            ? [
+                for (final b in blocks)
+                  if (b is BrowserBlock)
+                    b.copyWith(running: false, step: '')
+                  else if (b is! WaitBlock)
+                    b,
+              ]
+            : blocks,
+      ),
+    );
+    // Past a card the turn may have said nothing more: no empty bubble.
+    var shownBy = turnId;
+    if (turnId != null && segments.length > 1) {
+      final tail = settled.threads
+          .where((t) => t.id == threadId)
+          .expand((t) => t.messages)
+          .where((m) => m.id == turnId)
+          .firstOrNull;
+      if (tail != null && tail.blocks.isEmpty) {
+        final state = settled;
+        settled = state.copyWith(
+          threads: [
+            for (final t in state.threads)
+              t.id == threadId
+                  ? t.withMessages([
+                      for (final m in t.messages)
+                        if (m.id != turnId) m,
+                    ])
+                  : t,
+          ],
+        );
+        shownBy = segments[segments.length - 2];
+      }
+    }
+    if (persisted != null && shownBy != null) {
+      for (final row in persisted.rowIds) {
+        final id = 'row-$row';
+        if (row != persisted.userRowId && id != shownBy) {
+          _shownRows[id] = shownBy;
+        }
+      }
+    }
     _emit(
       settled.copyWith(busyThreads: {..._state.busyThreads}..remove(threadId)),
     );
@@ -825,6 +1490,7 @@ final class ChatController {
       _observer?.messagesSettled(_refOf(threadId), thread.messages);
     }
     if (!_isDraft(threadId)) _observer?.turnEnded(_refOf(threadId));
+    if (_serverTurns.remove(threadId)) unawaited(_refreshHistory(threadId));
   }
 
   void _appendNotice(String threadId, String text, {bool isError = true}) {
@@ -884,6 +1550,7 @@ final class ChatController {
   // ------------------------------------------------------ server requests
 
   Future<JsonObject> _onRequest(HermesServerRequest<JsonObject> request) {
+    if (_disposed) throw const HermesRequestDetached();
     final threadId = _threadOfLive[request.sessionId];
     if (threadId == null) {
       throw UnsupportedError('no thread for ${request.sessionId}');
@@ -940,7 +1607,12 @@ final class ChatController {
         throw UnsupportedError('${request.method} is not supported yet');
     }
     final messageId = 'request-${request.id}';
+    if (request is ClarifyServerRequest) {
+      pending.toolId = _askingClarify(threadId);
+    }
     _pending[messageId] = pending;
+    // The card stays where it was asked: the turn goes on below it.
+    if (_turn.containsKey(threadId)) _continueBelow.add(threadId);
     final next = _updateThread(
       threadId,
       (m) => [
@@ -958,8 +1630,35 @@ final class ChatController {
     return pending.completer.future;
   }
 
+  /// Drops local prompts without making a decision on the server. Only the
+  /// next resume's open_requests snapshot can restore actionable prompts.
+  void _detachRequests() {
+    if (_pending.isEmpty) return;
+    final messageIds = _pending.keys.toSet();
+    for (final pending in _pending.values) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.completeError(const HermesRequestDetached());
+      }
+    }
+    _pending.clear();
+    _emit(
+      _state.copyWith(
+        pendingApprovalIds: {..._state.pendingApprovalIds}
+          ..removeAll(messageIds),
+        threads: [
+          for (final thread in _state.threads)
+            thread.withMessages([
+              for (final message in thread.messages)
+                if (!messageIds.contains(message.id)) message,
+            ]),
+        ],
+      ),
+    );
+  }
+
   /// Answers the choice at [blockIndex] of [messageId] (approval or clarify).
   void choose(String messageId, String answer, {int blockIndex = 0}) {
+    if (_disposed || _state.connection != ChatConnection.ready) return;
     final trimmed = answer.trim();
     final pending = _pending[messageId];
     if (trimmed.isEmpty || pending == null) return;
@@ -998,13 +1697,56 @@ final class ChatController {
     }
     final qids = pending.questionIds;
     if (qids == null) {
+      _postAnswer(threadId, messageId, pending, trimmed);
       _resolve(messageId, ClarifyResult(answer: trimmed));
       return;
     }
     pending.answers[qids[blockIndex]] = trimmed;
     if (pending.answers.length == qids.length) {
+      _postAnswer(
+        threadId,
+        messageId,
+        pending,
+        [for (final q in qids) pending.answers[q]!].join('\n'),
+      );
       _resolve(messageId, ClarifyResult(answers: Map.of(pending.answers)));
     }
+  }
+
+  /// Id of the `clarify` call the running turn of [threadId] waits on.
+  String? _askingClarify(String threadId) {
+    final turnId = _turn[threadId];
+    return _state.threads
+        .where((t) => t.id == threadId)
+        .expand((t) => t.messages)
+        .where((m) => m.id == turnId)
+        .expand((m) => m.blocks)
+        .whereType<ToolCallBlock>()
+        .where((b) => b.running && b.name == 'clarify')
+        .lastOrNull
+        ?.toolId;
+  }
+
+  /// Posts [answer] to the question card [messageId] as the user's message,
+  /// right below the card (where the transcript puts it after a reload).
+  void _postAnswer(
+    String threadId,
+    String messageId,
+    _PendingRequest pending,
+    String answer,
+  ) {
+    final text = _withoutRecommended(answer);
+    final toolId = pending.toolId;
+    if (toolId != null) _clarifyAnswers[toolId] = text;
+    final reply = _answerMessage(toolId ?? pending.requestId, text);
+    _emit(
+      _updateThread(
+        threadId,
+        (messages) => [
+          for (final m in messages) ...[m, if (m.id == messageId) reply],
+        ],
+      ),
+    );
   }
 
   void _resolve(String messageId, JsonObject result) {
@@ -1100,11 +1842,13 @@ final class ChatController {
     _emit(_state.copyWith(busyThreads: {..._state.busyThreads, thread}));
     try {
       thread = await _ensureSession(thread);
+      _localPrompts.add(thread);
       await transport.call(
         HermesMethods.promptSubmit,
         PromptSubmitParams(sessionId: _live[thread]!, text: text),
       );
     } on Object catch (e) {
+      _localPrompts.remove(thread);
       _appendNotice(thread, 'Not sent: ${_describe(e)}');
       _emit(
         _state.copyWith(busyThreads: {..._state.busyThreads}..remove(thread)),
@@ -1429,10 +2173,17 @@ final class ChatController {
       parentId = await _createSession(parentId);
     }
     final draft = _state.threads.firstWhere((t) => t.id == draftId);
+    // The main chat is created as the profile's Bot Chat when the server
+    // has none ([_resolveMain]).
+    final botChat = _mainTitlePending && draftId == _state.mainThread.id;
     final result = await _connection!.transport.call(
       HermesMethods.sessionCreate,
-      SessionCreateParams(parentSessionId: parentId),
+      SessionCreateParams(
+        parentSessionId: parentId,
+        title: botChat ? botChatTitle : null,
+      ),
     );
+    if (botChat) _mainTitlePending = false;
     final storedId = result.storedSessionId;
     _emit(
       _state.copyWith(
@@ -1506,19 +2257,24 @@ final class ChatController {
     );
   }
 
-  /// Stops the running turn of the active thread.
-  Future<void> interrupt() async {
-    final threadId = _state.activeThreadId;
-    final live = _live[threadId];
+  /// Stops the running turn of [threadId] (the active thread by default):
+  /// the chat's stop button and the Activity tab's running task.
+  Future<void> interrupt([String? threadId]) async {
+    final thread = threadId ?? _state.activeThreadId;
+    final live = _live[thread];
     final transport = _connection?.transport;
-    if (live == null || transport == null || !_state.busy) return;
+    if (live == null ||
+        transport == null ||
+        !_state.busyThreads.contains(thread)) {
+      return;
+    }
     try {
       await transport.call(
         HermesMethods.sessionInterrupt,
         SessionInterruptParams(sessionId: live),
       );
     } on Object catch (e) {
-      _appendNotice(threadId, 'Could not stop: ${_describe(e)}');
+      _appendNotice(thread, 'Could not stop: ${_describe(e)}');
     }
   }
 
@@ -1701,7 +2457,9 @@ final class ChatController {
   /// server (they reappear as `open_requests` on the next resume).
   Future<void> dispose() async {
     _disposed = true;
+    _sessionsChanged?.cancel();
     _listeners.clear();
+    _detachRequests();
     for (final live in _live.values) {
       _connection?.unregister(live, _handler);
     }
@@ -1720,7 +2478,67 @@ final class _PendingRequest {
   final List<String>? questionIds;
   final Map<String, String> answers = {};
   final completer = Completer<JsonObject>();
+
+  /// The `clarify` tool call a question card answers, when known.
+  String? toolId;
 }
+
+/// The user's answer in a `clarify` tool result (one question, or a batch:
+/// one answer per line); '' when unanswered, unreadable, or answered by
+/// Hermes itself because no user was there (a scheduled run).
+String _clarifyAnswerText(Object? result) {
+  var data = result;
+  if (data is String) {
+    try {
+      data = jsonDecode(data);
+    } on FormatException {
+      return '';
+    }
+  }
+  if (data is! Map) return '';
+  String answer(Object? response) => switch (response) {
+    final String text when _headlessAnswer.hasMatch(text) => '',
+    final String text => text.trim(),
+    final List<Object?> picks => picks.whereType<String>().join(', '),
+    _ => '',
+  };
+  return switch (data['responses']) {
+    final List<Object?> responses => [
+      for (final r in responses)
+        if (r is Map) answer(r['user_response']),
+    ].where((a) => a.isNotEmpty).join('\n'),
+    _ => answer(data['user_response']),
+  };
+}
+
+/// [answer] without the "(Recommended)" label Hermes puts on the first
+/// choice of a question (presentation only, not part of the answer).
+String _withoutRecommended(String answer) {
+  final text = answer.trim();
+  return text.toLowerCase().endsWith(_recommended)
+      ? text.substring(0, text.length - _recommended.length).trimRight()
+      : text;
+}
+
+const _recommended = '(recommended)';
+
+/// Hermes' own answer to a clarify asked with no user present (`hermes chat
+/// -q`, oneshot, cron): "[single-query mode: no user available to answer …]".
+final _headlessAnswer = RegExp(r'^\s*\[[\w -]+ mode: no user available');
+
+/// Hermes' JSON-RPC code for a session it does not have.
+const _sessionNotFound = 4007;
+
+/// Title of the profile's session Hermes delivers scheduled jobs and the
+/// heartbeat to (`deliver: bot-chat`): the main chat's session.
+const botChatTitle = 'Bot Chat';
+
+/// How long `sessions.changed` must stay quiet before the main chat is
+/// fetched again (a turn written elsewhere moves state.db several times).
+const sessionsChangedDebounce = Duration(milliseconds: 600);
+
+/// The main thread's title until its session names it.
+const mainThreadTitle = 'Chat';
 
 String _wallClock() => formatChatTime(DateTime.now());
 
@@ -1765,7 +2583,7 @@ final _busyWarning = RegExp(r'^session busy\b');
 /// Browser card status line of a `browser_*` tool call ([args] as sent in
 /// `tool.start`).
 String browserStep(String name, Map<String, Object?>? args) => switch (name) {
-  'browser_navigate' => switch (_urlHost(args?['url'])) {
+  'browser_navigate' => switch (urlHost(args?['url'])) {
     '' => 'Opening page',
     final host => 'Opening $host',
   },
@@ -1780,16 +2598,6 @@ String browserStep(String name, Map<String, Object?>? args) => switch (name) {
   'browser_console' => 'Reading page',
   _ => 'Working in browser',
 };
-
-/// Host of a tool's `url` argument (`https://` assumed without a scheme),
-/// or '' when there is none.
-String _urlHost(Object? url) {
-  if (url is! String || url.trim().isEmpty) return '';
-  final trimmed = url.trim();
-  return Uri.tryParse(trimmed.contains('://') ? trimmed : 'https://$trimmed')
-          ?.host ??
-      '';
-}
 
 /// An API retry backoff as Hermes words it on the live status line
 /// (`agent/turn_recovery.py::compute_error_backoff`):

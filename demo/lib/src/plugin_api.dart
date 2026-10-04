@@ -29,8 +29,11 @@ final class DemoComputer {
 }
 
 /// An HTTP client answering the Hermuse plugin routes of [instance] from the
-/// demo content: GETs return its feed, ideas, goals, library, reflections
-/// and system files, and Hermes' cron jobs (`GET /api/cron/jobs`); every
+/// demo content: GETs return its feed, ideas, goals, tasks, memory, library,
+/// reflections and system files, Hermes' cron jobs (`GET /api/cron/jobs`,
+/// `/{id}`, `/{id}/runs`) and the messages of their run sessions, an
+/// unconfigured image service (`/media/config`, `/media/status`) and no
+/// generated avatar (`/avatar`); every
 /// write is refused with 405 [demoReadOnlyMessage] (not 401/403, which the
 /// app reads as a sign-in problem).
 http.Client demoPluginClient(
@@ -43,10 +46,13 @@ http.Client demoPluginClient(
     final path = request.url.path;
     final cron =
         path == hermesCronRoute || path.startsWith('$hermesCronRoute/');
-    if (!cron && !path.startsWith(hermusePluginRoute)) {
+    final session = path.startsWith(_sessionsRoute);
+    if (!cron && !session && !path.startsWith(hermusePluginRoute)) {
       return _json(404, _notFound);
     }
-    final route = cron ? '' : path.substring(hermusePluginRoute.length);
+    final route = cron || session
+        ? ''
+        : path.substring(hermusePluginRoute.length);
     // The fake computer: status + stills read like the plugin; the ticket
     // opens the replayed stream (see `demoComputerConnector`). Everything
     // else still refuses writes with 405.
@@ -72,43 +78,154 @@ http.Client demoPluginClient(
     if (request.method != 'GET') {
       return _json(405, {'detail': demoReadOnlyMessage});
     }
-    if (cron) {
-      return path == hermesCronRoute
-          ? _json(200, {'data': _jobs(instance, loaded)})
-          : _json(404, _notFound);
-    }
-    final body = _get(instance, route, loaded);
+    final limit = int.tryParse(request.url.queryParameters['limit'] ?? '');
+    if (cron) return _cron(instance, path, loaded, limit);
+    if (session) return _sessionMessages(instance, path, loaded);
+    final body = _get(instance, route, loaded, limit);
     return body == null ? _json(404, _notFound) : _json(200, body);
   });
 }
 
-/// Hermes' cron rows of [instance]: the plugin's jobs and the user's, last
-/// run at their previous slot before [now] and next at the following one.
-List<Map<String, Object?>> _jobs(DemoInstance instance, DateTime now) => [
-  for (final job in [...demoHermuseJobs, ...?demoUserJobs[instance.id]])
-    {
-      'id': job.id,
-      'name': job.name,
-      'prompt': job.name,
-      'schedule': {'kind': 'cron', 'expr': job.cron, 'display': job.cron},
-      'schedule_display': job.cron,
-      'enabled': true,
-      'state': 'scheduled',
-      'next_run_at': _next(job, now).toIso8601String(),
-      'last_run_at': _next(
-        job,
-        now.subtract(Duration(days: job.weekday == null ? 1 : 7)),
-      ).toIso8601String(),
-      'last_status': 'ok',
-      'last_error': null,
-      'origin': job.hermuseKey == null
-          ? null
-          : {'source': 'hermuse', 'key': job.hermuseKey},
-      'deliver': 'local',
-      'profile': 'default',
-      'scheduler_heartbeat_age_s': 5,
-    },
+const _sessionsRoute = '/api/sessions/';
+
+/// Every cron job of [instance]: the plugin's and the user's.
+List<DemoJob> _allJobs(DemoInstance instance) => [
+  ...demoHermuseJobs,
+  ...?demoUserJobs[instance.id],
 ];
+
+/// `GET /api/cron/jobs`, `/{id}` and `/{id}/runs`.
+http.Response _cron(
+  DemoInstance instance,
+  String path,
+  DateTime now,
+  int? limit,
+) {
+  if (path == hermesCronRoute) {
+    return _json(200, {
+      'data': [for (final job in _allJobs(instance)) _job(job, now)],
+    });
+  }
+  final parts = path.substring(hermesCronRoute.length + 1).split('/');
+  final id = Uri.decodeComponent(parts.first);
+  final job = _allJobs(instance).where((j) => j.id == id).firstOrNull;
+  if (job == null) return _json(404, _notFound);
+  if (parts.length == 1) return _json(200, _job(job, now));
+  if (parts.length != 2 || parts[1] != 'runs') return _json(404, _notFound);
+  return _json(200, {
+    'runs': [
+      for (final (i, run) in job.runs.take(limit ?? 10).indexed)
+        {
+          'id': _runSession(job, i),
+          'source': 'cron',
+          'title': job.name,
+          'started_at': _slot(job, now, i).millisecondsSinceEpoch / 1000,
+          'ended_at': _slot(job, now, i).millisecondsSinceEpoch / 1000 + 90,
+          'end_reason': run.ok ? 'cron_complete' : 'error',
+          'is_active': false,
+        },
+    ],
+  });
+}
+
+/// Hermes session id of [job]'s [index]-th latest run.
+String _runSession(DemoJob job, int index) => 'cron_${job.id}_$index';
+
+/// `GET /api/sessions/{id}/messages` of a cron run session: the job's
+/// prompt and the run's answer.
+http.Response _sessionMessages(
+  DemoInstance instance,
+  String path,
+  DateTime now,
+) {
+  final parts = path.substring(_sessionsRoute.length).split('/');
+  if (parts.length != 2 || parts[1] != 'messages') {
+    return _json(404, _notFound);
+  }
+  final id = Uri.decodeComponent(parts.first);
+  for (final job in _allJobs(instance)) {
+    for (final (i, run) in job.runs.indexed) {
+      if (_runSession(job, i) != id) continue;
+      final at = _slot(job, now, i).millisecondsSinceEpoch / 1000;
+      return _json(200, {
+        'messages': [
+          {'role': 'user', 'content': job.name, 'timestamp': at},
+          {'role': 'assistant', 'content': run.output, 'timestamp': at + 90},
+        ],
+      });
+    }
+  }
+  return _json(404, _notFound);
+}
+
+/// Hermes' cron row of [job]: last run at its previous slot before [now]
+/// (none for a one-shot), next at the following one.
+Map<String, Object?> _job(DemoJob job, DateTime now) {
+  final next = _nextRun(job, now);
+  final last = job.onceInDays == null ? job.runs.firstOrNull : null;
+  final ran = job.onceInDays == null;
+  final Map<String, Object?> schedule;
+  if (job.everyMinutes case final minutes?) {
+    schedule = {
+      'kind': 'interval',
+      'minutes': minutes,
+      'display': 'every ${minutes}m',
+    };
+  } else if (job.onceInDays != null) {
+    schedule = {
+      'kind': 'once',
+      'run_at': next.toIso8601String(),
+      'display': 'once at ${next.toIso8601String()}',
+    };
+  } else {
+    schedule = {'kind': 'cron', 'expr': job.cron, 'display': job.cron};
+  }
+  final failed = last != null && !last.ok;
+  return {
+    'id': job.id,
+    'name': job.name,
+    'prompt': job.name,
+    'schedule': schedule,
+    'schedule_display': schedule['display'],
+    'enabled': true,
+    'state': 'scheduled',
+    'next_run_at': next.toIso8601String(),
+    'last_run_at': ran ? _slot(job, now, 0).toIso8601String() : null,
+    'last_status': ran ? (failed ? 'error' : 'ok') : null,
+    'last_error': failed ? last.output : null,
+    'last_output': last != null && last.ok ? last.output : null,
+    'origin': job.hermuseKey == null
+        ? null
+        : {'source': 'hermuse', 'key': job.hermuseKey},
+    'deliver': 'local',
+    'profile': 'default',
+    'scheduler_heartbeat_age_s': 5,
+  };
+}
+
+/// When [job] runs next after [now].
+DateTime _nextRun(DemoJob job, DateTime now) {
+  final local = now.toLocal();
+  if (job.onceInDays case final days?) {
+    return DateTime(local.year, local.month, local.day + days, job.hour);
+  }
+  if (job.everyMinutes case final minutes?) {
+    return _slot(job, now, 0).add(Duration(minutes: minutes));
+  }
+  return _next(job, now);
+}
+
+/// Start of [job]'s [index]-th latest run before [now]: interval jobs last
+/// ran a third of their interval ago; scheduled ones at their slots.
+DateTime _slot(DemoJob job, DateTime now, int index) {
+  if (job.everyMinutes case final minutes?) {
+    final last = now.toLocal().subtract(Duration(minutes: minutes ~/ 3));
+    return last.subtract(Duration(minutes: minutes * index));
+  }
+  final next = _next(job, now);
+  final days = (job.weekday == null ? 1 : 7) * (index + 1);
+  return DateTime(next.year, next.month, next.day - days, next.hour);
+}
 
 /// The first slot of [job] after [after] (local time).
 DateTime _next(DemoJob job, DateTime after) {
@@ -123,7 +240,12 @@ DateTime _next(DemoJob job, DateTime after) {
 
 const _notFound = {'detail': 'Not Found'};
 
-Map<String, Object?>? _get(DemoInstance instance, String route, DateTime now) {
+Map<String, Object?>? _get(
+  DemoInstance instance,
+  String route,
+  DateTime now,
+  int? limit,
+) {
   List<Map<String, Object?>> dated(List<Map<String, Object?>> rows) => [
     for (final row in rows) _dated(row, now),
   ];
@@ -138,13 +260,62 @@ Map<String, Object?>? _get(DemoInstance instance, String route, DateTime now) {
     case '/feed':
       return {'posts': dated(instance.feed)};
     case '/ideas':
-      return {'ideas': dated(instance.ideas)};
+      return {
+        'ideas': [
+          ...dated(instance.ideas),
+          for (final seed in demoSeedIdeas)
+            {
+              ...seed,
+              'seeded': true,
+              'file': null,
+              'created_at': null,
+              'feedback': <Object?>[],
+            },
+        ],
+      };
+    case '/tasks':
+      return {
+        'tasks': [
+          for (final task in instance.tasks.take(limit ?? 50)) _task(task, now),
+        ],
+      };
+    case '/memory/memory':
+      return _memory('memory', instance.memory, now);
+    case '/memory/user':
+      return _memory('user', instance.userMemory, now);
     case '/goals':
       return {'goals': dated(instance.goals)};
     case '/artifacts':
       return {'artifacts': dated(instance.artifacts)};
     case '/reflections':
       return {'reflections': dated(instance.reflections)};
+    // No image service in the demo: the agent editor's Generate view and
+    // Settings → Image generation show their not-configured state.
+    case '/media/config':
+      return {
+        'provider': 'contentflow',
+        'endpoint': '',
+        'has_token': false,
+        'image_model': '',
+        'video_model': '',
+        'feed_fallback': false,
+        'from_env': false,
+      };
+    case '/media/status':
+      return {
+        'configured': false,
+        'reachable': false,
+        'credits': null,
+        'video_cost': null,
+        'error': null,
+      };
+    case '/avatar':
+      return {
+        'portrait_url': null,
+        'states': <String, Object?>{},
+        'job': null,
+        'updated_at': null,
+      };
   }
   const filesPrefix = '/files/';
   if (route.startsWith(filesPrefix)) {
@@ -154,6 +325,30 @@ Map<String, Object?>? _get(DemoInstance instance, String route, DateTime now) {
   }
   return null;
 }
+
+/// A recorded task with its `age`/`took` turned into `started_at` and
+/// `finished_at`.
+Map<String, Object?> _task(Map<String, Object?> task, DateTime now) {
+  final finished = now.subtract(task['age']! as Duration);
+  final started = finished.subtract(task['took']! as Duration);
+  return {
+    for (final MapEntry(:key, :value) in task.entries)
+      if (key != 'age' && key != 'took') key: value,
+    'started_at': started.toIso8601String(),
+    'finished_at': finished.toIso8601String(),
+  };
+}
+
+/// A memory file as the plugin returns it, last written this morning.
+Map<String, Object?> _memory(
+  String target,
+  List<String> entries,
+  DateTime now,
+) => {
+  'target': target,
+  'entries': entries,
+  'updated_at': now.subtract(const Duration(hours: 3)).toIso8601String(),
+};
 
 /// [row] with its `age` turned into the plugin's time fields, nested
 /// timeline/feedback entries included.

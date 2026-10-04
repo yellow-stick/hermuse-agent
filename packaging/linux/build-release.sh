@@ -102,12 +102,19 @@ HERMUSE_LINUX_HELPER_SHA256="$(sha256_of "$helper")"
 export HERMUSE_CLIPROXY_SHA256 HERMUSE_LINUX_HELPER_SHA256
 hermuse_log "cliproxy $HERMUSE_CLIPROXY_SHA256, helper $HERMUSE_LINUX_HELPER_SHA256"
 
+hermuse_log "compiling the bounded service helper with embedded plugin sources"
+(cd "$src/packages/hermuse_host" && dart run tool/build_linux_service.dart)
+service_helper="$src/packages/hermuse_host/build/linux-service/hermuse-linux-service"
+HERMUSE_LINUX_SERVICE_SHA256="$(sha256_of "$service_helper")"
+export HERMUSE_LINUX_SERVICE_SHA256
+
 hermuse_log "flutter build linux --release"
 (cd "$src/apps/hermuse_app" && flutter build linux --release --no-pub \
   --dart-define=HERMUSE_APP_VERSION="$HERMUSE_PUBSPEC_VERSION" \
   --dart-define=HERMUSE_CLIPROXY_SHA256="$HERMUSE_CLIPROXY_SHA256" \
   --dart-define=HERMUSE_CLIPROXY_PLATFORM=linux-amd64 \
-  --dart-define=HERMUSE_LINUX_HELPER_SHA256="$HERMUSE_LINUX_HELPER_SHA256")
+  --dart-define=HERMUSE_LINUX_HELPER_SHA256="$HERMUSE_LINUX_HELPER_SHA256" \
+  --dart-define=HERMUSE_LINUX_SERVICE_SHA256="$HERMUSE_LINUX_SERVICE_SHA256")
 
 bundle="$work/bundle"
 cp -a "$src/apps/hermuse_app/build/linux/x64/release/bundle" "$bundle"
@@ -115,6 +122,8 @@ cp -a "$src/apps/hermuse_app/build/linux/x64/release/bundle" "$bundle"
   hermuse_die "the Flutter bundle already has $HERMUSE_BUNDLE_CLIPROXY or $HERMUSE_BUNDLE_HELPER"
 install -m 0755 "$cliproxy" "$bundle/$HERMUSE_BUNDLE_CLIPROXY"
 install -D -m 0755 "$helper" "$bundle/$HERMUSE_BUNDLE_HELPER"
+install -D -m 0755 "$service_helper" "$bundle/$HERMUSE_BUNDLE_SERVICE"
+printf '%s\n' "$HERMUSE_LINUX_SERVICE_SHA256" >"$bundle/$HERMUSE_BUNDLE_SERVICE.sha256"
 check_bundle "$bundle"
 check_elf_tree "$bundle" "$bundle/lib"
 
@@ -220,6 +229,7 @@ jq -n \
   --arg cliproxy_version "$(jq -er .version "$cliproxy_lock")" --arg cliproxy_sha "$HERMUSE_CLIPROXY_SHA256" \
   --arg cliproxy_archive "$(jq -er '.platforms["linux-amd64"].archive_sha256' "$cliproxy_lock")" \
   --arg helper_sha "$HERMUSE_LINUX_HELPER_SHA256" \
+  --arg service_sha "$HERMUSE_LINUX_SERVICE_SHA256" \
   --slurpfile lock "$HERMUSE_LOCK" \
   --argjson artifacts "$(for f in "$deb" "$appimage" "$sources_tar"; do artifact_json "$f"; done | jq -s .)" \
   '{
@@ -232,6 +242,7 @@ jq -n \
     cliproxy: {version: $cliproxy_version, platform: "linux-amd64", binary_sha256: $cliproxy_sha,
                archive_sha256: $cliproxy_archive, path: "lib/cliproxy"},
     linux_helper: {sha256: $helper_sha, path: "libexec/hermuse-linux-setup"},
+    linux_service: {sha256: $service_sha, path: "libexec/hermuse-linux-service", plugin: "embedded"},
     toolchain: {builder: $lock[0].builder, flutter: $lock[0].flutter, melos: $lock[0].melos,
                 tools: $lock[0].tools},
     artifacts: $artifacts

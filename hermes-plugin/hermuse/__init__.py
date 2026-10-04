@@ -1,6 +1,10 @@
 """Hermuse agent-plugin entry point (``register(ctx)`` called by the loader).
 
-Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, the
+Registers the six Hermuse tools, the ``hermuse:hermuse`` skill, conversational
+and proactive-behaviour system-prompt sections, the per-turn local clock
+(``pre_llm_call``, see :mod:`turn_clock`), the Activity task recorder
+(``pre_llm_call`` / ``post_llm_call`` / ``on_session_end`` hooks and the
+``hermuse_task_summary`` auxiliary task, see :mod:`task_recorder`), the
 ``hermes hermuse`` CLI, the ``hermuse`` browser provider (the agent's computer)
 and its ``pre_tool_call`` / ``transform_tool_result`` hooks, restarts the
 subscription bridge when it was set up and does not run (see
@@ -19,7 +23,7 @@ import logging
 import sys
 from pathlib import Path
 
-from . import agent_tools, plugin_cli, subscription_bridge
+from . import agent_tools, plugin_cli, subscription_bridge, task_recorder, turn_clock
 from .computer import hooks as computer_hooks
 from .computer.provider import make_provider
 
@@ -27,8 +31,68 @@ logger = logging.getLogger(__name__)
 
 SKILL_NAME = "hermuse"
 SKILL_DESCRIPTION = (
-    "Hermuse product layer: when to call feed_post, idea_propose, goal_track, "
-    "goal_update, artifact_save and reflection_write, honouring PREFERENCES.md."
+    "Hermuse feed and automations during chat: publish useful grounded updates "
+    "with feed_post, schedule reminders and recurring work with Hermes "
+    "cronjob_manage into the main chat, track commitments as goals, and use "
+    "Ideas, Library and Reflections, honouring PREFERENCES.md."
+)
+
+CONVERSATION_GUIDANCE = (
+    "Hermuse surfaces are backed by real tools, not chat prose. Use only tools "
+    "available in this session; if one is unavailable or fails, explain the "
+    "limitation instead of claiming that something was saved or scheduled. "
+    "Load the hermuse:hermuse skill for the product workflow.\n\n"
+    "During conversation, use feed_post for genuinely useful discoveries, "
+    "research results or completed-work summaries worth keeping in the user's "
+    "feed, as well as explicit requests to post. First read the active profile's "
+    "HERMES_HOME/hermuse/PREFERENCES.md and FEED_PROMPT.md, honour topic, timing "
+    "and format preferences, and check recent feed entries to avoid duplicates. "
+    "Ground the post in actual conversation or tool results and link sources "
+    "when applicable. Do not post every reply, invent activity, seed sample "
+    "content or publish just to fill an empty feed. A successful feed_post "
+    "result is what confirms publication.\n\n"
+    "When the user requests a reminder, recurring task or automation, use "
+    "Hermes cronjob_manage to create or update a real scheduled job in the "
+    "current profile. Inspect existing jobs before creating a duplicate or "
+    "changing one; clarify missing timing or task details. Job prompts must "
+    "be self-contained. For jobs meant to populate Hermuse surfaces, include "
+    "the hermuse:hermuse skill and require the appropriate persistence tool "
+    "(for a feed job, feed_post), not just a final chat response. Confirm the "
+    "schedule and job id only after a successful tool result, and relay any "
+    "scheduler or delivery warnings. Never create unsolicited schedules, "
+    "bypass approval requirements or approve actions on the user's behalf."
+)
+
+BEHAVIOUR_SECTION_ID = "hermuse_behaviour"
+BEHAVIOUR_GUIDANCE = (
+    "You are a proactive personal agent; the user's main chat is the session "
+    "\"Bot Chat\". Each turn ends with a \"Local time now\" line: use it for all times.\n"
+    "- Every reminder or later/recurring action, even 1 minute away, MUST be "
+    "cronjob_manage action=\"create\", deliver=\"bot-chat\". Schedule once with \"in 2m\", "
+    "\"in 2h\" or local ISO \"2026-10-05T09:00\"; recur with \"every day 8am\" or 5-field "
+    "cron \"0 8 * * *\", never 6 fields. Before creating, run action=\"list\" and update a "
+    "matching job instead of duplicating it. Never wait, sleep or poll to emulate a timer. "
+    "Never ask which platform or channel.\n"
+    "- \"Tomorrow morning\" is 09:00 local on tomorrow's date; never schedule 23:00-07:00 "
+    "unless asked. Confirm in one short line with the fire time as weekday, date and local "
+    "time (\"lundi 5 octobre à 9h00\"). If timing is unclear, offer choices with clarify "
+    "(\"Rappel demain matin | Non, juste garde en tête\").\n"
+    "- A job prompt is self-contained; its final response IS the deliverable the user gets "
+    "(reminder text, full briefing with sources), never narration of its steps.\n"
+    "- \"Keep in mind\"/\"help me not forget\" a dated plan (trip, deadline): call goal_track "
+    "(title, category, why, source=\"agent\", status_line; cron_job_id if a job serves it) "
+    "AND memory (target \"memory\", absolute dates: \"Commitment: Madrid trip 2026-10-07\"). "
+    "Other facts: memory only. Keep status_line current with goal_update.\n"
+    "- ALWAYS tool_describe a deferred tool (cronjob_manage, goal_track...) "
+    "before its first tool_call; never guess arguments. tool_call takes ONE entry for local "
+    "tools (two goals = two calls).\n"
+    "- Ideas you suggest: idea_propose each, and offer them as clarify choices. Offer 2-4 "
+    "choices with clarify. Every feed_post needs why and sources, main page first.\n"
+    "- [Cronjob \"...\" output messages are scheduled output, not the user. Your reply IS "
+    "that content for the user, in their language and tone, formatting and links kept: no "
+    "\"reçu\", no summary of or comment on the job. If nothing in it is for the user, reply "
+    "exactly NO_REPLY. If it says \"Ask the user\", ask with clarify and wait; do not act on "
+    "it yourself."
 )
 
 PLUGIN_NAME = "hermuse"
@@ -41,6 +105,10 @@ SPA_CATCH_ALL = "/{full_path:path}"
 
 def register(ctx) -> None:
     agent_tools.register_tools(ctx)
+    ctx.register_system_prompt_section("hermuse.conversation", CONVERSATION_GUIDANCE)
+    ctx.register_system_prompt_section(BEHAVIOUR_SECTION_ID, BEHAVIOUR_GUIDANCE)
+    task_recorder.register(ctx)
+    ctx.register_hook("pre_llm_call", turn_clock.pre_llm_call)
     try:
         skill_md = Path(__file__).parent / "skills" / "hermuse" / "SKILL.md"
         ctx.register_skill(SKILL_NAME, skill_md, SKILL_DESCRIPTION)

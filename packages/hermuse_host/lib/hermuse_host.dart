@@ -13,6 +13,8 @@ export 'src/install_journal.dart';
 export 'src/installer.dart';
 export 'src/linux_dependencies.dart';
 export 'src/linux_privilege.dart';
+export 'src/linux_migration.dart';
+export 'src/linux_service_installer.dart';
 export 'src/managed_runtime.dart';
 export 'src/plugin_installer.dart';
 export 'src/remote_install.dart';

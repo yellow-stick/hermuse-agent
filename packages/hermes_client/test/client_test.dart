@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:hermes_client/hermes_client.dart';
@@ -148,6 +149,66 @@ void main() {
         });
       },
     );
+
+    test('detaching a handler leaves consent open for redelivery', () async {
+      final fake = FakeHermesTransport();
+      addTearDown(fake.close);
+      final answer = Completer<ApprovalResult>();
+      var deliveries = 0;
+      fake.onServerRequest((_) {
+        deliveries++;
+        return answer.future;
+      });
+      const params = {
+        'session_id': 's1',
+        'request_id': 'r1',
+        'command': 'rm -rf build',
+      };
+      fake.emitRequest('srq-1', 'approval', params);
+      fake.redeliverServerRequest('srq-1', 'approval', params);
+      expect(deliveries, 1, reason: 'live delivery and snapshot deduplicate');
+      answer.completeError(const HermesRequestDetached());
+      await pumpEventQueue();
+      expect(fake.replies, isEmpty, reason: 'detaching is not a decision');
+
+      fake.onServerRequest(
+        (_) async => const ApprovalResult(choice: ApprovalChoice.deny),
+      );
+      fake.redeliverServerRequest('srq-1', 'approval', params);
+      await pumpEventQueue();
+      expect(fake.replies['srq-1']?['result'], {'choice': 'deny'});
+    });
+
+    test('old socket handlers cannot reply or erase a redelivery', () async {
+      final fake = FakeHermesTransport();
+      addTearDown(fake.close);
+      final oldAnswer = Completer<ApprovalResult>();
+      final newAnswer = Completer<ApprovalResult>();
+      var deliveries = 0;
+      fake.onServerRequest((_) {
+        deliveries++;
+        return deliveries == 1 ? oldAnswer.future : newAnswer.future;
+      });
+      const params = {
+        'session_id': 's1',
+        'request_id': 'r1',
+        'command': 'rm -rf build',
+      };
+      fake.emitRequest('srq-1', 'approval', params);
+      fake.setState(ConnectionState.reconnecting);
+      fake.setState(ConnectionState.ready);
+      fake.redeliverServerRequest('srq-1', 'approval', params);
+      expect(deliveries, 2);
+
+      oldAnswer.complete(const ApprovalResult(choice: ApprovalChoice.once));
+      await pumpEventQueue();
+      expect(fake.replies, isEmpty);
+      fake.redeliverServerRequest('srq-1', 'approval', params);
+      expect(deliveries, 2, reason: 'old completion preserves new handler');
+      newAnswer.complete(const ApprovalResult(choice: ApprovalChoice.deny));
+      await pumpEventQueue();
+      expect(fake.replies['srq-1']?['result'], {'choice': 'deny'});
+    });
 
     test('unknown server request method gets -32601', () async {
       final fake = FakeHermesTransport();

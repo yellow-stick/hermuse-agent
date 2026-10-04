@@ -26,7 +26,7 @@ final class ComputerClientProvider
   /// Computer client of [instanceId], on its authenticated REST client.
   ComputerClientProvider._({
     required ComputerClientFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'computerClientProvider',
@@ -42,7 +42,7 @@ final class ComputerClientProvider
   String toString() {
     return r'computerClientProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -53,8 +53,8 @@ final class ComputerClientProvider
 
   @override
   FutureOr<ComputerClient> create(Ref ref) {
-    final argument = this.argument as String;
-    return computerClient(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return computerClient(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -68,12 +68,16 @@ final class ComputerClientProvider
   }
 }
 
-String _$computerClientHash() => r'8d76718a6fa53367806c84fc02acb6e588195b1f';
+String _$computerClientHash() => r'80fec40f728c17bf5ea14ee8ca56b0d34dd22b05';
 
 /// Computer client of [instanceId], on its authenticated REST client.
 
 final class ComputerClientFamily extends $Family
-    with $FunctionalFamilyOverride<FutureOr<ComputerClient>, String> {
+    with
+        $FunctionalFamilyOverride<
+          FutureOr<ComputerClient>,
+          (String, {String profile})
+        > {
   ComputerClientFamily._()
     : super(
         retry: null,
@@ -85,8 +89,13 @@ final class ComputerClientFamily extends $Family
 
   /// Computer client of [instanceId], on its authenticated REST client.
 
-  ComputerClientProvider call(String instanceId) =>
-      ComputerClientProvider._(argument: instanceId, from: this);
+  ComputerClientProvider call(
+    String instanceId, {
+    String profile = 'default',
+  }) => ComputerClientProvider._(
+    argument: (instanceId, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'computerClientProvider';

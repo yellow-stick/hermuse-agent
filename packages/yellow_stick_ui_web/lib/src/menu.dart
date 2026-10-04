@@ -48,6 +48,7 @@ final class YsMenuItem {
     this.icon,
     this.checked,
     this.destructive = false,
+    this.enabled = true,
   });
 
   final String label;
@@ -60,6 +61,10 @@ final class YsMenuItem {
 
   /// Error colour (Delete).
   final bool destructive;
+
+  /// False draws an informational entry (muted, `aria-disabled`): it can be
+  /// reached with the keys but picking it does nothing.
+  final bool enabled;
 }
 
 /// A popup menu (`role="menu"`) below [anchor], or above it when it does not
@@ -145,6 +150,8 @@ class YsMenu extends StatefulComponent {
       css('&.ys-menu-item-destructive').styles(color: .variable('--error')),
       css('&.ys-menu-item-destructive > .ys-icon')
           .styles(color: .variable('--error')),
+      css('&[aria-disabled="true"]')
+          .styles(color: .variable('--content-muted'), cursor: .defaultCursor),
     ]),
     css('.ys-menu-label')
         .styles(flex: .grow(1), overflow: .hidden, textOverflow: .ellipsis),
@@ -217,6 +224,7 @@ class _YsMenuState extends State<YsMenu> {
   }
 
   void _pick(YsMenuItem item) {
+    if (!item.enabled) return;
     _close();
     item.onSelected();
   }
@@ -291,6 +299,7 @@ class _YsMenuState extends State<YsMenu> {
                 'role': item.checked == null ? 'menuitem' : 'menuitemcheckbox',
                 if (item.checked case final checked?)
                   'aria-checked': '$checked',
+                if (!item.enabled) 'aria-disabled': 'true',
                 'tabindex': '-1',
               },
               events: {

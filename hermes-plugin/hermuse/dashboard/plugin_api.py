@@ -2,13 +2,13 @@
 
 Loaded by the dashboard plugin system (``hermes_cli/web_server_dashboard.py``)
 from this file path via ``importlib`` — NOT as part of the plugin package — so
-it adds its parent dir to ``sys.path`` to import the sibling ``store`` and
-``subscription_bridge`` modules (stdlib-only, shared with the agent plugin),
-``dashboard_restart`` and the ``computer`` package. HTTP auth (the
-``/bridge/*`` and ``/dashboard/*`` routes included) is enforced by Hermes'
-existing ``/api/`` gate; the computer WebSocket (which that gate does not
-cover) takes a single-use ticket from ``POST /computer/ticket``, like Hermes'
-own ``/api/display/ws``.
+it adds its parent dir to ``sys.path`` to import the sibling ``store``,
+``media``, ``avatar`` and ``subscription_bridge`` modules (shared with the
+agent plugin), ``dashboard_restart`` and the ``computer`` package. HTTP auth
+(the ``/bridge/*``, ``/media/*`` and ``/dashboard/*`` routes included) is
+enforced by Hermes' existing ``/api/`` gate; the computer WebSocket (which
+that gate does not cover) takes a single-use ticket from
+``POST /computer/ticket``, like Hermes' own ``/api/display/ws``.
 """
 
 from __future__ import annotations
@@ -19,25 +19,59 @@ import logging
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import avatar  # noqa: E402
 import dashboard_restart  # noqa: E402
+import feed_images  # noqa: E402
+import media  # noqa: E402
 import store  # noqa: E402
 import subscription_bridge  # noqa: E402
 from computer import runtime as computer_runtime  # noqa: E402
 from computer import setup as computer_setup  # noqa: E402
 from computer import state as computer_state  # noqa: E402
 from hermes_cli.web_server_chat import _ws_request_is_allowed  # noqa: E402
-from hermes_constants import get_hermes_home  # noqa: E402
+from hermes_constants import (  # noqa: E402
+    get_hermes_home, reset_hermes_home_override, set_hermes_home_override,
+)
 
 log = logging.getLogger(__name__)
-router = APIRouter()
+_initialized_homes = {get_hermes_home().resolve()}
+
+
+async def _profile_context(connection: HTTPConnection):
+    """Scope both HTTP workers and WebSockets without changing process env."""
+    profile = connection.query_params.get("profile")
+    if profile is None:
+        yield
+        return
+    from hermes_cli.profiles import get_profile_dir, profile_exists
+
+    try:
+        home = get_profile_dir(profile).resolve()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid profile") from exc
+    if not profile_exists(profile):
+        raise HTTPException(status_code=404, detail="profile not found")
+    # Leases from a previous dashboard process cannot survive its sockets.
+    if home not in _initialized_homes:
+        computer_state.reset_control(home)
+        _initialized_homes.add(home)
+    token = set_hermes_home_override(home)
+    try:
+        yield
+    finally:
+        reset_hermes_home_override(token)
+
+
+router = APIRouter(dependencies=[Depends(_profile_context)])
 
 # Take control leases only live in this process's WebSocket connections, so
 # none can survive a dashboard (re)start: the agent holds control again.
@@ -66,6 +100,8 @@ class FeedPostBody(BaseModel):
     body: str = Field(min_length=1, max_length=20000)
     topic: str = Field(default="", max_length=120)
     sources: list[str] = Field(default_factory=list, max_length=20)
+    why: str = Field(default="", max_length=1000)
+    image_url: Optional[str] = Field(default=None, max_length=2000, pattern=r"^https?://")
 
 
 class ReactBody(BaseModel):
@@ -87,13 +123,52 @@ def get_feed_post(post_id: str):
 
 @router.post("/feed", status_code=201)
 def create_feed_post(payload: FeedPostBody):
-    return store.post_feed(
-        _root(),
+    sources = [s for s in (s.strip() for s in payload.sources) if s]
+    root = _root()
+    record = store.post_feed(
+        root,
         title=payload.title.strip(),
         body=payload.body,
         topic=payload.topic.strip(),
-        sources=[s for s in (s.strip() for s in payload.sources) if s],
+        sources=sources,
+        why=payload.why.strip(),
+        image=feed_images.find_post_image(payload.image_url, sources),
     )
+    media.illustrate_feed_post(root, record)  # no image found: one may come later
+    return record
+
+
+@router.get("/feed/{post_id}/image")
+def get_feed_image(post_id: str):
+    found = store.feed_image(_root(), post_id)
+    if found is None:
+        raise _not_found("feed image")
+    path, mime = found
+    return FileResponse(path=str(path), media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.post("/feed/generate")
+def generate_feed():
+    """Run the feed job now: ``cron.jobs.trigger_job`` marks it due, the
+    scheduler (Hermes gateway) fires it on its next tick."""
+    cron_jobs, cron_specs = _cron_modules()
+    job = cron_specs.find_job(cron_jobs, "feed")
+    if job is None:
+        raise HTTPException(status_code=409, detail="feed job not registered; enable Hermuse automations first")
+    try:
+        triggered = cron_jobs.trigger_job(job["id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if triggered is None:
+        raise _not_found("feed job")
+    return {"job_id": job["id"], "started": True}
+
+
+@router.delete("/feed/{post_id}")
+def delete_feed_post(post_id: str):
+    if not store.delete_feed_post(_root(), post_id):
+        raise _not_found("feed post")
+    return {"ok": True}
 
 
 @router.post("/feed/{post_id}/react")
@@ -104,6 +179,127 @@ def react_feed_post(post_id: str, payload: ReactBody):
     return record
 
 
+# --- Media provider (server-wide) ---------------------------------------------
+
+
+class MediaConfigBody(BaseModel):
+    endpoint: str = Field(max_length=2000)
+    token: Optional[str] = Field(default=None, max_length=4000)
+    image_model: Optional[str] = Field(default=None, max_length=120)
+    video_model: Optional[str] = Field(default=None, max_length=120)
+    feed_fallback: Optional[bool] = None
+
+
+@router.get("/media/config")
+def get_media_config():
+    return media.load_config().view()
+
+
+@router.put("/media/config")
+def put_media_config(payload: MediaConfigBody):
+    changes = payload.model_dump(exclude_unset=True)
+    try:
+        return media.save_config(**changes).view()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/media/status")
+def get_media_status():
+    return media.status()
+
+
+# --- Avatar (per profile) -----------------------------------------------------
+
+_AVATAR_CACHE = {"Cache-Control": "private, no-cache"}  # same URL, new picture after a change
+_CANDIDATE_CACHE = {"Cache-Control": "private, max-age=86400"}  # never changes
+
+AvatarState = Literal["idle", "thinking", "replying", "working"]
+
+
+class AvatarPortraitBody(BaseModel):
+    description: str = Field(min_length=1, max_length=avatar.DESCRIPTION_MAX)
+    count: int = Field(default=4, ge=1, le=4)
+
+
+class AvatarSelectBody(BaseModel):
+    candidate: int = Field(ge=0, le=3)
+
+
+class AvatarAnimateBody(BaseModel):
+    states: Optional[list[AvatarState]] = Field(default=None, min_length=1, max_length=4)
+
+
+def _avatar_call(action: Callable[..., Any], *args: Any) -> Any:
+    """Avatar refusals as HTTP: busy/unavailable 409, no portrait or bad input 422, unknown 404."""
+    try:
+        return action(*args)
+    except (avatar.AvatarBusy, avatar.AvatarUnavailable) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (avatar.NoPortrait, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/avatar")
+def get_avatar():
+    return avatar.get_avatar(_root())
+
+
+@router.delete("/avatar")
+def delete_avatar():
+    _avatar_call(avatar.clear, _root())
+    return {"ok": True}
+
+
+@router.post("/avatar/portrait", status_code=202)
+def start_avatar_portrait(payload: AvatarPortraitBody):
+    return _avatar_call(avatar.start_portrait, _root(), payload.description, payload.count)
+
+
+@router.get("/avatar/portrait")
+def get_avatar_portrait():
+    path = avatar.portrait_file(_root())
+    if path is None:
+        raise _not_found("portrait")
+    return FileResponse(path=str(path), media_type="image/jpeg", headers=_AVATAR_CACHE)
+
+
+@router.post("/avatar/select")
+def select_avatar_portrait(payload: AvatarSelectBody):
+    return _avatar_call(avatar.select, _root(), payload.candidate)
+
+
+@router.post("/avatar/animate", status_code=202)
+def start_avatar_animation(payload: AvatarAnimateBody):
+    return _avatar_call(avatar.start_animate, _root(), payload.states)
+
+
+@router.get("/avatar/jobs/{job_id}")
+def get_avatar_job(job_id: str):
+    job = avatar.get_job(_root(), job_id)
+    if job is None:
+        raise _not_found("avatar job")
+    return job
+
+
+@router.get("/avatar/candidates/{job_id}/{n}")
+def get_avatar_candidate(job_id: str, n: int):
+    path = avatar.candidate_file(_root(), job_id, n)
+    if path is None:
+        raise _not_found("candidate")
+    return FileResponse(path=str(path), media_type="image/jpeg", headers=_CANDIDATE_CACHE)
+
+
+@router.get("/avatar/states/{state}")
+def get_avatar_state(state: str):
+    path = avatar.state_file(_root(), state)
+    if path is None:
+        raise _not_found("animation")
+    return FileResponse(path=str(path), media_type="image/webp", headers=_AVATAR_CACHE)
+
+
 # --- Ideas -----------------------------------------------------------------
 
 
@@ -112,6 +308,7 @@ class IdeaBody(BaseModel):
     pitch: str = Field(min_length=1, max_length=8000)
     group: str = Field(min_length=1, max_length=80)
     first_step: str = Field(default="", max_length=2000)
+    icon: str = Field(default="", max_length=40)
 
 
 class IdeaFeedbackBody(BaseModel):
@@ -133,13 +330,17 @@ def get_idea(idea_id: str):
 
 @router.post("/ideas", status_code=201)
 def create_idea(payload: IdeaBody):
-    return store.propose_idea(
-        _root(),
-        title=payload.title.strip(),
-        pitch=payload.pitch,
-        group=payload.group.strip(),
-        first_step=payload.first_step,
-    )
+    try:
+        return store.propose_idea(
+            _root(),
+            title=payload.title.strip(),
+            pitch=payload.pitch,
+            group=payload.group.strip(),
+            first_step=payload.first_step,
+            icon=payload.icon.strip(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/ideas/{idea_id}/feedback")
@@ -150,6 +351,13 @@ def add_idea_feedback(idea_id: str, payload: IdeaFeedbackBody):
     return record
 
 
+@router.post("/ideas/{idea_id}/dismiss")
+def dismiss_idea(idea_id: str):
+    if not store.dismiss_idea(_root(), idea_id):
+        raise _not_found("idea")
+    return {"ok": True}
+
+
 # --- Goals -----------------------------------------------------------------
 
 
@@ -158,12 +366,20 @@ class GoalBody(BaseModel):
     category: str = Field(pattern="^(health|relationships|finance|career|interests|productivity|something_else)$")
     why: str = Field(min_length=1, max_length=8000)
     target_date: str = Field(default="", max_length=40)
+    source: str = Field(default="user", pattern="^(user|agent)$")
+    parent_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class GoalPatchBody(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    done: Optional[bool] = None
 
 
 class GoalUpdateBody(BaseModel):
     note: str = Field(min_length=1, max_length=8000)
     progress: str = Field(default="", max_length=500)
     status: str = Field(default="", pattern="^(|tracking|done)$")
+    status_line: Optional[str] = Field(default=None, max_length=300)
 
 
 @router.get("/goals")
@@ -188,19 +404,91 @@ def create_goal(payload: GoalBody):
             category=payload.category,
             why=payload.why,
             target_date=payload.target_date.strip(),
+            source=payload.source,
+            parent_id=(payload.parent_id or "").strip() or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.patch("/goals/{goal_id}")
+def patch_goal(goal_id: str, payload: GoalPatchBody):
+    title = payload.title.strip() if payload.title is not None else None
+    if title == "":
+        raise HTTPException(status_code=422, detail="title cannot be blank")
+    record = store.patch_goal(_root(), goal_id, title=title, done=payload.done)
+    if record is None:
+        raise _not_found("goal")
+    return record
+
+
+@router.delete("/goals/{goal_id}")
+def delete_goal(goal_id: str):
+    if not store.delete_goal(_root(), goal_id):
+        raise _not_found("goal")
+    return {"ok": True}
+
+
 @router.post("/goals/{goal_id}/update")
 def update_goal_route(goal_id: str, payload: GoalUpdateBody):
     record = store.update_goal(
-        _root(), goal_id, payload.note, payload.progress, payload.status
+        _root(), goal_id, payload.note, payload.progress, payload.status,
+        status_line=payload.status_line,
     )
     if record is None:
         raise _not_found("goal")
     return record
+
+
+# --- Tasks (Activity) --------------------------------------------------------
+
+
+@router.get("/tasks")
+def list_tasks(
+    limit: int = Query(default=100, ge=1, le=store.TASKS_CAP),
+    before: Optional[str] = Query(default=None, max_length=64),
+):
+    cutoff = None
+    if before:
+        try:
+            cutoff = store.parse_iso(before)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="before must be an ISO-8601 timestamp") from exc
+    return {"tasks": store.list_tasks(_root(), limit, cutoff)}
+
+
+# --- Memory (Hermes MEMORY.md / USER.md) -------------------------------------
+
+
+class MemoryBody(BaseModel):
+    entries: list[str] = Field(max_length=1000)
+
+
+def _memory_lock() -> Optional[Callable[[Path], Any]]:
+    """Hermes' own cross-process lock for memory files (``MemoryStore._file_lock``)."""
+    try:
+        from tools.memory_tool import MemoryStore
+    except ImportError:
+        return None
+    return MemoryStore._file_lock
+
+
+@router.get("/memory/{target}")
+def get_memory(target: str):
+    if target not in store.MEMORY_TARGETS:
+        raise _not_found("memory target")
+    return store.read_memory(get_hermes_home(), target)
+
+
+@router.put("/memory/{target}")
+def put_memory(target: str, payload: MemoryBody):
+    if target not in store.MEMORY_TARGETS:
+        raise _not_found("memory target")
+    try:
+        store.write_memory(get_hermes_home(), target, payload.entries, lock=_memory_lock())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 # --- Artifacts -------------------------------------------------------------
@@ -290,20 +578,26 @@ def put_managed_file(name: str, payload: MarkdownBody):
 # --- Cron ------------------------------------------------------------------
 
 
-@router.get("/cron")
-def cron_status():
+def _cron_modules() -> tuple[Any, Any]:
     try:
         from cron import jobs as cron_jobs
-        from cron_specs import SPECS, find_job  # noqa: E402 — plugin-root import, see sys.path above
+        import cron_specs  # noqa: E402 — plugin-root import, see sys.path above
     except ImportError as exc:
         raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
+    return cron_jobs, cron_specs
+
+
+@router.get("/cron")
+def cron_status():
+    cron_jobs, cron_specs = _cron_modules()
     out: list[dict[str, Any]] = []
-    for spec in SPECS:
-        job = find_job(cron_jobs, spec.key)
+    for spec in cron_specs.SPECS:
+        job = cron_specs.find_job(cron_jobs, spec.key)
         out.append({
             "key": spec.key,
             "name": spec.name,
             "schedule": spec.schedule,
+            "hidden": spec.hidden,
             "registered": job is not None,
             "job_id": job.get("id") if job else None,
             "enabled": bool(job.get("enabled", True)) if job else False,
@@ -314,12 +608,8 @@ def cron_status():
 
 @router.post("/cron/enable")
 def cron_enable():
-    try:
-        from cron import jobs as cron_jobs
-        from cron_specs import register_all  # noqa: E402
-    except ImportError as exc:
-        raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
-    results = register_all(cron_jobs)
+    cron_jobs, cron_specs = _cron_modules()
+    results = cron_specs.register_all(cron_jobs)
     return {
         "jobs": [
             {"key": key, "job_id": record.get("id"), "created": created,
@@ -331,12 +621,8 @@ def cron_enable():
 
 @router.post("/cron/disable")
 def cron_disable():
-    try:
-        from cron import jobs as cron_jobs
-        from cron_specs import remove_all  # noqa: E402
-    except ImportError as exc:
-        raise HTTPException(status_code=500, detail=f"cron backend unavailable: {exc}") from exc
-    return {"removed": remove_all(cron_jobs)}
+    cron_jobs, cron_specs = _cron_modules()
+    return {"removed": cron_specs.remove_all(cron_jobs)}
 
 
 # --- Dashboard ---------------------------------------------------------------
@@ -517,7 +803,8 @@ def computer_snapshot(tool_call_id: str):
 def computer_ticket():
     from hermes_cli.dashboard_auth.ws_tickets import mint_ticket
 
-    return {"ticket": mint_ticket(user_id="hermuse", provider=_COMPUTER_TICKET_PROVIDER)}
+    return {"ticket": mint_ticket(user_id=str(get_hermes_home().resolve()),
+                                  provider=_COMPUTER_TICKET_PROVIDER)}
 
 
 def _consume_computer_ticket(ticket: str) -> bool:
@@ -529,7 +816,8 @@ def _consume_computer_ticket(ticket: str) -> bool:
         info = consume_ticket(ticket)
     except TicketInvalid:
         return False
-    return info.get("provider") == _COMPUTER_TICKET_PROVIDER
+    return (info.get("provider") == _COMPUTER_TICKET_PROVIDER
+            and info.get("user_id") == str(get_hermes_home().resolve()))
 
 
 def _fps(raw: Optional[str]) -> int:

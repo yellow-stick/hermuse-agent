@@ -30,10 +30,15 @@ opens the viewer in place of the chat:
 
 - the header shows what the agent is doing (`Working · <site>`) or the task it
   finished;
-- one tab per open browser window; click a tab to bring it to the front, or its
-  × to close it;
+- one tab per open browser window, with a raised active tab; scroll the strip
+  horizontally when there are more windows than fit, click a tab to bring it
+  to the front, or its × to close it;
 - **Stop** (while the agent works) interrupts the current answer;
 - the × at the top right goes back to the chat.
+
+The viewer follows your light or dark theme. **Take control of the browser**
+and **Done** use Hermuse's yellow primary color; **Browser | Desktop** stays
+neutral. On narrow screens, the controls wrap below the title.
 
 ![The viewer showing the agent's browser](../readme/computer-browser.jpg)
 
@@ -88,7 +93,7 @@ The viewer tells you what is missing:
 | `Docker is not installed on the Hermes computer.` + a command | Paste the command on the Hermes host, or install Docker Desktop on macOS/Windows. |
 | `Docker is installed but not running. Start Docker to continue.` | Start Docker (`sudo systemctl start docker`, or open Docker Desktop). |
 | `Preparing the agent's computer…` / `Downloading the computer image…` | Wait: the first start downloads about 470 MB. |
-| An error with **Retry** | Retry. If it fails again, read `~/.hermes/hermuse/computer/build.log` on the host. |
+| An error with **Retry** | Retry. If it fails again, read `/home/hermes/.hermes/hermuse/computer/build.log` for app-managed Linux installations, or `$HERMES_HOME/hermuse/computer/build.log` on other hosts. |
 | `Install the Hermuse plugin on this Hermes to see its browser.` | Install Hermuse on that Hermes (see the setup guides). |
 
 From a terminal on the host:

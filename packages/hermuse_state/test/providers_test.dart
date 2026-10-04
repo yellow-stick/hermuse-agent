@@ -102,6 +102,7 @@ void main() {
   test('side chat list: drafts first, then pinned, then recent', () async {
     SessionRow row(String id, int at, {int? pinned}) => SessionRow(
       instanceId: 'vps',
+      profile: 'default',
       sessionId: id,
       title: 'db $id',
       parentId: 'm',
@@ -185,5 +186,28 @@ void main() {
     await container.read(connectionProvider('vps').future);
     container.dispose();
     expect(fake.closed, isTrue);
+  });
+
+  test('clarify results come from the stored session messages', () {
+    expect(
+      clarifyResultsOf({
+        'messages': [
+          {'role': 'user', 'content': 'Plan my trip'},
+          {
+            'role': 'tool',
+            'tool_name': 'clarify',
+            'tool_call_id': 'c1',
+            'content': '{"user_response": "Tomorrow"}',
+          },
+          {
+            'role': 'tool',
+            'tool_name': 'web_search',
+            'tool_call_id': 'w1',
+            'content': '{}',
+          },
+        ],
+      }),
+      {'c1': '{"user_response": "Tomorrow"}'},
+    );
   });
 }

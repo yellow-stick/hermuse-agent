@@ -212,3 +212,26 @@ def test_second_viewer_takes_control_from_the_first(api, fake_runtime, screend, 
         second.close(1000)
         _wait_for(lambda: not plugin_api._viewers, "the second viewer to leave")
         assert state.read_control(hermes_home) == {"holder": "agent", "lease_id": None}
+
+
+def test_profile_snapshots_and_tickets_cannot_cross_agents(api, hermes_home):
+    plugin, client = api
+    for name, content in (("noah", b"noah-screen"), ("aya", b"aya-screen")):
+        home = hermes_home / "profiles" / name
+        home.mkdir(parents=True)
+        (home / "SOUL.md").write_text(f"You are {name}.")
+        path = state.snapshot_path(home, "same-tool-id")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        response = client.get(
+            f"{BASE}/computer/snapshots/same-tool-id?profile={name}"
+        )
+        assert response.status_code == 200
+        assert response.content == content
+
+    ticket = client.post(f"{BASE}/computer/ticket?profile=noah").json()["ticket"]
+    with client.websocket_connect(f"{BASE}/computer/ws?profile=aya&ticket={ticket}") as ws:
+        with pytest.raises(WebSocketDisconnect) as error:
+            _receive(ws)
+        assert error.value.code == 4401
+    assert client.get(f"{BASE}/computer/snapshots/same-tool-id").status_code == 404

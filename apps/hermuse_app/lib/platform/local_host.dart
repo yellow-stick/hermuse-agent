@@ -18,18 +18,21 @@ final localHostProvider = Provider<LocalHermesHost?>((_) => null);
 /// desktop integration test).
 List<Override> localHostOverrides(LocalHermesHost host) => [
   localHostProvider.overrideWithValue(host),
-  bridgeHostProvider.overrideWithValue(host.bridgeHost),
-  // The local backend listens on a fresh port each launch: boot (or reuse)
-  // it before connecting, then connect to its current URL.
+  if (!host.canonicalService)
+    bridgeHostProvider.overrideWithValue(host.bridgeHost),
+  // A service is never spawned or stopped by the desktop connection.
   transportFactoryProvider.overrideWith(
     (ref) => (instance) async {
       var target = instance;
       if (instance.id == localInstanceId) {
-        target =
+        final booted =
             await host.boot(await ref.read(registryProvider.future)) ??
             (throw const HermesUnreachable(
               'Hermes is no longer installed on this computer',
             ));
+        // Boot returns the registered instance; keep the agent profile this
+        // connection was opened for.
+        target = booted.copyWith(profile: () => instance.profile);
       }
       return DashboardTransport.connect(
         instance: target,
@@ -40,40 +43,34 @@ List<Override> localHostOverrides(LocalHermesHost host) => [
   ),
 ];
 
-/// Owns the Hermuse-supervised local Hermes backend on desktop.
+/// Connects to the canonical Linux service without supervising its lifetime.
 ///
-/// Created once in `main()` (desktop only) and shut down on app exit:
-/// - [boot]: detect → [adopt] (supervise → `registerLocal`).
-/// - [bridgeHost]: the CLIProxyAPI sidecar behind the subscription cards.
-/// - [installPlugin]: installs the bundled Hermuse plugin on this Hermes.
-///
-/// It never stops a Hermes it did not spawn.
+/// On macOS and Windows, detects and supervises the desktop-owned backend
+/// and model bridge. Those subprocesses alone are stopped on app exit.
 final class LocalHermesHost {
   LocalHermesHost._({
     required this.detector,
     required this.secrets,
     this.installJournalPath,
-    this.setupAssistant = false,
+    this.canonicalService = false,
     HermesSupervisor? injected,
-  }) : _supervisor = injected,
-       bridgeHost = SupervisorBridgeHost(
-         secrets: secrets,
-         hermesHome: detector.hermesHome,
-       );
+  }) : _supervisor = injected {
+    bridgeHost = SupervisorBridgeHost(
+      secrets: secrets,
+      hermesHome: detector.hermesHome,
+    );
+  }
 
-  /// Production host against the real platform (detect on PATH/filesystem).
-  /// [installJournalPath] is where the install Hermuse makes is journaled
-  /// (Linux, macOS; an unfinished install is never adopted); [setupAssistant]
-  /// is true on Linux.
+  /// Uses the canonical service on Linux and desktop supervision elsewhere.
+  /// [installJournalPath] journals the non-Linux desktop installation.
   factory LocalHermesHost.system(
     SecretStore secrets, {
     String? installJournalPath,
-    bool setupAssistant = false,
   }) => LocalHermesHost._(
     detector: HermesDetector.system(installJournalPath: installJournalPath),
     secrets: secrets,
     installJournalPath: installJournalPath,
-    setupAssistant: setupAssistant,
+    canonicalService: Platform.isLinux,
   );
 
   @visibleForTesting
@@ -81,45 +78,36 @@ final class LocalHermesHost {
     required HermesDetector detector,
     required SecretStore secrets,
     HermesSupervisor? supervisor,
+    bool canonicalService = false,
   }) => LocalHermesHost._(
     detector: detector,
     secrets: secrets,
     injected: supervisor,
+    canonicalService: canonicalService,
   );
 
   final HermesDetector detector;
   final SecretStore secrets;
+  final bool canonicalService;
 
   /// The [InstallJournal] of the install Hermuse makes on this computer, or
   /// null when installs are not journaled here.
   final String? installJournalPath;
 
-  /// Whether the Linux setup assistant (`host/linux_setup.dart`) prepares
-  /// this computer: the backend uses [dockerEndpoint], and the agent's
-  /// computer is set up through the backend rather than by the plugin
-  /// installer.
-  final bool setupAssistant;
-
-  /// The Docker engine the supervised backend uses, as the setup assistant
-  /// planned it; null keeps the inherited Docker configuration. A change
-  /// applies when [adopt] next runs.
-  DockerEndpoint? dockerEndpoint;
-
   /// Subscription bridge (CLIProxyAPI sidecar), started lazily on first use.
-  final SupervisorBridgeHost bridgeHost;
+  late final SupervisorBridgeHost bridgeHost;
 
   HermesSupervisor? _supervisor;
   DetectedHermes? _detected;
-
-  /// `DOCKER_HOST` the owned backend was started with (explicit endpoints
-  /// only).
-  String? _backendDockerHost;
+  Future<void>? _mutation;
+  bool _uninstalling = false;
 
   /// The supervised backend (null until [boot] finds an install).
   HermesSupervisor? get supervisor => _supervisor;
 
   /// Hermes home of this computer's install.
-  String get hermesHome => detector.hermesHome;
+  String get hermesHome =>
+      canonicalService ? '/home/hermes/.hermes' : detector.hermesHome;
 
   /// Detects an install, starts the owned backend and registers the
   /// `hermuse-local` instance. Null when no Hermes is installed (the
@@ -128,6 +116,19 @@ final class LocalHermesHost {
   /// Idempotent: later calls return the registered instance without
   /// restarting the backend.
   Future<HermesInstance?> boot(HermesRegistry registry) async {
+    if (_uninstalling) {
+      throw const HermesUnreachable('The local installation is being removed.');
+    }
+    if (canonicalService) {
+      final instance = registry.byId(localInstanceId);
+      if (instance?.kind != InstanceKind.system) return null;
+      if (await _serviceCredential(instance!) == null) {
+        throw const HermesUnreachable(
+          'Reconnect this computer through setup to authorize service access.',
+        );
+      }
+      return instance;
+    }
     if (_detected != null && _supervisor != null) {
       return registry.byId(localInstanceId);
     }
@@ -136,37 +137,101 @@ final class LocalHermesHost {
     return adopt(registry, found);
   }
 
+  /// Whether the registered system service has lost its desktop credential
+  /// (keyring reset, item deleted): setup must sign in or authorize again
+  /// before [boot] can connect.
+  Future<bool> serviceAccessMissing(HermesRegistry registry) async {
+    final instance = registry.byId(localInstanceId);
+    if (!canonicalService || instance?.kind != InstanceKind.system) {
+      return false;
+    }
+    if (instance!.auth == AuthMethod.nativeOAuth) return true;
+    return await _serviceCredential(instance) == null;
+  }
+
+  Future<String?> _serviceCredential(HermesInstance instance) async {
+    Future<String?> read(String key) async {
+      final value = await secrets.read(localInstanceId, key);
+      return value == null || value.isEmpty ? null : value;
+    }
+
+    return switch (instance.auth) {
+      AuthMethod.loopbackToken => read(SecretKeys.sessionToken),
+      // The dashboard login needs both (DashboardTransport._passwordLogin).
+      AuthMethod.password =>
+        await read(SecretKeys.username) == null
+            ? null
+            : read(SecretKeys.password),
+      AuthMethod.nativeOAuth => throw const HermesUnreachable(
+        'Reconnect this computer with a supported dashboard login.',
+      ),
+    };
+  }
+
+  /// Persists the helper's verified loopback handoff, never its token on disk.
+  Future<HermesInstance> registerService(
+    HermesRegistry registry,
+    RemoteInstallOutcome outcome,
+  ) async {
+    final token = outcome.sessionToken;
+    if (!canonicalService ||
+        token == null ||
+        token.isEmpty ||
+        outcome.baseUrl.toString() != 'http://127.0.0.1:9119') {
+      throw StateError('The service did not return a valid loopback handoff.');
+    }
+    final existing = registry.byId(localInstanceId);
+    if (existing != null && existing.kind == InstanceKind.remote) {
+      throw StateError('The local registration belongs to a remote instance.');
+    }
+    final instance = HermesInstance(
+      id: localInstanceId,
+      label: existing?.label ?? 'This computer',
+      kind: InstanceKind.system,
+      baseUrl: Uri.parse(outcome.baseUrl),
+      auth: AuthMethod.loopbackToken,
+      profile: existing?.profile,
+    );
+    await secrets.write(localInstanceId, SecretKeys.sessionToken, token);
+    if (existing == null) {
+      await registry.add(instance);
+    } else {
+      await registry.update(instance);
+    }
+    return instance;
+  }
+
   /// Supervises [hermes] (as [detector] found it) and registers the
   /// `hermuse-local` instance on its backend.
   ///
-  /// An incompatible install is refused ([HermesUnreachable]) and left as it
-  /// is. A backend already running for [hermes] is kept, unless
-  /// [dockerEndpoint] now names another engine: it then restarts with it.
+  /// An incompatible install is refused and left untouched. Canonical Linux
+  /// mode never adopts or starts a per-user backend.
   Future<HermesInstance> adopt(
     HermesRegistry registry,
     DetectedHermes hermes,
+  ) => _tracked(() => _adopt(registry, hermes));
+
+  Future<HermesInstance> _adopt(
+    HermesRegistry registry,
+    DetectedHermes hermes,
   ) async {
+    if (canonicalService) {
+      throw StateError(
+        'Linux uses the canonical service; legacy adoption is disabled.',
+      );
+    }
     if (!hermes.compatible) {
       throw HermesUnreachable(incompatibleHermesMessage(hermes));
     }
-    final endpoint = dockerEndpoint;
-    final dockerHost = endpoint != null && endpoint.explicit
-        ? endpoint.host
-        : null;
     final running = _supervisor;
     if (running != null &&
         _detected != null &&
-        (_detected!.executable != hermes.executable ||
-            _backendDockerHost != dockerHost)) {
+        _detected!.executable != hermes.executable) {
       await running.dispose();
       _supervisor = null;
     }
     _detected = hermes;
-    final supervisor = _supervisor ??= HermesSupervisor(
-      hermes: hermes,
-      dockerEndpoint: endpoint,
-    );
-    _backendDockerHost = dockerHost;
+    final supervisor = _supervisor ??= HermesSupervisor(hermes: hermes);
     await supervisor.ensureStarted();
     return supervisor.registerLocal(registry, secrets);
   }
@@ -174,13 +239,20 @@ final class LocalHermesHost {
   /// Copies the plugin bundled in the app assets into this Hermes, enables
   /// it, and restarts the owned backend so it mounts the plugin routes (the
   /// local instance is re-registered on its new port). Requires a booted
-  /// host; callers reopen the local connection afterwards. With
-  /// [setupAssistant] the agent's computer is left to the caller, which sets
-  /// it up through the restarted backend.
+  /// host; callers reopen the local connection afterwards. Linux service
+  /// updates go through the canonical provisioning helper instead.
   Future<HermusePluginInstall> installPlugin(
     HermesRegistry registry, {
     AssetBundle? bundle,
+  }) => _tracked(() => _installPlugin(registry, bundle: bundle));
+
+  Future<HermusePluginInstall> _installPlugin(
+    HermesRegistry registry, {
+    AssetBundle? bundle,
   }) async {
+    if (canonicalService) {
+      throw StateError('Update the canonical service through computer setup.');
+    }
     final detected = _detected;
     final supervisor = _supervisor;
     if (detected == null || supervisor == null) {
@@ -202,7 +274,7 @@ final class LocalHermesHost {
         );
       }
       final result = await HermusePluginInstaller(pluginSourceDir: staging.path)
-          .installFor(detected, setupComputer: !setupAssistant);
+          .installFor(detected);
       await supervisor.stop();
       await supervisor.ensureStarted();
       await supervisor.registerLocal(registry, secrets);
@@ -212,34 +284,50 @@ final class LocalHermesHost {
     }
   }
 
-  /// `hermes hermuse doctor` on the supervised install: the plugin's store
-  /// and schedule diagnostics. Throws [ProcessFailed] with its output when
-  /// it reports a problem.
-  Future<void> pluginDoctor() async {
-    final detected = _detected;
-    if (detected == null) throw StateError('the local Hermes is not running');
-    final result = await Process.run(
-      detected.executable,
-      const ['hermuse', 'doctor'],
-      includeParentEnvironment: false,
-      environment: {
-        ...hostEnvironment(),
-        ...detected.runtimeEnvironment(),
-        'HERMES_HOME': detected.home,
-      },
-    ).timeout(const Duration(minutes: 1));
-    if (result.exitCode != 0) {
-      throw ProcessFailed(
-        'hermes hermuse doctor reported a problem (exit ${result.exitCode})',
-        exitCode: result.exitCode,
-        outputTail: '${result.stdout}${result.stderr}'.trim(),
+  /// Serializes host mutations so removal waits for every in-flight write.
+  Future<T> _tracked<T>(Future<T> Function() body) {
+    if (_uninstalling) {
+      return Future.error(
+        StateError('The local installation is being removed.'),
       );
     }
+    final preceding = _mutation;
+    final finished = Completer<void>();
+    _mutation = finished.future;
+    return () async {
+      try {
+        await preceding;
+        if (_uninstalling) {
+          throw StateError('The local installation is being removed.');
+        }
+        return await body();
+      } finally {
+        finished.complete();
+        if (identical(_mutation, finished.future)) _mutation = null;
+      }
+    }();
+  }
+
+  /// Quiesces only this host; reconnects cannot recreate files during removal.
+  Future<void> prepareForUninstall() async {
+    _uninstalling = true;
+    await _mutation;
+    await bridgeHost.suspend();
+    await _supervisor?.dispose();
+    _supervisor = null;
+    _detected = null;
+  }
+
+  /// Allows this target to be installed or connected again after the page closes.
+  void finishUninstall() {
+    _uninstalling = false;
+    bridgeHost.resume();
   }
 
   /// Stops the owned backend and the sidecar (if started). Never touches
   /// user-started processes.
   Future<void> shutdown() async {
+    if (canonicalService) return;
     await bridgeHost.supervisor.stop();
     await _supervisor?.stop();
   }

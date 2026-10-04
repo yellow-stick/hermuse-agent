@@ -143,9 +143,10 @@ Hermuse is our own proposal, built on different choices:
 | :-: | :-: | :-: | :-: | :-: | :-: |
 | Installable web app | Desktop app | Desktop app | Desktop app | Coming soon | Coming soon |
 
-The desktop apps can install and supervise Hermes on your computer and add the
-`hermuse` plugin to it. The web and mobile apps connect to a Hermes instance
-you already run, for example on a server.
+The desktop apps can install Hermes and its `hermuse` plugin on your computer.
+Linux uses a dedicated account and system service shared with SSH setup;
+macOS and Windows supervise a local backend. The web and mobile apps connect
+to a Hermes instance you already run, for example on a server.
 
 ---
 
@@ -192,34 +193,55 @@ melos run test
 ### Running
 
 ```bash
-cd apps/hermuse_app && flutter run -d linux     # or macos / windows / an iOS or Android device
+(cd packages/hermuse_host && dart run tool/build_linux_service.dart) # Linux setup helper
+cd apps/hermuse_app && flutter run -d linux \
+  --dart-define=HERMUSE_WORKSPACE_ROOT="$(git rev-parse --show-toplevel)"
 tool/serve-web.sh                               # jaspr serve, http://localhost:8080 (per-worktree ports elsewhere)
 cd apps/hermuse_web && jaspr build              # static output in build/jaspr
 ```
 
-The desktop subscription bridge runs the CLIProxyAPI binary pinned in
-`packages/hermuse_host/cliproxy.lock`. A development build verifies it in the
-package tree: fetch it once for your platform (`linux-amd64`, `macos-arm64`,
-…) and tell the app where that tree is. Release builds embed the binary and
-its digest instead.
+On macOS and Windows, the desktop subscription bridge runs the CLIProxyAPI
+binary pinned in `packages/hermuse_host/cliproxy.lock`. A development build
+verifies it in the package tree: fetch it for your platform and tell the app
+where that tree is. Release builds embed the binary and its digest instead.
+Linux's canonical service uses the plugin-managed bridge on the Hermes host.
 
 ```bash
-cd packages/hermuse_host && dart run tool/fetch_cliproxy.dart --platform linux-amd64 --frozen-lockfile
-cd apps/hermuse_app && flutter run -d linux \
-  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
+(cd packages/hermuse_host && dart run tool/fetch_cliproxy.dart --platform macos-arm64 --frozen-lockfile)
+cd apps/hermuse_app && flutter run -d macos \
+  --dart-define=HERMUSE_WORKSPACE_ROOT="$(git rev-parse --show-toplevel)" \
+  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT="$PWD/../../packages/hermuse_host"
 ```
 
-On Linux the app first prepares the computer (keyring, Hermes build tools,
-Docker) with `packaging/linux/hermuse-linux-setup`. A release build embeds the
-helper and its digest; a development build uses the checkout's copy only when
-told where the checkout is, otherwise the preparation screen reports the
-helper as unavailable:
+Linux setup first checks the desktop keyring, then provisions the same
+`hermes` account, `/home/hermes/.hermes` and system service as SSH setup, without
+public exposure. Build the AOT service helper after changing its sources or the
+bundled plugin: Flutter hot reload and hot restart do not rebuild it. The helper
+embeds that plugin rather than accepting privileged asset paths from the desktop.
+Release builds embed both helpers and their digests; development builds require
+an explicit workspace root:
 
 ```bash
+(cd packages/hermuse_host && dart run tool/build_linux_service.dart)
 cd apps/hermuse_app && flutter run -d linux \
-  --dart-define=HERMUSE_WORKSPACE_ROOT=$(git rev-parse --show-toplevel) \
-  --dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$PWD/../../packages/hermuse_host
+  --dart-define=HERMUSE_WORKSPACE_ROOT="$(git rev-parse --show-toplevel)"
 ```
+
+For a headless development desktop, run `tool/remote-app.sh` from the repository
+root. It builds the service helper and supplies `HERMUSE_WORKSPACE_ROOT`
+automatically, so **Install Hermes on this computer** can use this checkout.
+Install `pkexec` and `policykit-1-gnome` alongside the launcher's other prerequisites
+(`sudo apt-get install pkexec policykit-1-gnome` on Ubuntu). The launcher starts
+the graphical polkit authentication agent with the app and stops it when the
+development run exits. Privileged setup still requires your administrator
+password in the system dialog; the launcher does not bypass authorization.
+It also supplies `HERMUSE_CLIPROXY_DEV_ROOT` and verifies the development bridge
+binary for the host architecture before launch. A missing or mismatched binary
+is fetched with `--frozen-lockfile`; an already verified binary is reused without
+a download. The committed lock is never rewritten.
+The workspace setting is development-only; release builds still require the
+bundled helper and its compiled-in digest. After changing a `--dart-define`,
+fully stop and relaunch the app; hot reload does not update it.
 
 ### Hermes plugin
 
@@ -248,11 +270,14 @@ Behaviour is shared the same way: both apps render `hermuse_chat`'s `ChatState`
 and call the same `ChatController`, so an action cannot behave differently on
 the web and on native.
 
-Chats follow a main/side model: each Hermes instance has one **Main chat**, and
-every other thread is a **side chat** of it (created from Hermuse with the main
-session as parent; pin, rename, archive, delete, full-text search). Other
-sessions of the instance (CLI, Telegram, …) are not listed. The main chat and
-the thread on screen are remembered per instance (`hermuse_state`).
+Chats follow a main/side model: each agent profile on a Hermes instance has
+one **Main chat**, and every other thread is a **side chat** of it (created
+from Hermuse with the main session as parent; pin, rename, archive, delete,
+full-text search). Other sessions (CLI, Telegram, …) are not listed. The main
+chat and the thread on screen are remembered per instance and profile
+(`hermuse_state`). The header's **Agent** menu creates and switches real Hermes
+profiles with independent editable prompts and portraits; see
+[Agents and the profile panel](docs/guides/profile-panel.md).
 
 ### Web app (PWA)
 

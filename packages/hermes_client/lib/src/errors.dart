@@ -47,3 +47,10 @@ final class HermesRpcError extends HermesException {
 final class HermesConnectionLost extends HermesException {
   const HermesConnectionLost(super.message);
 }
+
+/// The request's UI detached without answering; no reply is sent to Hermes.
+///
+/// A later session resume can deliver the still-open request to a new handler.
+final class HermesRequestDetached extends HermesException {
+  const HermesRequestDetached() : super('request handler detached');
+}

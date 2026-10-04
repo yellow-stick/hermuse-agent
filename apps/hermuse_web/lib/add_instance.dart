@@ -62,7 +62,7 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
   var _url = '';
   var _label = '';
   var _labelEdited = false;
-  var _username = '';
+  var _username = 'admin';
   var _password = '';
   var _token = '';
   var _busy = false;
@@ -190,6 +190,11 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       return;
     }
     final loopback = login == AuthMethod.loopbackToken;
+    final username = _username.trim();
+    if (!loopback && username.isEmpty) {
+      setState(() => _error = 'Enter the dashboard username');
+      return;
+    }
     final secret = loopback ? _token.trim() : _password;
     if (secret.isEmpty) {
       setState(
@@ -214,10 +219,7 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
       candidate,
       loopback
           ? {SecretKeys.sessionToken: secret}
-          : {
-              SecretKeys.username: _username.trim(),
-              SecretKeys.password: secret,
-            },
+          : {SecretKeys.username: username, SecretKeys.password: secret},
     );
     if (!mounted) return;
     if (error != null) {
@@ -384,7 +386,7 @@ class _HermuseAddInstanceState extends State<HermuseAddInstance> {
             value: _username,
             onChanged: (v) => setState(() => _username = v),
             onSubmitted: submit,
-            placeholder: 'admin',
+            placeholder: 'Dashboard username',
             name: 'hermes-username',
             label: 'Username',
             icon: YsIcon.user,

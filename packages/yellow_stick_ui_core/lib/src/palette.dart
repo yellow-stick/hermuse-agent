@@ -24,6 +24,9 @@ final class YsPalette {
     required this.paperClear,
     required this.paperEdge,
     required this.paperShadow,
+    required this.glass,
+    required this.glassShine,
+    required this.glassRim,
     required this.neutralAmbient,
     required this.neutralFilm,
     required this.neutralWash,
@@ -48,6 +51,11 @@ final class YsPalette {
     required this.logoSurface,
     required this.avatarSurface,
     required this.shadow,
+    required this.soulStart,
+    required this.soulEnd,
+    required this.memoryStart,
+    required this.memoryEnd,
+    required this.identityContent,
   });
 
   /// App background.
@@ -66,6 +74,17 @@ final class YsPalette {
 
   /// Resting shadow under the same raised surfaces.
   final YsColor paperShadow;
+
+  /// Liquid glass tint over the blurred, saturated backdrop: floating
+  /// header controls (Chats pill, agent switcher). See [YsGlassMaterial].
+  final YsColor glass;
+
+  /// Sheen washing down from the top edge of [glass] and the dim end of
+  /// its rim.
+  final YsColor glassShine;
+
+  /// Specular rim along the top edge of [glass].
+  final YsColor glassRim;
 
   /// Solid neutral fill: tab track, avatar badges, monogram logos.
   final YsColor neutralAmbient;
@@ -146,6 +165,19 @@ final class YsPalette {
   /// Soft shadow under a card lifted by the pointer.
   final YsColor shadow;
 
+  /// Warm gradient of the Identity SOUL card, top-left [soulStart] to
+  /// bottom-right [soulEnd].
+  final YsColor soulStart;
+  final YsColor soulEnd;
+
+  /// Cool gradient of the Identity MEMORY card, top-left [memoryStart] to
+  /// bottom-right [memoryEnd].
+  final YsColor memoryStart;
+  final YsColor memoryEnd;
+
+  /// Text and glyphs drawn on the SOUL and MEMORY gradients.
+  final YsColor identityContent;
+
   /// Yellow Stick dark theme: near-black canvas, raised surfaces a step
   /// lighter with a faint rim, warm off-white text, warm professional
   /// yellow. Text and ink stay readable (WCAG AA) on every surface.
@@ -155,6 +187,9 @@ final class YsPalette {
     paperClear: YsColor(0xD9303033),
     paperEdge: YsColor(0x13FFFFFF),
     paperShadow: YsColor(0x38000000),
+    glass: YsColor(0x5C2A2A2D),
+    glassShine: YsColor(0x14FFFFFF),
+    glassRim: YsColor(0x47FFFFFF),
     neutralAmbient: YsColor(0xFF2A2A2D),
     neutralFilm: YsColor(0xFF3A3A3E),
     neutralWash: YsColor(0x663A3A3E),
@@ -179,6 +214,11 @@ final class YsPalette {
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFEDE7DF),
     shadow: YsColor(0x73000000),
+    soulStart: YsColor(0xFFE9B48C),
+    soulEnd: YsColor(0xFFD9817A),
+    memoryStart: YsColor(0xFF9CC3E6),
+    memoryEnd: YsColor(0xFFA9A4E0),
+    identityContent: YsColor(0xFF1C1712),
   );
 
   /// Yellow Stick light theme: soft neutral canvas, white raised surfaces
@@ -190,6 +230,9 @@ final class YsPalette {
     paperClear: YsColor(0xF0FFFFFF),
     paperEdge: YsColor(0x12141412),
     paperShadow: YsColor(0x0F141412),
+    glass: YsColor(0x8CFFFFFF),
+    glassShine: YsColor(0x80FFFFFF),
+    glassRim: YsColor(0xF2FFFFFF),
     neutralAmbient: YsColor(0xFFE9E9E6),
     neutralFilm: YsColor(0xFFDADAD6),
     neutralWash: YsColor(0x0F141412),
@@ -214,6 +257,11 @@ final class YsPalette {
     logoSurface: YsColor(0xFFFFFFFF),
     avatarSurface: YsColor(0xFFECE9E4),
     shadow: YsColor(0x2E141412),
+    soulStart: YsColor(0xFFF8D2B0),
+    soulEnd: YsColor(0xFFEFA59A),
+    memoryStart: YsColor(0xFFC3DDF4),
+    memoryEnd: YsColor(0xFFC9C3F0),
+    identityContent: YsColor(0xFF1C1712),
   );
 
   /// Every role by its CSS custom-property name (`--paper-clear`, ...).
@@ -223,6 +271,9 @@ final class YsPalette {
     'paper-clear': paperClear,
     'paper-edge': paperEdge,
     'paper-shadow': paperShadow,
+    'glass': glass,
+    'glass-shine': glassShine,
+    'glass-rim': glassRim,
     'neutral-ambient': neutralAmbient,
     'neutral-film': neutralFilm,
     'neutral-wash': neutralWash,
@@ -247,6 +298,11 @@ final class YsPalette {
     'logo-surface': logoSurface,
     'avatar-surface': avatarSurface,
     'shadow': shadow,
+    'soul-start': soulStart,
+    'soul-end': soulEnd,
+    'memory-start': memoryStart,
+    'memory-end': memoryEnd,
+    'identity-content': identityContent,
   };
 }
 
