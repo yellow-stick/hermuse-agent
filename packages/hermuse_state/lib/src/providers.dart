@@ -10,7 +10,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'activity.dart';
 import 'agents.dart';
 import 'automations.dart';
-import 'onboarding.dart' show setupChatTitle;
+import 'onboarding.dart' show restClientProvider, setupChatTitle;
 import 'product.dart';
 import 'saved_sign_in.dart';
 
@@ -467,6 +467,18 @@ Future<ChatController> chatSession(Ref ref, ThreadRef thread) async {
       thread.instanceId,
       thread.profile,
     ),
+    clarifyResults: (sessionId) async {
+      if (!ref.mounted) return const {};
+      final rest = await ref.read(
+        restClientProvider(thread.instanceId, profile: thread.profile).future,
+      );
+      return clarifyResultsOf(
+        await rest.getJson(
+          '/api/sessions/${Uri.encodeComponent(sessionId)}/messages',
+          {'limit': '500', 'order': 'latest'},
+        ),
+      );
+    },
   );
   ref.listen(agentProfileProvider(thread.instanceId, thread.profile), (
     _,
@@ -477,6 +489,15 @@ Future<ChatController> chatSession(Ref ref, ThreadRef thread) async {
   ref.onDispose(controller.dispose);
   return controller;
 }
+
+/// Results of the `clarify` calls in a page of stored session messages
+/// (`GET /api/sessions/{id}/messages`), by tool call id: the chat
+/// transcript omits them, so a reloaded chat reads the user's answers here.
+Map<String, Object?> clarifyResultsOf(Map<String, Object?> page) => {
+  for (final m in (page['messages'] as List?) ?? const [])
+    if (m is Map && m['role'] == 'tool' && m['tool_name'] == 'clarify')
+      if (m['tool_call_id'] case final String id) id: m['content'],
+};
 
 /// Side chats of the main chat [main] as stored locally (pin and activity
 /// order); empty until the main chat exists. [archived] lists the archive.

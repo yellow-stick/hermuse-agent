@@ -187,4 +187,27 @@ void main() {
     container.dispose();
     expect(fake.closed, isTrue);
   });
+
+  test('clarify results come from the stored session messages', () {
+    expect(
+      clarifyResultsOf({
+        'messages': [
+          {'role': 'user', 'content': 'Plan my trip'},
+          {
+            'role': 'tool',
+            'tool_name': 'clarify',
+            'tool_call_id': 'c1',
+            'content': '{"user_response": "Tomorrow"}',
+          },
+          {
+            'role': 'tool',
+            'tool_name': 'web_search',
+            'tool_call_id': 'w1',
+            'content': '{}',
+          },
+        ],
+      }),
+      {'c1': '{"user_response": "Tomorrow"}'},
+    );
+  });
 }

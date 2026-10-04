@@ -315,8 +315,21 @@ void main() {
         history++;
         return {
           'count': 4,
+          // The transcript the chat was opened on, then rows written
+          // elsewhere.
           'messages': [
             transcriptRow('user', 'find flights', 1),
+            {
+              ...transcriptRow('assistant', 'Searching.', 2),
+              'reasoning': 'need dates',
+            },
+            {
+              'role': 'tool',
+              'name': 'web_search',
+              'tool_call_id': 't0',
+              'context': 'flights LIS OSL',
+              'row_id': 3,
+            },
             transcriptRow('assistant', 'Here are three.', 4),
             if (history > 1) transcriptRow('user', brief, 9),
             if (history > 1) transcriptRow('assistant', 'Umbrella day.', 10),
@@ -356,6 +369,483 @@ void main() {
         sessionsChangedDebounce + const Duration(milliseconds: 50),
       );
       expect(history, 2);
+    },
+  );
+
+  group('the transcript read again keeps what was shown', () {
+    /// The transcript the chat opens on (setUp's `session.resume`).
+    List<Map<String, Object?>> opened() => [
+      transcriptRow('user', 'find flights', 1),
+      {
+        ...transcriptRow('assistant', 'Searching.', 2),
+        'reasoning': 'need dates',
+      },
+      {
+        'role': 'tool',
+        'name': 'web_search',
+        'tool_call_id': 't0',
+        'context': 'flights LIS OSL',
+        'row_id': 3,
+      },
+      transcriptRow('assistant', 'Here are three.', 4),
+    ];
+
+    void serve(List<Map<String, Object?>> rows) => fake.on(
+      'session.history',
+      (_) => {'count': rows.length, 'messages': rows},
+    );
+
+    Future<void> sessionsChanged() async {
+      fake.emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+    }
+
+    Map<String, Object?> persisted(List<int> rows, {int? last}) => {
+      'row_ids': rows,
+      'complete': last != null,
+      'user_row_id': rows.first,
+      'final_assistant_row_id': ?last,
+    };
+
+    test('a scheduled delivery after a turn keeps its reasoning, tool names '
+        'and failures; only the new rows join', () async {
+      final chat = await open();
+      await chat.send('remind me');
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'reasoning.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'goal, then a reminder'},
+        )
+        ..emitEvent(
+          'message.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'Tracking it.'},
+        )
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {'tool_id': 't1', 'name': 'goal_track'},
+        )
+        ..emitEvent(
+          'tool.complete',
+          sessionId: 'live-1',
+          payload: {
+            'tool_id': 't1',
+            'name': 'goal_track',
+            'result': {'error': 'tool_call takes exactly one entry'},
+          },
+        )
+        ..emitEvent(
+          'message.complete',
+          sessionId: 'live-1',
+          payload: {
+            'text': 'Noted.',
+            'status': 'complete',
+            'persisted_turn': persisted([5, 6, 7, 8], last: 8),
+          },
+        );
+      final live = chat.state.activeThread.messages.last;
+      // The transcript has the bridged tool name, no outcome, no
+      // reasoning, and the interim line; then a delivered job.
+      serve([
+        ...opened(),
+        transcriptRow('user', 'remind me', 5),
+        transcriptRow('assistant', 'Tracking it.', 6),
+        {
+          'role': 'tool',
+          'name': 'tool_call',
+          'tool_call_id': 't1',
+          'context': 'goal_track',
+        },
+        transcriptRow('assistant', 'Noted.', 8),
+        transcriptRow('user', brief, 9),
+        transcriptRow('assistant', 'Umbrella day.', 10),
+      ]);
+      await sessionsChanged();
+      final messages = chat.state.activeThread.messages;
+      expect(messages.map((m) => m.id), [
+        'row-1',
+        'row-4',
+        'row-5',
+        'row-8',
+        'row-9',
+        'row-10',
+      ]);
+      expect(identical(messages[3], live), isTrue);
+      expect(live.blocks.first, isA<ReasoningBlock>());
+      final tool = live.blocks.whereType<ToolCallBlock>().single;
+      expect((tool.name, tool.failed), ('goal_track', true));
+      expect(live.blocks.whereType<TextBlock>().map((b) => b.text), ['Noted.']);
+      expect(
+        (messages[4].blocks.single as NoticeBlock).text,
+        'Scheduled: Morning brief',
+      );
+    });
+
+    test('a turn the server starts shows its brief once it streams', () async {
+      serve([
+        ...opened(),
+        transcriptRow('user', brief, 5),
+        // Already written by the running turn: it streams here.
+        transcriptRow('assistant', 'Checking the forecast.', 6),
+      ]);
+      final chat = await open();
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'reasoning.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'rain?'},
+        );
+      await pumpEventQueue();
+      expect(chat.state.busy, isTrue);
+      final turn = chat.state.turnMessageIds['stored-1'];
+      var messages = chat.state.activeThread.messages;
+      expect(messages.map((m) => m.id), ['row-1', 'row-4', 'row-5', turn]);
+      expect(
+        (messages[2].blocks.single as NoticeBlock).text,
+        'Scheduled: Morning brief',
+      );
+      expect(chat.state.runningTasks.single.request, '');
+
+      fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-1',
+        payload: {
+          'text': 'Take an umbrella.',
+          'status': 'complete',
+          'persisted_turn': persisted([5, 6], last: 6),
+        },
+      );
+      await pumpEventQueue();
+      messages = chat.state.activeThread.messages;
+      expect(messages.map((m) => m.id), ['row-1', 'row-4', 'row-5', 'row-6']);
+      expect(messages.last.blocks.first, isA<ReasoningBlock>());
+    });
+
+    test('a clarify answer is the user\'s message under the question; the '
+        'turn goes on below it', () async {
+      final chat = await open();
+      await chat.send('plan my trip');
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'tool.start',
+          sessionId: 'live-1',
+          payload: {'tool_id': 'c1', 'name': 'clarify'},
+        )
+        ..emitRequest('srq-c', 'clarify', {
+          'session_id': 'live-1',
+          'question': 'When?',
+          'choices': ['Now (Recommended)', 'Tomorrow'],
+        });
+      await pumpEventQueue();
+      chat.choose('request-srq-c', 'Now (Recommended)');
+      await pumpEventQueue();
+      expect(fake.replies['srq-c']?['result'], {'answer': 'Now (Recommended)'});
+      fake
+        ..emitEvent(
+          'tool.complete',
+          sessionId: 'live-1',
+          payload: {'tool_id': 'c1', 'name': 'clarify'},
+        )
+        ..emitEvent(
+          'message.delta',
+          sessionId: 'live-1',
+          payload: {'text': 'Searching now.'},
+        )
+        ..emitEvent(
+          'message.complete',
+          sessionId: 'live-1',
+          payload: {
+            'text': 'Searching now.',
+            'status': 'complete',
+            'persisted_turn': persisted([5, 7], last: 7),
+          },
+        );
+      void expectOrder() {
+        final messages = chat.state.activeThread.messages;
+        expect(messages.map((m) => (m.author, m.plainText)), [
+          (Author.user, 'find flights'),
+          (Author.agent, 'Searching.\n\nHere are three.'),
+          (Author.user, 'plan my trip'),
+          (Author.agent, ''),
+          (Author.agent, 'When?\nNow (Recommended)\nTomorrow'),
+          (Author.user, 'Now'),
+          (Author.agent, 'Searching now.'),
+        ]);
+        final asked = messages[3].blocks.single as ToolCallBlock;
+        expect((asked.name, asked.running), ('clarify', false));
+        expect(messages[5].id, 'answer-c1');
+        expect(messages.last.id, 'row-7');
+      }
+
+      expectOrder();
+      // Read again: the transcript has no answer rows of its own.
+      serve([
+        ...opened(),
+        transcriptRow('user', 'plan my trip', 5),
+        {
+          'role': 'tool',
+          'name': 'clarify',
+          'tool_call_id': 'c1',
+          'context': 'When?',
+        },
+        transcriptRow('assistant', 'Searching now.', 7),
+      ]);
+      await sessionsChanged();
+      expectOrder();
+    });
+
+    test(
+      'a reloaded chat shows clarify answers as the user\'s messages',
+      () async {
+        fake.on(
+          'session.resume',
+          (_) => {
+            'session_id': 'live-1',
+            'message_count': 3,
+            'info': const <String, Object?>{},
+            'messages': [
+              transcriptRow('user', brief, 5),
+              {
+                'role': 'tool',
+                'name': 'clarify',
+                'tool_call_id': 'c1',
+                'context': 'When?',
+              },
+              transcriptRow('assistant', 'Reminder set for tomorrow.', 8),
+            ],
+          },
+        );
+        final asked = <String>[];
+        final chat = ChatController(
+          connections: _Connections(HermesConnection('vps', fake)),
+          ref: const ThreadRef(instanceId: 'vps', sessionId: 'stored-1'),
+          clarifyResults: (sessionId) async {
+            asked.add(sessionId);
+            return {
+              'c1':
+                  '{"responses": [{"question": "When?", "choices_offered": '
+                  '["Now", "Tomorrow"], "user_response": "Tomorrow"}]}',
+            };
+          },
+        );
+        addTearDown(chat.dispose);
+        await chat.ready;
+        final messages = chat.state.activeThread.messages;
+        expect(messages.map((m) => (m.author, m.plainText)), [
+          (Author.agent, 'Scheduled: Morning brief'),
+          (Author.agent, ''),
+          (Author.user, 'Tomorrow'),
+          (Author.agent, 'Reminder set for tomorrow.'),
+        ]);
+        expect(messages[1].blocks.single, isA<ToolCallBlock>());
+        expect(asked, ['stored-1']);
+      },
+    );
+
+    test(
+      'an approval card stays where it was asked, above the answer',
+      () async {
+        final chat = await open();
+        await chat.send('clean up');
+        fake
+          ..emitEvent('message.start', sessionId: 'live-1')
+          ..emitEvent(
+            'tool.start',
+            sessionId: 'live-1',
+            payload: {
+              'tool_id': 't1',
+              'name': 'terminal',
+              'args': {'command': 'rm -rf /tmp/test'},
+            },
+          )
+          ..emitRequest('srq-a', 'approval', {
+            'session_id': 'live-1',
+            'request_id': 'r1',
+            'command': 'rm -rf /tmp/test',
+          });
+        await pumpEventQueue();
+        expect(chat.state.agentStep, 'Running a command');
+        chat.choose('request-srq-a', 'Allow once');
+        await pumpEventQueue();
+        fake
+          ..emitEvent(
+            'tool.complete',
+            sessionId: 'live-1',
+            payload: {
+              'tool_id': 't1',
+              'name': 'terminal',
+              'result': {'output': '', 'exit_code': 0},
+            },
+          )
+          ..emitEvent(
+            'message.delta',
+            sessionId: 'live-1',
+            payload: {'text': 'Done.'},
+          );
+        expect(chat.state.currentTask?.request, 'clean up');
+        fake.emitEvent(
+          'message.complete',
+          sessionId: 'live-1',
+          payload: {
+            'text': 'Done.',
+            'status': 'complete',
+            'persisted_turn': persisted([5, 6, 7, 8], last: 8),
+          },
+        );
+        void expectOrder() {
+          final messages = chat.state.activeThread.messages;
+          expect(messages.skip(2).map((m) => m.plainText), [
+            'clean up',
+            '',
+            'Approve this command?\nrm -rf /tmp/test\nAllow once\n'
+                'Allow for this session\nAlways allow\nDeny',
+            'Done.',
+          ]);
+          final command = messages[3].blocks.single as ToolCallBlock;
+          expect((command.running, command.failed), (false, false));
+          expect(
+            (messages[4].blocks.single as ChoiceBlock).selected,
+            'Allow once',
+          );
+          expect(messages.last.id, 'row-8');
+        }
+
+        expectOrder();
+        serve([
+          ...opened(),
+          transcriptRow('user', 'clean up', 5),
+          {
+            'role': 'tool',
+            'name': 'terminal',
+            'tool_call_id': 't1',
+            'args': {'command': 'rm -rf /tmp/test'},
+          },
+          transcriptRow('assistant', 'Done.', 8),
+        ]);
+        await sessionsChanged();
+        expectOrder();
+      },
+    );
+
+    test('a stopped reply ends with Stopped, also once read again', () async {
+      final chat = await open();
+      await chat.send('history of Nantes');
+      fake
+        ..emitEvent('message.start', sessionId: 'live-1')
+        ..emitEvent(
+          'message.delta',
+          sessionId: 'live-1',
+          payload: {'text': '10. Modern Nantes (since 1977) S'},
+        );
+      await chat.interrupt();
+      fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-1',
+        payload: {
+          'text': '10. Modern Nantes (since 1977) S',
+          'status': 'interrupted',
+          'persisted_turn': persisted([5, 6]),
+        },
+      );
+      void expectStopped() {
+        final messages = chat.state.activeThread.messages;
+        expect(messages, hasLength(4));
+        expect(messages.last.blocks.map((b) => b.runtimeType), [
+          TextBlock,
+          NoticeBlock,
+        ]);
+        expect((messages.last.blocks.last as NoticeBlock).text, 'Stopped');
+      }
+
+      expectStopped();
+      serve([
+        ...opened(),
+        transcriptRow('user', 'history of Nantes', 5),
+        transcriptRow('assistant', '10. Modern Nantes (since 1977) S', 6),
+      ]);
+      await sessionsChanged();
+      expectStopped();
+    });
+  });
+
+  test(
+    'the main chat follows a new Bot Chat on sessions.changed and reconnect',
+    () async {
+      String? botChat = 'stored-1';
+      fake
+        ..on(
+          'session.list',
+          (_) => {
+            'sessions': [
+              if (botChat != null) {'id': botChat, 'title': 'Bot Chat'},
+            ],
+          },
+        )
+        ..on(
+          'session.resume',
+          (params) => {
+            'session_id': 'live-${params['session_id']}',
+            'message_count': 0,
+            'info': {'title': 'Bot Chat'},
+            'messages': const [],
+          },
+        )
+        ..on('session.history', (_) => {'count': 0, 'messages': const []});
+      final chat = await open();
+      expect(chat.state.mainThread.id, 'stored-1');
+
+      // Renamed away, no Bot Chat yet: the main chat stays, its title too.
+      botChat = null;
+      fake.emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+      expect(chat.state.mainThread.id, 'stored-1');
+      expect(calls().map((c) => c.method), isNot(contains('session.title')));
+
+      // Another session took the title.
+      botChat = 'bot-2';
+      fake.emitEvent('sessions.changed');
+      await Future<void>.delayed(
+        sessionsChangedDebounce + const Duration(milliseconds: 50),
+      );
+      expect(chat.state.mainThread.id, 'bot-2');
+      expect(chat.state.activeThreadId, 'bot-2');
+      expect(chat.state.sideThreads.map((t) => t.id), ['stored-1']);
+      expect(observer.mainChanges.map((c) => (c.$1.sessionId, c.$2)), [
+        ('bot-2', 'stored-1'),
+      ]);
+      // Scheduled turns now arrive in the main chat.
+      fake.emitEvent(
+        'message.delta',
+        sessionId: 'live-bot-2',
+        payload: {'text': 'Rain at 9.'},
+      );
+      expect(chat.state.mainThread.messages.last.plainText, 'Rain at 9.');
+      fake.emitEvent(
+        'message.complete',
+        sessionId: 'live-bot-2',
+        payload: {'text': 'Rain at 9.', 'status': 'complete'},
+      );
+
+      // Changed while the socket was down.
+      botChat = 'bot-3';
+      fake
+        ..setState(
+          ConnectionState.reconnecting,
+          const HermesConnectionLost('x'),
+        )
+        ..setState(ConnectionState.ready);
+      await pumpEventQueue();
+      expect(chat.state.mainThread.id, 'bot-3');
+      expect(chat.state.sideThreads.map((t) => t.id), ['stored-1', 'bot-2']);
     },
   );
 

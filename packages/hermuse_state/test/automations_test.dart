@@ -468,4 +468,72 @@ void main() {
     );
     expect(asked.first, '/api/cron/jobs/j1/runs?limit=10');
   });
+
+  test('run history shows the delivered answer, not the narration', () async {
+    final mock = MockClient((request) async {
+      final payload = switch (request.url.path) {
+        '/api/cron/jobs/j1/runs' => {
+          'runs': [
+            {
+              'id': 'cron_j1_1',
+              'started_at': 1789990000.0,
+              'ended_at': 1789990060.0,
+              'end_reason': 'cron_complete',
+            },
+          ],
+        },
+        '/api/sessions/cron_j1_1/messages' => {
+          'messages': [
+            {'role': 'user', 'content': 'Daily briefing'},
+            {
+              'role': 'assistant',
+              'content': 'Checking the weather first.',
+              'tool_calls': [
+                {
+                  'id': 'c1',
+                  'function': {'name': 'web_search'},
+                },
+              ],
+            },
+            {'role': 'tool', 'content': '{"results": []}'},
+            {
+              'role': 'assistant',
+              'content':
+                  "I have enough (weather via wttr.in). Writing the briefing."
+                  '\n\n## Daily briefing\n\n### Weather in Nantes\n'
+                  '- 17°C, cloudy',
+            },
+            // A later narration that calls a tool delivers nothing.
+            {
+              'role': 'assistant',
+              'content': 'Saving a copy.',
+              'tool_calls': '[{"id": "c2"}]',
+            },
+          ],
+        },
+        _ => {'detail': 'Session not found'},
+      };
+      return http.Response.bytes(
+        utf8.encode(jsonEncode(payload)),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final container = ProviderContainer(
+      overrides: [
+        restClientProvider('vps').overrideWith(
+          (ref) =>
+              HermesRestClient(mock, baseUrl: Uri.parse('https://vps.example')),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final runs = await container.read(
+      automationRunsProvider('vps', 'j1').future,
+    );
+    expect(
+      runs.single.output,
+      'Daily briefing\n\nWeather in Nantes\n- 17°C, cloudy',
+    );
+  });
 }

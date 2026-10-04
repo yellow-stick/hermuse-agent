@@ -687,7 +687,7 @@ final class ChatSessionProvider
   }
 }
 
-String _$chatSessionHash() => r'3dd36df23113a04f925f92cd2cc62c3dfe7839a4';
+String _$chatSessionHash() => r'7d5f0f799c9be26264f65e616bc1b0b86e57b66b';
 
 /// The chat of the main session [thread] (main chat + its side chats),
 /// opened on the thread that was on screen last time.

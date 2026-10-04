@@ -371,8 +371,9 @@ final class AutomationRun {
   final DateTime? endedAt;
   final AutomationRunStatus status;
 
-  /// The start of the run's last answer ([runOutputLimit] characters at
-  /// most); '' when it answered nothing readable.
+  /// The start of what the run delivered ([runOutputLimit] characters at
+  /// most): its final answer, without the line of narration a model may
+  /// open it with; '' when it answered nothing readable.
   final String output;
 }
 
@@ -388,7 +389,7 @@ DateTime? _parseEpoch(Object? value) => switch (value) {
 };
 
 /// The last few runs of the automation [jobId], newest first, each with
-/// an excerpt of its answer (the run session's last assistant message; the
+/// an excerpt of what it delivered (the run session's final answer; the
 /// job's `last_output` for the newest run when its transcript says
 /// nothing).
 @riverpod
@@ -426,7 +427,8 @@ Future<List<AutomationRun>> automationRuns(
   ];
 }
 
-/// Excerpt of the last assistant message of the run session [sessionId];
+/// Excerpt of the final answer of the run session [sessionId] (its last
+/// assistant message that calls no tool: earlier ones narrate the work);
 /// '' when there is none or it cannot be read.
 Future<String> _runOutput(HermesRestClient rest, String sessionId) async {
   try {
@@ -436,20 +438,44 @@ Future<String> _runOutput(HermesRestClient rest, String sessionId) async {
     );
     final messages = [
       for (final m in (body['messages'] as List?) ?? const [])
-        if (m is Map && m['role'] == 'assistant') m,
+        if (m is Map && m['role'] == 'assistant' && !_callsTools(m)) m,
     ];
     for (final m in messages.reversed) {
       final text = switch (m['display_content'] ?? m['content']) {
         final String text => text.trim(),
         _ => '',
       };
-      if (text.isNotEmpty) return _excerpt(text);
+      if (text.isNotEmpty) return _excerpt(_deliverable(text));
     }
   } on HermesException {
     // Unreadable run: no excerpt.
   }
   return '';
 }
+
+/// Whether the stored assistant message [m] calls tools (`tool_calls`, a
+/// list or its JSON text).
+bool _callsTools(Map<Object?, Object?> m) => switch (m['tool_calls']) {
+  final List<Object?> calls => calls.isNotEmpty,
+  final String calls => calls.trim().isNotEmpty && calls.trim() != '[]',
+  _ => false,
+};
+
+/// What a run's final answer [text] delivers: a model often opens it with
+/// one paragraph about its work ("I have enough. Writing the briefing.")
+/// before the deliverable's first heading; that lead is dropped, and
+/// heading marks are not shown in the plain-text excerpt.
+String _deliverable(String text) {
+  final paragraphs = text.trim().split(_blankLines);
+  final body = paragraphs.length > 1 && paragraphs[1].startsWith(_headingStart)
+      ? paragraphs.skip(1).join('\n\n')
+      : text.trim();
+  return body.replaceAll(_heading, '');
+}
+
+final _blankLines = RegExp(r'\n\s*\n');
+final _heading = RegExp(r'^#{1,6}\s+', multiLine: true);
+final _headingStart = RegExp(r'#{1,6}\s');
 
 String _excerpt(String text) {
   final trimmed = text.trim();

@@ -130,7 +130,7 @@ abstract class _$Automations extends $AsyncNotifier<AutomationBoard> {
 }
 
 /// The last few runs of the automation [jobId], newest first, each with
-/// an excerpt of its answer (the run session's last assistant message; the
+/// an excerpt of what it delivered (the run session's final answer; the
 /// job's `last_output` for the newest run when its transcript says
 /// nothing).
 
@@ -138,7 +138,7 @@ abstract class _$Automations extends $AsyncNotifier<AutomationBoard> {
 final automationRunsProvider = AutomationRunsFamily._();
 
 /// The last few runs of the automation [jobId], newest first, each with
-/// an excerpt of its answer (the run session's last assistant message; the
+/// an excerpt of what it delivered (the run session's final answer; the
 /// job's `last_output` for the newest run when its transcript says
 /// nothing).
 
@@ -153,7 +153,7 @@ final class AutomationRunsProvider
         $FutureModifier<List<AutomationRun>>,
         $FutureProvider<List<AutomationRun>> {
   /// The last few runs of the automation [jobId], newest first, each with
-  /// an excerpt of its answer (the run session's last assistant message; the
+  /// an excerpt of what it delivered (the run session's final answer; the
   /// job's `last_output` for the newest run when its transcript says
   /// nothing).
   AutomationRunsProvider._({
@@ -210,7 +210,7 @@ final class AutomationRunsProvider
 String _$automationRunsHash() => r'381321a510931e123bde4b03836aca5ac9a73c27';
 
 /// The last few runs of the automation [jobId], newest first, each with
-/// an excerpt of its answer (the run session's last assistant message; the
+/// an excerpt of what it delivered (the run session's final answer; the
 /// job's `last_output` for the newest run when its transcript says
 /// nothing).
 
@@ -230,7 +230,7 @@ final class AutomationRunsFamily extends $Family
       );
 
   /// The last few runs of the automation [jobId], newest first, each with
-  /// an excerpt of its answer (the run session's last assistant message; the
+  /// an excerpt of what it delivered (the run session's final answer; the
   /// job's `last_output` for the newest run when its transcript says
   /// nothing).
 

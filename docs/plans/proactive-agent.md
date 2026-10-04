@@ -29,8 +29,17 @@ Jaspr) behave the same (`hermuse_chat` / `hermuse_state` own the behaviour).
   else via `hermes chat -c "Bot Chat"` (row written to state.db). Hermuse makes
   its main chat that session: on connect, `session.list {title: "Bot Chat"}`;
   if missing, rename the current main session with `session.title` (or create
-  one with `session.create {title: "Bot Chat"}`). When the main chat is not
-  live, refetch its history on the `sessions.changed` event.
+  one with `session.create {title: "Bot Chat"}`). On `sessions.changed` and
+  after a reconnect the lookup runs again: another session holding the title
+  becomes the main chat (the previous one a side chat). When the main chat is
+  not live, refetch its history on `sessions.changed`; a re-read merges into
+  what is shown (streamed turns keep their tool outcomes, reasoning, request
+  cards, clarify answers and `Stopped` notices; only rows nothing shows are
+  inserted). A server-started turn reads the transcript once it streams, so
+  its `Scheduled: <job>` notice shows before the reply (`message.start` has
+  no payload). Clarify answers after a reload come from the session's stored
+  tool results (`GET /api/sessions/{id}/messages`), absent from
+  `session.resume`.
 - **Scheduler.** `hermes gateway install --system --run-as-user hermes --start-now`
   (or a `hermuse-gateway.service` unit running `hermes gateway run`) next to
   `hermuse-dashboard.service`. Health: `scheduler_heartbeat_age_s` on
@@ -50,7 +59,9 @@ Jaspr) behave the same (`hermuse_chat` / `hermuse_state` own the behaviour).
   with a plugin-registered auxiliary task `hermuse_task_summary`), fallback to a
   heuristic when the model fails. `on_session_end` records interrupted/failed.
 - **Run history.** `GET /api/cron/jobs/{id}/runs?limit=` (run sessions) and
-  `GET /api/sessions/{run_id}/messages`; jobs carry `last_output`,
+  `GET /api/sessions/{run_id}/messages`: the excerpt is the run's final answer
+  (last assistant message without tool calls), minus a lead paragraph of
+  narration before its first heading; jobs carry `last_output`,
   `last_status`, `last_delivery_error`.
 - **SOUL.** `GET/PUT /api/profiles/{name}/soul` or `profiles.describe` /
   `profiles.configure {soul}`.
