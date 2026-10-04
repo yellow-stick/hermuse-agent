@@ -239,16 +239,22 @@ String? _id(Object? value) =>
 
 /// The Goals surface: "Tracking" (goals the agent set itself) above
 /// "Goals" (set by the user), top-level goals in list order, each with its
-/// subgoals.
+/// subgoals; completed top-level goals leave both for "Completed goals",
+/// where they can be reactivated.
 final class GoalSections {
   const GoalSections({
     required this.tracking,
     required this.goals,
     required this.subgoals,
+    this.completed = const [],
   });
 
   final List<Goal> tracking;
   final List<Goal> goals;
+
+  /// Done top-level goals (tracking or the user's), in list order; their
+  /// subgoals stay in [subgoals].
+  final List<Goal> completed;
 
   /// Subgoals by parent goal id, in list order.
   final Map<String, List<Goal>> subgoals;
@@ -257,21 +263,30 @@ final class GoalSections {
 }
 
 /// [goals] split into [GoalSections]; a subgoal whose parent is not in the
-/// list stands as a top-level goal.
+/// list stands as a top-level goal. A done subgoal stays under its active
+/// parent, ticked.
 GoalSections goalSections(List<Goal> goals) {
   final ids = {for (final g in goals) g.id};
   final subgoals = <String, List<Goal>>{};
   final tracking = <Goal>[];
   final own = <Goal>[];
+  final completed = <Goal>[];
   for (final goal in goals) {
     final parent = goal.parentId;
     if (parent != null && parent != goal.id && ids.contains(parent)) {
       subgoals.putIfAbsent(parent, () => []).add(goal);
+    } else if (goal.done) {
+      completed.add(goal);
     } else {
       (goal.source == GoalSource.agent ? tracking : own).add(goal);
     }
   }
-  return GoalSections(tracking: tracking, goals: own, subgoals: subgoals);
+  return GoalSections(
+    tracking: tracking,
+    goals: own,
+    subgoals: subgoals,
+    completed: completed,
+  );
 }
 
 /// One goal timeline entry: `{at, note, progress}`.
@@ -820,6 +835,16 @@ class Ideas extends _$Ideas {
     return idea;
   }
 }
+
+/// What the "New goal" form still needs before "Create goal" works (the
+/// server requires a title and a why), or null once both are filled.
+String? goalCreateHint({required String title, required String why}) =>
+    switch ((title.trim().isEmpty, why.trim().isEmpty)) {
+      (true, true) => 'Add a title and say why it matters to create the goal.',
+      (true, false) => 'Add a title to create the goal.',
+      (false, true) => 'Say why it matters to create the goal.',
+      (false, false) => null,
+    };
 
 /// Goals, newest first.
 @riverpod

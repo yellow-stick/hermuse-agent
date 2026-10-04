@@ -567,6 +567,50 @@ void main() {
     );
   });
 
+  test('goal sections: done top-level goals move to completed', () {
+    Goal goal(
+      String id, {
+      String? parent,
+      bool done = false,
+      bool agent = false,
+    }) => Goal.fromJson({
+      'id': id,
+      'title': id,
+      'source': agent ? 'agent' : 'user',
+      'done': done,
+      'parent_id': parent,
+    });
+    final goals = [
+      goal('trip', agent: true),
+      goal('briefing', agent: true, done: true),
+      goal('run'),
+      goal('shoes', parent: 'run', done: true),
+      goal('read', done: true),
+      goal('chapter', parent: 'read'),
+    ];
+    final sections = goalSections(goals);
+    expect(sections.tracking.map((g) => g.id), ['trip']);
+    expect(sections.goals.map((g) => g.id), ['run']);
+    expect(sections.completed.map((g) => g.id), ['briefing', 'read']);
+    // A done subgoal stays ticked under its active parent; a completed
+    // goal keeps its subgoals.
+    expect(sections.subgoalsOf(goals[2]).map((g) => g.id), ['shoes']);
+    expect(sections.subgoalsOf(goals[4]).map((g) => g.id), ['chapter']);
+  });
+
+  test('goal create hint names the missing fields', () {
+    expect(goalCreateHint(title: '', why: ' '), contains('title and say why'));
+    expect(
+      goalCreateHint(title: '', why: 'x'),
+      'Add a title to create the goal.',
+    );
+    expect(
+      goalCreateHint(title: 'Run', why: ''),
+      'Say why it matters to create the goal.',
+    );
+    expect(goalCreateHint(title: 'Run', why: 'Health'), isNull);
+  });
+
   test('feed: why, image, delete, generate', () async {
     routes['GET /api/plugins/hermuse/feed'] = (_) => json({
       'posts': [

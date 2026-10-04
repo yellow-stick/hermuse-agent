@@ -65,10 +65,15 @@ extension YsFlutterPalette on YsPalette {
 }
 
 extension YsFlutterType on YsTextStyle {
-  /// Converts a core text style to a Flutter [TextStyle] in Inter.
+  /// Converts a core text style to a Flutter [TextStyle] in Inter, falling
+  /// back to the platform's color emoji font ([YsType.emoji]).
+  ///
+  /// The bundled family is named with its `packages/yellow_stick_ui/`
+  /// prefix rather than `package:`, which would prefix the system emoji
+  /// fallbacks too (and a `copyWith(fontFamily:)` face such as monospace).
   TextStyle get flutter => TextStyle(
-    fontFamily: YsType.family,
-    package: 'yellow_stick_ui',
+    fontFamily: 'packages/yellow_stick_ui/${YsType.family}',
+    fontFamilyFallback: YsType.emoji,
     fontSize: size,
     height: heightFactor,
     fontWeight: switch (weight) {

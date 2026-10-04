@@ -206,10 +206,14 @@ void main() {
     expect(find.text('Run 10k'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('Mark Run 10k complete'));
     await tester.pumpAndSettle();
-    // Done, the goal stays listed, its box ticked.
+    // Done, the goal leaves the list for the folded "Completed goals".
+    expect(find.text('Run 10k'), findsNothing);
+    await tester.tap(find.text('Completed goals (1)'));
+    await tester.pumpAndSettle();
     expect(find.text('Run 10k'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('Mark Run 10k not done'));
     await tester.pumpAndSettle();
+    expect(find.text('Completed goals (1)'), findsNothing);
     expect(find.bySemanticsLabel('Mark Run 10k complete'), findsOneWidget);
     expect(
       [

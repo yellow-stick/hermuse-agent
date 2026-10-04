@@ -579,6 +579,20 @@ class _MemoryEditorState extends State<_MemoryEditor> {
         profile: component.profile,
       );
 
+  /// "Add entry": a blank entry at the end of [target], its box focused
+  /// once rendered.
+  void _add(MemoryTarget target) {
+    final entry = _Entry(_nextId++, '');
+    _edit(target, (list) => list.add(entry));
+    if (!kIsWeb) return;
+    context.binding.addPostFrameCallback(() {
+      final box = _root.currentNode?.querySelector(
+        'textarea[name="${target.name}-${entry.id}"]',
+      );
+      if (mounted) (box as web.HTMLElement?)?.focus();
+    });
+  }
+
   void _edit(MemoryTarget target, void Function(List<_Entry> entries) change) =>
       setState(() {
         change(_drafts[target]!);
@@ -702,8 +716,7 @@ class _MemoryEditorState extends State<_MemoryEditor> {
             icon: YsIcon.plus,
             label: 'Add entry',
             small: true,
-            onPressed: () =>
-                _edit(target, (list) => list.add(_Entry(_nextId++, ''))),
+            onPressed: () => _add(target),
           ),
       ]),
       if (entries == null)

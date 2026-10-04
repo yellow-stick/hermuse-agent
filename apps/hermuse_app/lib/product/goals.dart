@@ -15,8 +15,10 @@ import 'widgets.dart';
 
 /// Goals: "Tracking" (goals the agent set itself) and "Goals" (the user's),
 /// each a checklist with its subgoals nested under it and a "…" menu
-/// (Complete, Add subgoal, Rename, Delete); "Create a goal" categories; a
-/// detail dialog with the summary and dated timeline.
+/// (Complete, Add subgoal, Rename, Delete); completing a goal moves it to
+/// the folded "Completed goals", where its box (or "Mark not done")
+/// reactivates it; "Create a goal" categories; a detail dialog with the
+/// summary and dated timeline.
 final class GoalsScreen extends StatelessWidget {
   const GoalsScreen({required this.instance, super.key});
 
@@ -236,6 +238,21 @@ final class _GoalsState extends ConsumerState<_Goals> {
                     ..._tree(goal, sections, 0),
               ],
             ),
+            if (sections.completed.isNotEmpty)
+              YsDisclosure(
+                label: 'Completed goals (${sections.completed.length})',
+                openLabel: 'Completed goals (${sections.completed.length})',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final (i, row) in [
+                      for (final goal in sections.completed)
+                        ..._tree(goal, sections, 0),
+                    ].indexed) ...[if (i > 0) const SizedBox(height: 12), row],
+                  ],
+                ),
+              ),
             HermuseRouteSection(
               head: 'Create a goal',
               children: [
@@ -312,7 +329,8 @@ final class _CategoryRow extends StatelessWidget {
 /// detail, "…" holds Complete, Add subgoal, Rename and Delete.
 ///
 /// Marked done, the box fills, its tick draws and sparks fly out
-/// ([YsDoneBox]); the row stays, ticked, its title muted.
+/// ([YsDoneBox]); once the server agrees, the goal moves to "Completed
+/// goals" (a done subgoal stays under its parent, ticked, title muted).
 final class _GoalRow extends ConsumerStatefulWidget {
   const _GoalRow({
     required this.instanceId,
@@ -780,51 +798,71 @@ final class _GoalCreateState extends ConsumerState<_GoalCreate> {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([_title, _why]),
-    builder: (context, _) => Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        YsField(
-          label: 'Title',
-          child: YsInputBox(
-            controller: _title,
-            placeholder: 'What do you want to track?',
-            semanticLabel: 'Goal title',
+    builder: (context, _) {
+      final palette = YsTheme.of(context);
+      // Create stays off until the title and the why are filled; the line
+      // beside it says which one is missing.
+      final hint = goalCreateHint(title: _title.text, why: _why.text);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          YsField(
+            label: 'Title',
+            child: YsInputBox(
+              controller: _title,
+              placeholder: 'What do you want to track?',
+              semanticLabel: 'Goal title',
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        YsField(
-          label: 'Why',
-          child: YsTextBox(
-            controller: _why,
-            placeholder: 'Why does it matter?',
-            semanticLabel: 'Goal why',
-            minHeight: 80,
-            maxHeight: 200,
+          const SizedBox(height: 12),
+          YsField(
+            label: 'Why',
+            child: YsTextBox(
+              controller: _why,
+              placeholder: 'Why does it matter?',
+              semanticLabel: 'Goal why',
+              minHeight: 80,
+              maxHeight: 200,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        YsField(
-          label: 'Target date (optional)',
-          child: YsInputBox(
-            controller: _target,
-            placeholder: '2026-12-31',
-            semanticLabel: 'Goal target date',
+          const SizedBox(height: 12),
+          YsField(
+            label: 'Target date (optional)',
+            child: YsInputBox(
+              controller: _target,
+              placeholder: '2026-12-31',
+              semanticLabel: 'Goal target date',
+            ),
           ),
-        ),
-        if (_error case final error?) HermuseRouteError(error),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerRight,
-          child: YsButton.primary(
-            label: _busy ? 'Creating…' : 'Create goal',
-            onPressed:
-                _busy || _title.text.trim().isEmpty || _why.text.trim().isEmpty
-                ? null
-                : () => unawaited(_create()),
+          if (_error case final error?) HermuseRouteError(error),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: hint == null
+                    ? const SizedBox.shrink()
+                    : Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          hint,
+                          style: YsType.small.flutter.copyWith(
+                            color: palette.contentMutedColor,
+                          ),
+                        ),
+                      ),
+              ),
+              const SizedBox(width: YsSpace.md),
+              YsButton.primary(
+                label: _busy ? 'Creating…' : 'Create goal',
+                onPressed: _busy || hint != null
+                    ? null
+                    : () => unawaited(_create()),
+              ),
+            ],
           ),
-        ),
-      ],
-    ),
+        ],
+      );
+    },
   );
 }

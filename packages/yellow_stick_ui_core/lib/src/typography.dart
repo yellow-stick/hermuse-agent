@@ -31,6 +31,16 @@ abstract final class YsType {
   /// CSS fallback stack after [family].
   static const fallback = ['system-ui', 'sans-serif'];
 
+  /// Color emoji faces tried for glyphs [family] lacks, by platform: Linux
+  /// (Noto, `fonts-noto-color-emoji`), Apple, Windows. Without one, emoji
+  /// in chat and Feed draw as empty boxes.
+  static const emoji = [
+    'Noto Color Emoji',
+    'Apple Color Emoji',
+    'Segoe UI Emoji',
+    'Segoe UI Symbol',
+  ];
+
   /// Family of technical output (logs), the platform's monospace face.
   static const monoFamily = 'monospace';
 

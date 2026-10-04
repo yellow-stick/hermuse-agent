@@ -52,6 +52,7 @@ List<StyleRule> get ysThemeStyles => [
       FontFamily(YsType.family),
       FontFamily('system-ui'),
       FontFamilies.sansSerif,
+      for (final emoji in YsType.emoji) FontFamily(emoji),
     ]),
   ),
   css('body').styles(raw: {'-webkit-font-smoothing': 'antialiased'}),

@@ -20,6 +20,14 @@ The menu button at the bottom of the navigation rail opens a pop-over:
   **Permissions** sets when the open agent asks before risky commands
   ([Approvals](profile-panel.md#approvals)); it is saved on that Hermes, not
   on this device. **Connectors** has none available yet and says so.
+  **Image generation** points the open Hermes at a ContentFlow service you
+  run (endpoint, token, optional image and video models under **Advanced**)
+  for [generated agent portraits](profile-panel.md#custom-agents-with-a-generated-portrait)
+  and, with **Illustrate Feed posts that have no image**, Feed illustrations.
+  **Save** stores it on that Hermes (an empty token field keeps the saved
+  token; **Remove token** clears it); **Test** shows whether the service
+  answers and its credits, or the service's error. When the server sets
+  `HERMUSE_MEDIA_ENDPOINT`, the fields are read-only and say so.
 - **Instances** opens the existing Hermes instance management page.
 
 On narrow windows, the same menu is in the bottom navigation. Closing Settings
@@ -132,9 +140,11 @@ sources.
 sudo apt install ./hermuse-agent_0.1.0-1_amd64.deb
 ```
 
-APT installs the system libraries it needs. Hermuse Agent then appears in your
-applications menu; `hermuse-agent` also starts it from a terminal. To update,
-install the newer `.deb` the same way.
+APT installs the system libraries it needs, and the color emoji font
+(`fonts-noto-color-emoji`, a recommended package) so emoji in chats and the
+Feed draw in color. Hermuse Agent then appears in your applications menu;
+`hermuse-agent` also starts it from a terminal. To update, install the newer
+`.deb` the same way.
 
 ### Or run the AppImage
 
@@ -144,6 +154,12 @@ setup is needed: at each launch the AppImage unpacks itself into a temporary
 folder and removes it when the app closes, so keep about 210 MB free there. The
 AppImage uses X11; on a Wayland desktop it runs through XWayland. To update,
 replace the file with the newer one.
+
+The AppImage uses the fonts of your system. Most desktops ship a color emoji
+font; if emoji show as empty boxes, install it from your distribution
+(`sudo apt install fonts-noto-color-emoji` on Debian and Ubuntu,
+`google-noto-color-emoji-fonts` on Fedora, `noto-fonts-emoji` on Arch) and
+restart the app.
 
 ## What you need
 

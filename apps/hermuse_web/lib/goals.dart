@@ -19,8 +19,10 @@ import 'screens.dart';
 /// Goals: "Tracking" (goals the agent set itself) above "Goals" (set by the
 /// user), subgoals nested under their parent, each row with a done box, its
 /// live status line and a "…" menu (Complete, Add subgoal, Rename, Delete);
-/// then "Create a goal" categories. A row opens the detail dialog with the
-/// summary and dated activity timeline.
+/// completing a goal moves it to the folded "Completed goals", where its
+/// box (or "Mark not done") reactivates it; then "Create a goal"
+/// categories. A row opens the detail dialog with the summary and dated
+/// activity timeline.
 class HermuseGoals extends StatefulComponent {
   const HermuseGoals({
     required this.instance,
@@ -171,6 +173,34 @@ class HermuseGoals extends StatefulComponent {
       lineHeight: 16.px,
       color: .variable('--content-subtle'),
     ),
+    // "Completed goals": a folded section, its chevron turning open.
+    css('.hermuse-goals-completed')
+        .styles(display: .flex, flexDirection: .column, gap: .all(12.px)),
+    css('.hermuse-goals-completed-head').styles(
+      display: .flex,
+      flexDirection: .row,
+      alignItems: .center,
+      gap: .all(YsSpace.xs.px),
+      color: .variable('--content-muted'),
+      cursor: .pointer,
+      raw: {'list-style': 'none', 'width': 'fit-content'},
+    ),
+    css('.hermuse-goals-completed-head:hover')
+        .styles(color: .variable('--content')),
+    css('.hermuse-goals-completed-head::-webkit-details-marker')
+        .styles(raw: {'display': 'none'}),
+    css('.hermuse-goals-completed-head .ys-icon')
+        .styles(raw: {'transition': 'transform ${YsMotion.fast}ms'}),
+    css('.hermuse-goals-completed[open] .hermuse-goals-completed-head .ys-icon')
+        .styles(raw: {'transform': 'rotate(180deg)'}),
+    css('.hermuse-goals-completed-list')
+        .styles(display: .flex, flexDirection: .column, gap: .all(12.px)),
+    css('.hermuse-goals-hint').styles(
+      margin: .zero,
+      fontSize: 13.px,
+      lineHeight: 18.px,
+      color: .variable('--content-muted'),
+    ),
     css('.hermuse-ob-row').styles(
       width: 100.percent,
       display: .flex,
@@ -209,6 +239,9 @@ class _HermuseGoalsState extends State<HermuseGoals> {
 
   /// Failed done-box / menu actions, by goal id, shown under its row.
   final _errors = <String, String>{};
+
+  /// "Completed goals" is unfolded.
+  var _completedOpen = false;
 
   Goals get _goals => context.container.read(
     goalsProvider(component.instance.id, profile: component.profile).notifier,
@@ -273,6 +306,32 @@ class _HermuseGoalsState extends State<HermuseGoals> {
             else
               for (final goal in sections.goals) ..._rows(sections, goal, 0),
           ]),
+          if (sections.completed.isNotEmpty)
+            details(
+              open: _completedOpen,
+              classes: 'hermuse-route-section hermuse-goals-completed',
+              [
+                summary(
+                  classes:
+                      'hermuse-route-section-head hermuse-goals-completed-head',
+                  events: {
+                    'click': (event) {
+                      event.preventDefault();
+                      setState(() => _completedOpen = !_completedOpen);
+                    },
+                  },
+                  [
+                    .text('Completed goals (${sections.completed.length})'),
+                    YsIconView(YsIcon.chevronDown, size: 16),
+                  ],
+                ),
+                if (_completedOpen)
+                  div(classes: 'hermuse-goals-completed-list', [
+                    for (final goal in sections.completed)
+                      ..._rows(sections, goal, 0),
+                  ]),
+              ],
+            ),
           div(classes: 'hermuse-route-section', [
             h2(classes: 'hermuse-route-section-head', [.text('Create a goal')]),
             for (final category in hermuseGoalCategories)
@@ -770,6 +829,9 @@ class _GoalCreateState extends State<_GoalCreate> {
   var _busy = false;
   String? _error;
 
+  /// What the form still needs before Create works; null once ready.
+  String? get _hint => goalCreateHint(title: _title, why: _why);
+
   @override
   Component build(BuildContext context) => .fragment([
     YsField(
@@ -808,10 +870,19 @@ class _GoalCreateState extends State<_GoalCreate> {
     if (_error case final error?)
       p(classes: 'hermuse-card-error', [.text(error)]),
     div(classes: 'hermuse-ob-row', [
-      div(classes: 'hermuse-ob-grow', []),
+      // Create stays off until the title and the why are filled; the line
+      // beside it says which one is missing.
+      div(
+        classes: 'hermuse-ob-grow',
+        attributes: {'aria-live': 'polite'},
+        [
+          if (_hint case final hint?)
+            p(classes: 'hermuse-goals-hint', [.text(hint)]),
+        ],
+      ),
       YsButton.primary(
         label: _busy ? 'Creating…' : 'Create goal',
-        onPressed: _busy || _title.trim().isEmpty || _why.trim().isEmpty
+        onPressed: _busy || _hint != null
             ? null
             : () async {
                 setState(() {

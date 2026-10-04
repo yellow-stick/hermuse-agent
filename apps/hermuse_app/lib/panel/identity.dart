@@ -393,12 +393,14 @@ final class _EditBox extends StatelessWidget {
     required this.semanticLabel,
     this.minLines = 1,
     this.placeholder = '',
+    this.focusNode,
   });
 
   final TextEditingController controller;
   final String semanticLabel;
   final int minLines;
   final String placeholder;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -413,6 +415,7 @@ final class _EditBox extends StatelessWidget {
         padding: const EdgeInsets.all(YsSpace.md),
         child: YsTextArea(
           controller: controller,
+          focusNode: focusNode,
           semanticLabel: semanticLabel,
           placeholder: placeholder,
           minLines: minLines,
@@ -631,8 +634,17 @@ final class _MemoryEditorState extends ConsumerState<MemoryEditor> {
     return true;
   }
 
-  void _add(MemoryTarget target) =>
-      setState(() => _entries![target]!.add(TextEditingController()));
+  /// The entry "Add entry" created last and its box's focus: the caret
+  /// moves there once the box is built.
+  TextEditingController? _added;
+  final _addedFocus = FocusNode(debugLabel: 'Added memory entry');
+
+  void _add(MemoryTarget target) {
+    setState(() => _entries![target]!.add(_added = TextEditingController()));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _addedFocus.requestFocus();
+    });
+  }
 
   void _remove(MemoryTarget target, int index) =>
       setState(() => _entries![target]!.removeAt(index).dispose());
@@ -645,6 +657,7 @@ final class _MemoryEditorState extends ConsumerState<MemoryEditor> {
         c.dispose();
       }
     }
+    _addedFocus.dispose();
     super.dispose();
   }
 
@@ -717,6 +730,9 @@ final class _MemoryEditorState extends ConsumerState<MemoryEditor> {
                       controller: controller,
                       semanticLabel: '${target.fileName} entry ${index + 1}',
                       placeholder: 'Something worth remembering',
+                      focusNode: identical(controller, _added)
+                          ? _addedFocus
+                          : null,
                     ),
                   ),
                   const SizedBox(width: YsSpace.xs),
