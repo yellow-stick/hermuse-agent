@@ -24,6 +24,7 @@ final class LinuxSetupServices {
     required this.inspectKeyring,
     required this.applyKeyring,
     required this.quiesceOwnedLegacy,
+    required this.accessMissing,
   });
 
   static Future<LinuxSetupServices> forHost(LocalHermesHost host) async {
@@ -48,6 +49,7 @@ final class LinuxSetupServices {
         // Never stop a process merely because its command mentions Hermes.
         await host.supervisor?.dispose();
       },
+      accessMissing: host.serviceAccessMissing,
       inspectKeyring: () async => LinuxDependencyPlan.compute(
         await (await keyringService()).inspect(),
         const {LinuxTarget.core},
@@ -70,6 +72,9 @@ final class LinuxSetupServices {
   final Future<LinuxDependencyPlan> Function() inspectKeyring;
   final Stream<LinuxDependencyEvent> Function(LinuxDependencyPlan) applyKeyring;
   final Future<void> Function() quiesceOwnedLegacy;
+
+  /// Whether the registered service lost its desktop credential.
+  final Future<bool> Function(HermesRegistry) accessMissing;
 }
 
 final linuxSetupServicesProvider = Provider<LinuxSetupServices?>((_) => null);
@@ -206,7 +211,15 @@ final class LinuxSetupController extends Notifier<LinuxSetupState> {
       keystoreVerified: state.keystoreVerified,
     );
     if (!await _keyring() || _stopped()) return;
-    if (goal == LinuxSetupGoal.reopen || goal == LinuxSetupGoal.connect) {
+    if (goal == LinuxSetupGoal.reopen &&
+        await _services.accessMissing(
+          await ref.read(registryProvider.future),
+        )) {
+      // The keyring lost this computer's credential: sign in or authorize
+      // again instead of opening a chat that cannot connect.
+      state = state.copyWith(goal: LinuxSetupGoal.local);
+    } else if (goal == LinuxSetupGoal.reopen ||
+        goal == LinuxSetupGoal.connect) {
       _show(const SetupFinished());
       return;
     }

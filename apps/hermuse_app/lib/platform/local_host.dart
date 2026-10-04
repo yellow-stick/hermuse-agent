@@ -122,15 +122,7 @@ final class LocalHermesHost {
     if (canonicalService) {
       final instance = registry.byId(localInstanceId);
       if (instance?.kind != InstanceKind.system) return null;
-      final credentialKey = switch (instance!.auth) {
-        AuthMethod.loopbackToken => SecretKeys.sessionToken,
-        AuthMethod.password => SecretKeys.password,
-        AuthMethod.nativeOAuth => throw const HermesUnreachable(
-          'Reconnect this computer with a supported dashboard login.',
-        ),
-      };
-      final credential = await secrets.read(localInstanceId, credentialKey);
-      if (credential == null || credential.isEmpty) {
+      if (await _serviceCredential(instance!) == null) {
         throw const HermesUnreachable(
           'Reconnect this computer through setup to authorize service access.',
         );
@@ -143,6 +135,30 @@ final class LocalHermesHost {
     final found = await detector.detect();
     if (found == null) return null;
     return adopt(registry, found);
+  }
+
+  /// Whether the registered system service has lost its desktop credential
+  /// (keyring reset, item deleted): setup must sign in or authorize again
+  /// before [boot] can connect.
+  Future<bool> serviceAccessMissing(HermesRegistry registry) async {
+    final instance = registry.byId(localInstanceId);
+    if (!canonicalService || instance?.kind != InstanceKind.system) {
+      return false;
+    }
+    if (instance!.auth == AuthMethod.nativeOAuth) return true;
+    return await _serviceCredential(instance) == null;
+  }
+
+  Future<String?> _serviceCredential(HermesInstance instance) async {
+    final key = switch (instance.auth) {
+      AuthMethod.loopbackToken => SecretKeys.sessionToken,
+      AuthMethod.password => SecretKeys.password,
+      AuthMethod.nativeOAuth => throw const HermesUnreachable(
+        'Reconnect this computer with a supported dashboard login.',
+      ),
+    };
+    final credential = await secrets.read(localInstanceId, key);
+    return credential == null || credential.isEmpty ? null : credential;
   }
 
   /// Persists the helper's verified loopback handoff, never its token on disk.

@@ -181,6 +181,56 @@ void main() {
     });
 
     test(
+      'should ask to sign in again when the keyring lost the saved password',
+      () async {
+        final fixture = _Fixture(canonical: true, authRequired: true);
+        final registry = await fixture.container.read(registryProvider.future);
+        await registry.add(
+          HermesInstance(
+            id: localInstanceId,
+            label: 'This computer',
+            kind: InstanceKind.system,
+            baseUrl: Uri.parse('http://127.0.0.1:9119'),
+            auth: AuthMethod.password,
+          ),
+        );
+        await fixture.controller.start();
+        expect(fixture.state.goal, LinuxSetupGoal.local);
+        expect(fixture.state.phase, isA<SetupDashboardLogin>());
+
+        await fixture.secrets.write(localInstanceId, SecretKeys.password, 'pw');
+        final reopened = _Fixture(
+          canonical: true,
+          authRequired: true,
+          secretStore: fixture.secrets,
+        );
+        await (await reopened.container.read(registryProvider.future))
+            .add(registry.byId(localInstanceId)!);
+        await reopened.controller.start();
+        expect(reopened.state.phase, isA<SetupFinished>());
+        expect(reopened.state.goal, LinuxSetupGoal.reopen);
+      },
+    );
+
+    test('should authorize again when the keyring lost the token', () async {
+      final fixture = _Fixture(canonical: true, authRequired: false);
+      final registry = await fixture.container.read(registryProvider.future);
+      await fixture.host.registerService(registry, _outcome);
+      await fixture.secrets.delete(localInstanceId);
+      await fixture.controller.start();
+      expect(fixture.state.phase, isA<SetupReview>());
+      expect(fixture.state.purpose, LinuxSetupPurpose.connect);
+      await fixture.controller.authorize();
+      expect(fixture.connects, 1);
+      expect(fixture.installs, isEmpty);
+      expect(fixture.state.phase, isA<SetupFinished>());
+      expect(
+        await fixture.secrets.read(localInstanceId, SecretKeys.sessionToken),
+        'private-token',
+      );
+    });
+
+    test(
       'should never report ready when the helper returns without completion',
       () async {
         final fixture = _Fixture()..finish = false;
@@ -451,6 +501,7 @@ final class _Fixture {
           cancel: () async {},
           register: host.registerService,
           quiesceOwnedLegacy: () async {},
+          accessMissing: host.serviceAccessMissing,
           inspectKeyring: () async =>
               throw StateError('Unexpected keyring repair'),
           applyKeyring: (_) => const Stream.empty(),
