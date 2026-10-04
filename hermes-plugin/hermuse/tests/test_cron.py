@@ -50,6 +50,13 @@ def test_heartbeat_spec_delivers_to_bot_chat_every_30_minutes(cron_home):
     for needle in ("Ask the user:", "Offer these choices with clarify:",
                    "Do not act before the user answers."):
         assert needle in spec.prompt, needle
+    # The heartbeat keeps goal status lines current, one goal_update per tool_call.
+    for needle in ("status_line current", "goal_update", "one entry per call"):
+        assert needle in spec.prompt, needle
+    # The feed job names the main page first so the card gets its image.
+    feed = cron_specs.spec_by_key("feed").prompt
+    assert "feed_post" in feed and "why and sources" in feed
+    assert "main article or page the post is about first in sources" in feed
     for key in ("feed", "ideas", "goals", "reflection"):
         assert cron_specs.spec_by_key(key).deliver == "local"
         assert cron_specs.spec_by_key(key).hidden is True

@@ -168,6 +168,33 @@ def test_ideas_merge_agent_first_then_seeds_and_dismiss(hermuse_root):
     assert store.get_idea(hermuse_root, seed_id)["seeded"] is True
 
 
+def test_find_similar_idea_matches_rephrasings_of_live_ideas_only(hermuse_root):
+    flights = store.propose_idea(
+        hermuse_root, title="Je peux te chercher et comparer des vols Madrid → Nantes",
+        pitch="Recherche sur Google Flights / Skyscanner les vols disponibles.", group="Voyage")
+    checklist = store.propose_idea(
+        hermuse_root, title="Je peux te préparer un rappel + checklist de voyage",
+        pitch="Créer un rappel automatique avant le départ.", group="Voyage")
+
+    def similar(title, pitch="Autre chose."):
+        found = store.find_similar_idea(hermuse_root, title=title, pitch=pitch)
+        return found and found["id"]
+
+    # Rephrased titles (accents, plural, word order) are the same idea.
+    assert similar("Je cherche les meilleurs vols Madrid → Nantes") == flights["id"]
+    assert similar("Je te prépare une checklist de voyage et un rappel J-1") == checklist["id"]
+    # A matching pitch alone is enough.
+    assert similar("Comparatif", "Recherche sur Skyscanner / Google Flights les vols disponibles"
+                   ) == flights["id"]
+    # Same trip, different idea: not a duplicate.
+    assert similar("Je cherche un hôtel à Nantes") is None
+    assert similar("I'll plan a workout") is None
+    # Dismissed ideas no longer block a new proposal.
+    store.dismiss_idea(hermuse_root, flights["id"])
+    assert similar("Je cherche les meilleurs vols Madrid → Nantes") is None
+
+
+
 def test_legacy_goal_record_reads_with_contract_fields(hermuse_root):
     (hermuse_root / "goals").mkdir(parents=True)
     legacy = {

@@ -58,8 +58,11 @@ HEARTBEAT_PROMPT = (
     "holds each goal with its status_line), the checklist in "
     "HERMES_HOME/hermuse/HEARTBEAT.md, and the upcoming scheduled jobs "
     "(cronjob_manage action=list). Honour HERMES_HOME/hermuse/PREFERENCES.md "
-    "(what never to bring up, when and how to write). Update a goal's "
-    "status_line with goal_update when you learn something new about it.\n\n"
+    "(what never to bring up, when and how to write). Keep every open goal's "
+    "status_line current: when it is empty or no longer true (a step done, the "
+    "days left changed), set it with goal_update in one short line in the user's "
+    "language (e.g. \"Vol non réservé ; départ mercredi 7 octobre, dans 3 jours\"). "
+    "Call goal_update once per goal: tool_call takes one entry per call.\n\n"
     "Something needs the user when it needs them now or soon: a deadline "
     "approaching with a step still open (e.g. a trip in 4 days with the flight "
     "unbooked), a commitment drifting, a decision only they can make. Your "
@@ -85,8 +88,11 @@ SPECS: tuple[CronSpec, ...] = (
             "Write today's feed edition.",
             "Read HERMES_HOME/hermuse/FEED_PROMPT.md for the user's feed brief, "
             "then use web_search and recent conversation context to publish 1-5 "
-            "posts with feed_post. Keep the tone clear and direct, quick to skim, "
-            "no clickbait. Skip publishing when nothing genuinely new turned up.",
+            "posts with feed_post. Every post needs why and sources: put the main "
+            "article or page the post is about first in sources (the card's image "
+            "is that page's share image; a search results page has none). Keep the "
+            "tone clear and direct, quick to skim, no clickbait. Skip publishing when "
+            "nothing genuinely new turned up.",
         ),
     ),
     CronSpec(
