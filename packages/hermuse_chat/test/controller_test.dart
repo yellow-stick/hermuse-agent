@@ -2068,6 +2068,35 @@ void main() {
     expect(observer.events, ['open stored-1']);
   });
 
+  test('a side chat the server does not have is dropped, not shown as an '
+      'error', () async {
+    fake.on('session.resume', (params) {
+      if (params['session_id'] == 'ghost-1') {
+        throw const FakeRpcError(4007, 'session not found');
+      }
+      return {
+        'session_id': 'live-main',
+        'message_count': 0,
+        'messages': const [],
+        'info': const <String, Object?>{},
+      };
+    });
+    final chat = ChatController(
+      connections: _Connections(HermesConnection('vps', fake)),
+      ref: const ThreadRef(instanceId: 'vps', sessionId: 'stored-1'),
+      observer: observer,
+      sideThreads: [
+        const Thread(id: 'ghost-1', title: '', startedAt: '', messages: []),
+      ],
+      initialThreadId: 'ghost-1',
+    );
+    await chat.ready;
+    await pumpEventQueue();
+    expect(chat.state.sideThreads, isEmpty);
+    expect(chat.state.activeThreadId, 'stored-1');
+    expect(observer.events, contains('delete ghost-1'));
+  });
+
   group('side chat actions', () {
     var mark = 0;
     List<({String method, Map<String, Object?> params})> calls() =>

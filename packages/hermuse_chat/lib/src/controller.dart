@@ -687,6 +687,16 @@ final class ChatController {
         SessionResumeParams(sessionId: threadId),
       );
     } on Object catch (e) {
+      if (_disposed) return;
+      if (e is HermesRpcError &&
+          e.code == _sessionNotFound &&
+          threadId != _state.mainThread.id) {
+        // A side chat whose session the server never stored (an empty main
+        // chat filed under the Bot Chat, deleted elsewhere): nothing to load.
+        _observer?.sessionDeleted(_refOf(threadId));
+        _dropThread(threadId);
+        return;
+      }
       _appendNotice(threadId, 'Could not load this chat: ${_describe(e)}');
       return;
     }
@@ -2509,6 +2519,9 @@ String _withoutRecommended(String answer) {
 }
 
 const _recommended = '(recommended)';
+
+/// Hermes' JSON-RPC code for a session it does not have.
+const _sessionNotFound = 4007;
 
 /// Title of the profile's session Hermes delivers scheduled jobs and the
 /// heartbeat to (`deliver: bot-chat`): the main chat's session.
