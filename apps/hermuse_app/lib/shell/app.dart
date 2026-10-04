@@ -207,6 +207,12 @@ final class _RootState extends ConsumerState<_Root> {
   /// Takes the user where a finished setup leads.
   void _setupChanged(LinuxSetupState? previous, LinuxSetupState next) {
     if (next.phase is! SetupFinished) return;
+    // A chat of this computer opened before setup restored its access holds
+    // the connection error; it reconnects now.
+    final open = ref.read(activeThreadProvider).value;
+    if (open?.instanceId == localInstanceId) {
+      unawaited(ref.read(chatSessionProvider(open!)).value?.retry());
+    }
     switch (next.goal) {
       case LinuxSetupGoal.connect:
         setState(

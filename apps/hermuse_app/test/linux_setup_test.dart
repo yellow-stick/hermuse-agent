@@ -198,7 +198,10 @@ void main() {
         expect(fixture.state.goal, LinuxSetupGoal.local);
         expect(fixture.state.phase, isA<SetupDashboardLogin>());
 
+        // A password without its username cannot sign in either.
         await fixture.secrets.write(localInstanceId, SecretKeys.password, 'pw');
+        expect(await fixture.host.serviceAccessMissing(registry), isTrue);
+        await fixture.secrets.write(localInstanceId, SecretKeys.username, 'u');
         final reopened = _Fixture(
           canonical: true,
           authRequired: true,

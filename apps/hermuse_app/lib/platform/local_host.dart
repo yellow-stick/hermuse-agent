@@ -150,15 +150,22 @@ final class LocalHermesHost {
   }
 
   Future<String?> _serviceCredential(HermesInstance instance) async {
-    final key = switch (instance.auth) {
-      AuthMethod.loopbackToken => SecretKeys.sessionToken,
-      AuthMethod.password => SecretKeys.password,
+    Future<String?> read(String key) async {
+      final value = await secrets.read(localInstanceId, key);
+      return value == null || value.isEmpty ? null : value;
+    }
+
+    return switch (instance.auth) {
+      AuthMethod.loopbackToken => read(SecretKeys.sessionToken),
+      // The dashboard login needs both (DashboardTransport._passwordLogin).
+      AuthMethod.password =>
+        await read(SecretKeys.username) == null
+            ? null
+            : read(SecretKeys.password),
       AuthMethod.nativeOAuth => throw const HermesUnreachable(
         'Reconnect this computer with a supported dashboard login.',
       ),
     };
-    final credential = await secrets.read(localInstanceId, key);
-    return credential == null || credential.isEmpty ? null : credential;
   }
 
   /// Persists the helper's verified loopback handoff, never its token on disk.
