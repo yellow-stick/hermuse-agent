@@ -50,6 +50,14 @@ void main() {
       expect(chat.state.connection, ChatConnection.ready);
       expect(chat.state.activeThreadId, ava.main.id);
       expect(chat.state.mainThread.messages, isNotEmpty);
+      // Yesterday's Evening recap brief: a notice line, then the reply.
+      final brief = chat.state.mainThread.messages.first;
+      expect(brief.author, Author.agent);
+      expect(brief.plainText, 'Scheduled: Evening recap');
+      expect(
+        chat.state.mainThread.messages[1].plainText,
+        startsWith('Quick evening recap'),
+      );
       expect(chat.state.sideThreads.map((t) => t.title), [
         'Weekend in Annecy',
         'Night pass — emails + code',
@@ -128,7 +136,7 @@ void main() {
     );
     final status = await computer.status();
     expect(status.state, ComputerState.running);
-    final shot = await computer.snapshot('${ava.main.id}-tool-2');
+    final shot = await computer.snapshot('${ava.main.id}-tool-4');
     expect(shot, isNotEmpty);
     expect(shot!.first, 0xFF);
     expect(await computer.thumbnail(), isNotEmpty);
@@ -162,26 +170,42 @@ void main() {
     );
   });
 
-  test('automations list the demo jobs; actions are refused', () async {
+  test('upcoming lists the visible demo jobs; actions are refused', () async {
     final board = await container.read(automationsProvider(ava.id).future);
     expect(board.schedulerStopped, isFalse);
-    expect(board.automations.map((a) => a.name), [
-      'Evening recap',
-      'Hermuse reflection (nightly)',
-      'Hermuse feed (daily)',
-      'Hermuse goals check-in (weekly)',
-      'Hermuse ideas (weekly)',
+    expect(board.automations.map((a) => a.id), [
+      'hermuse-heartbeat',
+      'ava-train-fares',
+      'ava-evening-recap',
+      'ava-nightly-review',
+      'ava-school-form',
+      'ava-half-marathon-checkin',
+    ], reason: 'maintenance jobs hidden, soonest first');
+    final heartbeat = board.automations.first;
+    expect(heartbeat.group, UpcomingGroup.heartbeat);
+    expect(heartbeat.nextRunAt, DateTime(2026, 9, 30, 9, 50));
+    expect(heartbeat.lastOutput, 'Nothing needed you.');
+    expect(board.sections.map((s) => s.group), [
+      UpcomingGroup.reminders,
+      UpcomingGroup.daily,
+      UpcomingGroup.weekly,
+      UpcomingGroup.other,
+      UpcomingGroup.heartbeat,
     ]);
-    final recap = board.automations.first;
+    final recap = board.automations[2];
     expect(recap.owner, AutomationOwner.user);
     expect(recap.nextRunAt, DateTime(2026, 9, 30, 18));
     expect(recap.lastRunAt, DateTime(2026, 9, 29, 18));
     expect(recap.lastOutcome, AutomationOutcome.ok);
+    expect(recap.lastOutput, startsWith('Done today'));
+    final reminder = board.automations[4];
+    expect(reminder.nextRunAt, DateTime(2026, 10, 1, 8));
+    expect(reminder.lastRunAt, isNull);
     expect(
       (await container.read(automationsProvider(demoInstances[1].id).future))
           .automations
-          .where((a) => a.owner == AutomationOwner.user),
-      isEmpty,
+          .map((a) => a.id),
+      ['hermuse-heartbeat'],
     );
 
     await container
@@ -189,13 +213,132 @@ void main() {
         .perform(recap, AutomationAction.pause);
     final after = container.read(automationsProvider(ava.id)).value!;
     expect(after.error, contains(demoReadOnlyMessage));
-    expect(after.automations.first.paused, isFalse);
+    expect(after.automations[2].paused, isFalse);
+  });
+
+  test('automation runs carry their outputs', () async {
+    final runs = await container.read(
+      automationRunsProvider(ava.id, 'ava-nightly-review').future,
+    );
+    expect(runs.map((r) => r.status), [
+      AutomationRunStatus.ok,
+      AutomationRunStatus.failed,
+      AutomationRunStatus.ok,
+    ]);
+    expect(runs.first.startedAt, DateTime(2026, 9, 30, 2));
+    expect(runs.first.output, startsWith('18 emails read'));
+    expect(
+      await container.read(
+        automationRunsProvider(ava.id, 'ava-school-form').future,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('activity, identity and approvals read the demo data', () async {
+    final tasks = await container.read(tasksProvider(ava.id).future);
+    expect(tasks, hasLength(ava.tasks.length));
+    expect(tasks.first.finishedAt, DateTime(2026, 9, 30, 9, 18));
+    expect(tasks.map((t) => t.source).toSet(), {
+      TaskSource.chat,
+      TaskSource.cron,
+      TaskSource.heartbeat,
+    });
+    expect(activityDays(tasks, now).map((d) => d.label), [
+      'Today',
+      'Yesterday',
+      'Monday',
+    ]);
+    final threads = {for (final chat in ava.chats) chat.id};
+    expect(
+      tasks.where((t) => threads.contains(t.sessionId)),
+      hasLength(tasks.length - 1),
+    );
+
+    final memory = await container.read(
+      agentMemoryProvider(ava.id, MemoryTarget.memory).future,
+    );
+    expect(memory.entries, ava.memory);
+    expect(memory.updatedAt, isNotNull);
+    expect(
+      (await container.read(
+        agentMemoryProvider(ava.id, MemoryTarget.user).future,
+      )).entries,
+      ava.userMemory,
+    );
+    await expectLater(
+      container
+          .read(agentMemoryProvider(ava.id, MemoryTarget.user).notifier)
+          .save(['x']),
+      throwsA(isA<HermesHttpError>()),
+    );
+
+    expect(
+      (await container.read(agentDetailsProvider(ava.id, 'default').future))
+          .prompt,
+      ava.soul,
+    );
+    expect(
+      await container.read(approvalsModeProvider(ava.id).future),
+      ApprovalsMode.smart,
+    );
+    await expectLater(
+      container
+          .read(approvalsModeProvider(ava.id).notifier)
+          .set(ApprovalsMode.off),
+      throwsA(isA<HermesRpcError>()),
+    );
+  });
+
+  test('image generation is not set up; saving it is refused', () async {
+    final config = await container.read(mediaConfigProvider(ava.id).future);
+    expect(config.configured, isFalse);
+    final status = await container.read(mediaStatusProvider(ava.id).future);
+    expect(status.configured, isFalse);
+    final avatar = await container.read(
+      agentAvatarProvider(ava.id, profile: 'default').future,
+    );
+    expect(avatar.hasPortrait, isFalse);
+    await expectLater(
+      container
+          .read(mediaConfigProvider(ava.id).notifier)
+          .save(endpoint: 'https://contentflow.example.com'),
+      throwsA(
+        isA<HermesHttpError>().having(
+          (e) => hermesReason(e),
+          'reason',
+          demoReadOnlyMessage,
+        ),
+      ),
+    );
+  });
+
+  test('goals, feed and ideas carry the proactive fields', () async {
+    final goals = await container.read(goalsProvider(ava.id).future);
+    final sections = goalSections(goals);
+    expect(sections.tracking.map((g) => g.id), contains('goal-ava-3'));
+    expect(sections.goals.map((g) => g.id), contains('goal-ava-1'));
+    final marathon = goals.firstWhere((g) => g.id == 'goal-ava-1');
+    expect(sections.subgoalsOf(marathon), hasLength(2));
+    expect(marathon.cronJobId, 'ava-half-marathon-checkin');
+    expect(marathon.statusLine, isNotEmpty);
+
+    final posts = await container.read(feedProvider(ava.id).future);
+    expect(posts.where((p) => p.why.isNotEmpty), hasLength(posts.length - 1));
+
+    final ideas = await container.read(ideasProvider(ava.id).future);
+    expect(ideas.take(2).map((i) => i.seeded), [false, false]);
+    final seeds = ideas.where((i) => i.seeded).toList();
+    expect(seeds, hasLength(10));
+    expect(seeds.every((i) => i.id.startsWith('seed-')), isTrue);
+    expect(seeds.every((i) => i.icon.isNotEmpty && i.file.isEmpty), isTrue);
   });
 
   test('seeding again replaces an earlier demo', () async {
     await db.upsertSession(
       SessionRow(
         instanceId: ava.id,
+        profile: 'default',
         sessionId: 'stale',
         title: 'Removed chat',
         parentId: ava.main.id,

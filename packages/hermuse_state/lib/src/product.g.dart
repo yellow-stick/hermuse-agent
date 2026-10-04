@@ -117,7 +117,7 @@ final class FeedProvider extends $AsyncNotifierProvider<Feed, List<FeedPost>> {
   /// Feed posts, newest first.
   FeedProvider._({
     required FeedFamily super.from,
-    required (String, {int limit}) super.argument,
+    required (String, {int limit, String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'feedProvider',
@@ -151,7 +151,7 @@ final class FeedProvider extends $AsyncNotifierProvider<Feed, List<FeedPost>> {
   }
 }
 
-String _$feedHash() => r'd6693f990518f24f7363f00453af4d6341ed9605';
+String _$feedHash() => r'4b5618205d78ee750a6b0144461af634ac07eaa3';
 
 /// Feed posts, newest first.
 
@@ -162,7 +162,7 @@ final class FeedFamily extends $Family
           AsyncValue<List<FeedPost>>,
           List<FeedPost>,
           FutureOr<List<FeedPost>>,
-          (String, {int limit})
+          (String, {int limit, String profile})
         > {
   FeedFamily._()
     : super(
@@ -175,8 +175,14 @@ final class FeedFamily extends $Family
 
   /// Feed posts, newest first.
 
-  FeedProvider call(String instanceId, {int limit = 50}) =>
-      FeedProvider._(argument: (instanceId, limit: limit), from: this);
+  FeedProvider call(
+    String instanceId, {
+    int limit = 50,
+    String profile = 'default',
+  }) => FeedProvider._(
+    argument: (instanceId, limit: limit, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'feedProvider';
@@ -185,11 +191,16 @@ final class FeedFamily extends $Family
 /// Feed posts, newest first.
 
 abstract class _$Feed extends $AsyncNotifier<List<FeedPost>> {
-  late final _$args = ref.$arg as (String, {int limit});
+  late final _$args = ref.$arg as (String, {int limit, String profile});
   String get instanceId => _$args.$1;
   int get limit => _$args.limit;
+  String get profile => _$args.profile;
 
-  FutureOr<List<FeedPost>> build(String instanceId, {int limit = 50});
+  FutureOr<List<FeedPost>> build(
+    String instanceId, {
+    int limit = 50,
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -204,7 +215,7 @@ abstract class _$Feed extends $AsyncNotifier<List<FeedPost>> {
             >;
     return element.handleCreate(
       ref,
-      () => build(_$args.$1, limit: _$args.limit),
+      () => build(_$args.$1, limit: _$args.limit, profile: _$args.profile),
     );
   }
 }
@@ -219,7 +230,7 @@ final class IdeasProvider extends $AsyncNotifierProvider<Ideas, List<Idea>> {
   /// Ideas, newest first.
   IdeasProvider._({
     required IdeasFamily super.from,
-    required (String, {int limit}) super.argument,
+    required (String, {int limit, String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'ideasProvider',
@@ -253,7 +264,7 @@ final class IdeasProvider extends $AsyncNotifierProvider<Ideas, List<Idea>> {
   }
 }
 
-String _$ideasHash() => r'475c7ade410fa6974005bb703ed8e69d224864f5';
+String _$ideasHash() => r'dfb4d8de5030df2d60b1263d5985caac4414ae6a';
 
 /// Ideas, newest first.
 
@@ -264,7 +275,7 @@ final class IdeasFamily extends $Family
           AsyncValue<List<Idea>>,
           List<Idea>,
           FutureOr<List<Idea>>,
-          (String, {int limit})
+          (String, {int limit, String profile})
         > {
   IdeasFamily._()
     : super(
@@ -277,8 +288,14 @@ final class IdeasFamily extends $Family
 
   /// Ideas, newest first.
 
-  IdeasProvider call(String instanceId, {int limit = 200}) =>
-      IdeasProvider._(argument: (instanceId, limit: limit), from: this);
+  IdeasProvider call(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  }) => IdeasProvider._(
+    argument: (instanceId, limit: limit, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'ideasProvider';
@@ -287,11 +304,16 @@ final class IdeasFamily extends $Family
 /// Ideas, newest first.
 
 abstract class _$Ideas extends $AsyncNotifier<List<Idea>> {
-  late final _$args = ref.$arg as (String, {int limit});
+  late final _$args = ref.$arg as (String, {int limit, String profile});
   String get instanceId => _$args.$1;
   int get limit => _$args.limit;
+  String get profile => _$args.profile;
 
-  FutureOr<List<Idea>> build(String instanceId, {int limit = 200});
+  FutureOr<List<Idea>> build(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -306,7 +328,7 @@ abstract class _$Ideas extends $AsyncNotifier<List<Idea>> {
             >;
     return element.handleCreate(
       ref,
-      () => build(_$args.$1, limit: _$args.limit),
+      () => build(_$args.$1, limit: _$args.limit, profile: _$args.profile),
     );
   }
 }
@@ -321,7 +343,7 @@ final class GoalsProvider extends $AsyncNotifierProvider<Goals, List<Goal>> {
   /// Goals, newest first.
   GoalsProvider._({
     required GoalsFamily super.from,
-    required (String, {int limit}) super.argument,
+    required (String, {int limit, String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'goalsProvider',
@@ -355,7 +377,7 @@ final class GoalsProvider extends $AsyncNotifierProvider<Goals, List<Goal>> {
   }
 }
 
-String _$goalsHash() => r'68f7bb86663ac20e6c5790ff610645df02066391';
+String _$goalsHash() => r'1972ed7e9a68518d65f61b424b1cb080fee377b3';
 
 /// Goals, newest first.
 
@@ -366,7 +388,7 @@ final class GoalsFamily extends $Family
           AsyncValue<List<Goal>>,
           List<Goal>,
           FutureOr<List<Goal>>,
-          (String, {int limit})
+          (String, {int limit, String profile})
         > {
   GoalsFamily._()
     : super(
@@ -379,8 +401,14 @@ final class GoalsFamily extends $Family
 
   /// Goals, newest first.
 
-  GoalsProvider call(String instanceId, {int limit = 200}) =>
-      GoalsProvider._(argument: (instanceId, limit: limit), from: this);
+  GoalsProvider call(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  }) => GoalsProvider._(
+    argument: (instanceId, limit: limit, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'goalsProvider';
@@ -389,11 +417,16 @@ final class GoalsFamily extends $Family
 /// Goals, newest first.
 
 abstract class _$Goals extends $AsyncNotifier<List<Goal>> {
-  late final _$args = ref.$arg as (String, {int limit});
+  late final _$args = ref.$arg as (String, {int limit, String profile});
   String get instanceId => _$args.$1;
   int get limit => _$args.limit;
+  String get profile => _$args.profile;
 
-  FutureOr<List<Goal>> build(String instanceId, {int limit = 200});
+  FutureOr<List<Goal>> build(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -408,7 +441,7 @@ abstract class _$Goals extends $AsyncNotifier<List<Goal>> {
             >;
     return element.handleCreate(
       ref,
-      () => build(_$args.$1, limit: _$args.limit),
+      () => build(_$args.$1, limit: _$args.limit, profile: _$args.profile),
     );
   }
 }
@@ -431,7 +464,7 @@ final class ArtifactsProvider
   /// Library artifacts, newest first.
   ArtifactsProvider._({
     required ArtifactsFamily super.from,
-    required (String, {int limit}) super.argument,
+    required (String, {int limit, String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'artifactsProvider',
@@ -458,8 +491,13 @@ final class ArtifactsProvider
 
   @override
   FutureOr<List<Artifact>> create(Ref ref) {
-    final argument = this.argument as (String, {int limit});
-    return artifacts(ref, argument.$1, limit: argument.limit);
+    final argument = this.argument as (String, {int limit, String profile});
+    return artifacts(
+      ref,
+      argument.$1,
+      limit: argument.limit,
+      profile: argument.profile,
+    );
   }
 
   @override
@@ -473,7 +511,7 @@ final class ArtifactsProvider
   }
 }
 
-String _$artifactsHash() => r'48c70dd9dcfcb890d08eb76d47ed9ed9df426803';
+String _$artifactsHash() => r'3b6104ee716bea429e1fa3cc8883c2503868b598';
 
 /// Library artifacts, newest first.
 
@@ -481,7 +519,7 @@ final class ArtifactsFamily extends $Family
     with
         $FunctionalFamilyOverride<
           FutureOr<List<Artifact>>,
-          (String, {int limit})
+          (String, {int limit, String profile})
         > {
   ArtifactsFamily._()
     : super(
@@ -494,8 +532,14 @@ final class ArtifactsFamily extends $Family
 
   /// Library artifacts, newest first.
 
-  ArtifactsProvider call(String instanceId, {int limit = 200}) =>
-      ArtifactsProvider._(argument: (instanceId, limit: limit), from: this);
+  ArtifactsProvider call(
+    String instanceId, {
+    int limit = 200,
+    String profile = 'default',
+  }) => ArtifactsProvider._(
+    argument: (instanceId, limit: limit, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'artifactsProvider';
@@ -519,7 +563,7 @@ final class ReflectionsProvider
   /// Reflection journal entries, newest first.
   ReflectionsProvider._({
     required ReflectionsFamily super.from,
-    required (String, {int limit}) super.argument,
+    required (String, {int limit, String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'reflectionsProvider',
@@ -546,8 +590,13 @@ final class ReflectionsProvider
 
   @override
   FutureOr<List<Reflection>> create(Ref ref) {
-    final argument = this.argument as (String, {int limit});
-    return reflections(ref, argument.$1, limit: argument.limit);
+    final argument = this.argument as (String, {int limit, String profile});
+    return reflections(
+      ref,
+      argument.$1,
+      limit: argument.limit,
+      profile: argument.profile,
+    );
   }
 
   @override
@@ -561,7 +610,7 @@ final class ReflectionsProvider
   }
 }
 
-String _$reflectionsHash() => r'29d5a6afcdfdb77838fc6c29baecbc49ffeb6acd';
+String _$reflectionsHash() => r'b85a536cb0e9f7307b186fb272309f124aed246e';
 
 /// Reflection journal entries, newest first.
 
@@ -569,7 +618,7 @@ final class ReflectionsFamily extends $Family
     with
         $FunctionalFamilyOverride<
           FutureOr<List<Reflection>>,
-          (String, {int limit})
+          (String, {int limit, String profile})
         > {
   ReflectionsFamily._()
     : super(
@@ -582,8 +631,14 @@ final class ReflectionsFamily extends $Family
 
   /// Reflection journal entries, newest first.
 
-  ReflectionsProvider call(String instanceId, {int limit = 90}) =>
-      ReflectionsProvider._(argument: (instanceId, limit: limit), from: this);
+  ReflectionsProvider call(
+    String instanceId, {
+    int limit = 90,
+    String profile = 'default',
+  }) => ReflectionsProvider._(
+    argument: (instanceId, limit: limit, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'reflectionsProvider';
@@ -603,7 +658,7 @@ final class SystemFileStateProvider
   /// or [preferencesFileName].
   SystemFileStateProvider._({
     required SystemFileStateFamily super.from,
-    required (String, String) super.argument,
+    required (String, String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'systemFileProvider',
@@ -637,7 +692,7 @@ final class SystemFileStateProvider
   }
 }
 
-String _$systemFileStateHash() => r'06e287cabe0976f7497f295d654336c4f2fa80d6';
+String _$systemFileStateHash() => r'93a57be0f3134fc5746869a3dbdac1d011fcf2af';
 
 /// One managed system file (`FEED_PROMPT.md`, `IDENTITY.md`, `HEARTBEAT.md`)
 /// or [preferencesFileName].
@@ -649,7 +704,7 @@ final class SystemFileStateFamily extends $Family
           AsyncValue<SystemFile>,
           SystemFile,
           FutureOr<SystemFile>,
-          (String, String)
+          (String, String, {String profile})
         > {
   SystemFileStateFamily._()
     : super(
@@ -663,8 +718,14 @@ final class SystemFileStateFamily extends $Family
   /// One managed system file (`FEED_PROMPT.md`, `IDENTITY.md`, `HEARTBEAT.md`)
   /// or [preferencesFileName].
 
-  SystemFileStateProvider call(String instanceId, String name) =>
-      SystemFileStateProvider._(argument: (instanceId, name), from: this);
+  SystemFileStateProvider call(
+    String instanceId,
+    String name, {
+    String profile = 'default',
+  }) => SystemFileStateProvider._(
+    argument: (instanceId, name, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'systemFileProvider';
@@ -674,11 +735,16 @@ final class SystemFileStateFamily extends $Family
 /// or [preferencesFileName].
 
 abstract class _$SystemFileState extends $AsyncNotifier<SystemFile> {
-  late final _$args = ref.$arg as (String, String);
+  late final _$args = ref.$arg as (String, String, {String profile});
   String get instanceId => _$args.$1;
   String get name => _$args.$2;
+  String get profile => _$args.profile;
 
-  FutureOr<SystemFile> build(String instanceId, String name);
+  FutureOr<SystemFile> build(
+    String instanceId,
+    String name, {
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -691,6 +757,9 @@ abstract class _$SystemFileState extends $AsyncNotifier<SystemFile> {
               Object?,
               Object?
             >;
-    return element.handleCreate(ref, () => build(_$args.$1, _$args.$2));
+    return element.handleCreate(
+      ref,
+      () => build(_$args.$1, _$args.$2, profile: _$args.profile),
+    );
   }
 }

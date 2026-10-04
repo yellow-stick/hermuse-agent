@@ -141,6 +141,21 @@ exec /usr/bin/install "${args[@]}"
       expect(await fixture.snapshot(), drifted);
     }, skip: _hermesPython == null ? 'needs Python 3.11–3.13' : false);
 
+    test('a completed bootstrap still requires usable Node and npm', () async {
+      await fixture.seedHermes();
+      await fixture.executable('bin/node', 'exit 127');
+      expect(
+        '${(await fixture.run(hermesHealthScript)).stdout}'.trim(),
+        'HERMUSE_HEALTH_V1:repair',
+      );
+      await fixture.seedHermes();
+      await fixture.executable('bin/npm', 'exit 127');
+      expect(
+        '${(await fixture.run(hermesHealthScript)).stdout}'.trim(),
+        'HERMUSE_HEALTH_V1:repair',
+      );
+    }, skip: _hermesPython == null ? 'needs Python 3.11–3.13' : false);
+
     test(
       'a plugin marker cannot hide a stale bundle or stale registered job',
       () async {
@@ -492,6 +507,8 @@ fi
   }
 
   Future<void> seedHermes() async {
+    await executable('bin/node', 'printf "v24.21.0\\n"');
+    await executable('bin/npm', 'printf "11.21.0\\n"');
     await file('head').writeAsString(hermesReleaseCommit);
     await file('home/hermes/.hermes/hermes-agent/.hermes-bootstrap-complete')
         .writeAsString(

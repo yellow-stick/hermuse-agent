@@ -1,3 +1,4 @@
+import 'package:hermes_client/hermes_client.dart' show HermesException;
 import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
@@ -7,6 +8,11 @@ import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'scope.dart';
+
+/// What went wrong, for a person: a Hermes refusal's own message (not its
+/// method and code), else the error's text.
+String hermuseErrorText(Object error) =>
+    error is HermesException ? error.message : '$error';
 
 /// Relay-required screen: no Hermuse relay answers on this page's origin.
 ///

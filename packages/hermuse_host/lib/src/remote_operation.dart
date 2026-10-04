@@ -32,15 +32,23 @@ final class RemoteOperationLock {
         '${shellQuote(supervisedCommand(_holder(lock._nonce), 86400))}';
     unawaited(() async {
       try {
-        final result = await shell.run(
-          command,
-          timeout: const Duration(hours: 24, seconds: 15),
-          onLine: (line) {
-            if (line == 'HERMUSE_OPERATION_LOCKED_V1' && !ready.isCompleted) {
-              ready.complete();
-            }
-          },
-        );
+        void onLine(String line) {
+          if (line == 'HERMUSE_OPERATION_LOCKED_V1' && !ready.isCompleted) {
+            ready.complete();
+          }
+        }
+
+        final result = await (shell is RemoteOperationHolderShell
+            ? shell.holdOperation(
+                command,
+                timeout: const Duration(hours: 24, seconds: 15),
+                onLine: onLine,
+              )
+            : shell.run(
+                command,
+                timeout: const Duration(hours: 24, seconds: 15),
+                onLine: onLine,
+              ));
         if (!lock._released) {
           lock._failure = RemoteInstallFailed(
             'preflight',
@@ -68,14 +76,17 @@ final class RemoteOperationLock {
     _cancellation.check();
   }
 
-  /// Acquires a child lock before forking the process-group watchdog.
-  String supervise(String script, int seconds) {
+  /// Retains a child lock until the command exits, even if its holder disappears.
+  ///
+  /// Local package transactions must finish before cancellation or timeout is
+  /// reported. Only SSH commands use a force-killing process-group watchdog.
+  String supervise(String script, int seconds, {required bool interruptible}) {
     check();
     return '$_prepareLock'
         'flock -n -s 7 || exit 1\n'
         'expected=${shellQuote(_nonce)}\n'
         '$_verifyHolder\n'
-        '${supervisedCommand(script, seconds)}';
+        '${interruptible ? supervisedCommand(script, seconds) : script}';
   }
 
   /// Marks transport shutdown as intentional; the caller then closes its shell.

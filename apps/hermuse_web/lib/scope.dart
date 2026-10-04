@@ -47,6 +47,12 @@ final class HermuseScope extends StatefulComponent {
 
   static ProviderContainer? _current;
 
+  /// Stands in for the booted container in component tests, which render
+  /// subtrees without a browser database.
+  @visibleForTesting
+  static set debugContainer(ProviderContainer? container) =>
+      _current = container;
+
   @css
   // ignore: unused_element
   static List<StyleRule> get styles => hermuseScreenStyles;

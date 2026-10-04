@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+
+import pytest
 
 import store
 
@@ -109,3 +112,189 @@ def test_reflection_write_and_replace(hermuse_root):
     assert second["written_at"] >= first["written_at"]
     assert "revised" in (hermuse_root / "reflections" / "2026-09-26.md").read_text()
     assert [d["date"] for d in store.list_reflections(hermuse_root)] == ["2026-09-26"]
+
+
+def test_feed_why_image_and_delete(hermuse_root):
+    record = store.post_feed(
+        hermuse_root, title="Rain", body="Bring a coat.", why="You bike to work.",
+        image_url="https://example.com/rain.png")
+    md = (hermuse_root / "feed" / record["file"]).read_text()
+    assert "You bike to work." in md and "rain.png" in md
+    post = store.get_feed_post(hermuse_root, record["id"])
+    assert post["why"] == "You bike to work." and post["image_url"].endswith("rain.png")
+    assert store.delete_feed_post(hermuse_root, record["id"]) is True
+    assert not (hermuse_root / "feed" / record["file"]).exists()
+    assert store.get_feed_post(hermuse_root, record["id"]) is None
+    assert store.delete_feed_post(hermuse_root, record["id"]) is False
+
+
+def test_legacy_feed_post_reads_with_defaults(hermuse_root):
+    (hermuse_root / "feed").mkdir(parents=True)
+    (hermuse_root / "feed" / "index.json").write_text(json.dumps({"version": 1, "items": {
+        "old": {"id": "old", "title": "t", "body": "b", "created_at": "2026-01-01T00:00:00+00:00"}}}))
+    [post] = store.list_feed(hermuse_root)
+    assert post["why"] == "" and post["image_url"] is None
+
+
+def test_idea_catalog_groups_and_shape():
+    assert 12 <= len(store.SEED_IDEAS) <= 16
+    assert {seed["group"] for seed in store.SEED_IDEAS} == {
+        "Productivity", "Health & Fitness", "Shopping", "Money", "Relationships",
+        "Travel", "Home & city"}
+    for seed in store.SEED_IDEAS:
+        assert seed["id"].startswith("seed-") and seed["seeded"] is True
+        assert seed["icon"] in store.IDEA_ICONS
+        assert seed["title"].startswith("I'll ") and seed["pitch"]
+    assert len({seed["id"] for seed in store.SEED_IDEAS}) == len(store.SEED_IDEAS)
+
+
+def test_ideas_merge_agent_first_then_seeds_and_dismiss(hermuse_root):
+    agent = store.propose_idea(hermuse_root, title="Triage", pitch="p", group="Money")
+    listed = store.list_ideas(hermuse_root)
+    assert listed[0]["id"] == agent["id"] and listed[0]["seeded"] is False
+    assert listed[0]["icon"] == "money"
+    assert [i["id"] for i in listed[1:]] == [s["id"] for s in store.SEED_IDEAS]
+
+    seed_id = store.SEED_IDEAS[0]["id"]
+    assert store.dismiss_idea(hermuse_root, seed_id) is True
+    assert store.dismiss_idea(hermuse_root, agent["id"]) is True
+    assert store.dismiss_idea(hermuse_root, seed_id) is True  # idempotent
+    assert store.dismiss_idea(hermuse_root, "nope") is False
+    ids = [i["id"] for i in store.list_ideas(hermuse_root)]
+    assert seed_id not in ids and agent["id"] not in ids
+    assert len(ids) == len(store.SEED_IDEAS) - 1
+    assert json.loads((hermuse_root / "ideas" / "dismissed.json").read_text())["ids"] == sorted(
+        [seed_id, agent["id"]])
+    assert store.get_idea(hermuse_root, seed_id)["seeded"] is True
+
+
+def test_find_similar_idea_matches_rephrasings_of_live_ideas_only(hermuse_root):
+    flights = store.propose_idea(
+        hermuse_root, title="Je peux te chercher et comparer des vols Madrid → Nantes",
+        pitch="Recherche sur Google Flights / Skyscanner les vols disponibles.", group="Voyage")
+    checklist = store.propose_idea(
+        hermuse_root, title="Je peux te préparer un rappel + checklist de voyage",
+        pitch="Créer un rappel automatique avant le départ.", group="Voyage")
+
+    def similar(title, pitch="Autre chose."):
+        found = store.find_similar_idea(hermuse_root, title=title, pitch=pitch)
+        return found and found["id"]
+
+    # Rephrased titles (accents, plural, word order) are the same idea.
+    assert similar("Je cherche les meilleurs vols Madrid → Nantes") == flights["id"]
+    assert similar("Je te prépare une checklist de voyage et un rappel J-1") == checklist["id"]
+    # A matching pitch alone is enough.
+    assert similar("Comparatif", "Recherche sur Skyscanner / Google Flights les vols disponibles"
+                   ) == flights["id"]
+    # Same trip, different idea: not a duplicate.
+    assert similar("Je cherche un hôtel à Nantes") is None
+    assert similar("I'll plan a workout") is None
+    # Dismissed ideas no longer block a new proposal.
+    store.dismiss_idea(hermuse_root, flights["id"])
+    assert similar("Je cherche les meilleurs vols Madrid → Nantes") is None
+
+
+
+def test_legacy_goal_record_reads_with_contract_fields(hermuse_root):
+    (hermuse_root / "goals").mkdir(parents=True)
+    legacy = {
+        "id": "old", "title": "Run", "category": "health", "why": "Fit.", "target_date": "",
+        "status": "done", "file": "old.md", "created_at": "2026-01-01T00:00:00+00:00",
+        "timeline": [{"at": "2026-01-01", "note": "start", "progress": ""},
+                     {"at": "2026-01-02", "note": "ran", "progress": "5k done"}],
+    }
+    (hermuse_root / "goals" / "index.json").write_text(
+        json.dumps({"version": 1, "items": {"old": legacy}}))
+    goal = store.get_goal(hermuse_root, "old")
+    assert goal["source"] == "user" and goal["done"] is True
+    assert goal["status_line"] == "5k done"
+    assert goal["parent_id"] is None and goal["cron_job_id"] is None
+    assert store.list_goals(hermuse_root)[0] == goal
+    reopened = store.patch_goal(hermuse_root, "old", done=False)
+    assert reopened["done"] is False and reopened["status"] == "tracking"
+
+
+def test_goal_patch_renames_and_completes(hermuse_root):
+    goal = store.track_goal(hermuse_root, title="Trip", category="something_else",
+                            why="Lisbon in May.", source="agent", cron_job_id="job1")
+    assert goal["source"] == "agent" and goal["cron_job_id"] == "job1" and goal["done"] is False
+    patched = store.patch_goal(hermuse_root, goal["id"], title="Lisbon trip", done=True)
+    assert patched["title"] == "Lisbon trip" and patched["done"] is True
+    assert patched["status"] == "done" and patched["timeline"][-1]["note"] == "marked done."
+    md = (hermuse_root / "goals" / f"{goal['id']}.md").read_text()
+    assert 'title: "Lisbon trip"' in md and 'status: "done"' in md
+    assert "# Lisbon trip" in md and "marked done." in md
+    assert store.patch_goal(hermuse_root, "missing", title="x") is None
+
+
+def test_goal_status_line_from_update(hermuse_root):
+    goal = store.track_goal(hermuse_root, title="Trip", category="something_else", why="w")
+    updated = store.update_goal(hermuse_root, goal["id"], "", status_line="Flight booked")
+    assert updated["status_line"] == "Flight booked" and len(updated["timeline"]) == 1
+    updated = store.update_goal(hermuse_root, goal["id"], "Hotel found", progress="2 of 3 booked")
+    assert updated["status_line"] == "2 of 3 booked"
+
+
+def test_goal_delete_cascades_to_subgoals(hermuse_root):
+    parent = store.track_goal(hermuse_root, title="Trip", category="something_else", why="w")
+    child = store.track_goal(hermuse_root, title="Flight", category="something_else", why="w",
+                             parent_id=parent["id"])
+    grandchild = store.track_goal(hermuse_root, title="Seat", category="something_else", why="w",
+                                  parent_id=child["id"])
+    other = store.track_goal(hermuse_root, title="Run", category="health", why="w")
+    deleted = store.delete_goal(hermuse_root, parent["id"])
+    assert set(deleted) == {parent["id"], child["id"], grandchild["id"]}
+    assert [g["id"] for g in store.list_goals(hermuse_root)] == [other["id"]]
+    for gid in deleted:
+        assert not (hermuse_root / "goals" / f"{gid}.md").exists()
+    assert store.delete_goal(hermuse_root, parent["id"]) == []
+
+
+def test_goal_rejects_unknown_parent_and_source(hermuse_root):
+    with pytest.raises(ValueError):
+        store.track_goal(hermuse_root, title="t", category="health", why="w", parent_id="nope")
+    with pytest.raises(ValueError):
+        store.track_goal(hermuse_root, title="t", category="health", why="w", source="bot")
+
+
+def _task(tid, started, **extra):
+    return {"id": tid, "session_id": "s", "turn_id": tid, "title": "t", "summary": "s",
+            "status": "completed", "source": "chat", "started_at": started,
+            "finished_at": started, "tools": [], **extra}
+
+
+def test_tasks_upsert_order_before_and_cap(hermuse_root, monkeypatch):
+    monkeypatch.setattr(store, "TASKS_CAP", 3)
+    for i in range(5):
+        store.save_task(hermuse_root, _task(f"t{i}", f"2026-10-0{i + 1}T08:00:00+00:00"))
+    assert [t["id"] for t in store.list_tasks(hermuse_root)] == ["t4", "t3", "t2"]
+    store.save_task(hermuse_root, {**_task("t4", "2026-10-05T08:00:00+00:00"), "status": "failed"})
+    assert store.get_task(hermuse_root, "t4")["status"] == "failed"
+    before = store.parse_iso("2026-10-05T00:00:00Z")
+    assert [t["id"] for t in store.list_tasks(hermuse_root, 10, before)] == ["t3", "t2"]
+    assert store.update_task(hermuse_root, "t3", title="New")["title"] == "New"
+    assert store.update_task(hermuse_root, "missing", title="x") is None
+    with pytest.raises(ValueError):
+        store.save_task(hermuse_root, _task("bad", "2026-10-01T00:00:00+00:00", status="done"))
+
+
+def test_memory_round_trip(hermes_home):
+    assert store.read_memory(hermes_home, "memory") == {
+        "target": "memory", "entries": [], "updated_at": None}
+    locked = []
+
+    @contextlib.contextmanager
+    def lock(path):
+        locked.append(path)
+        yield
+
+    stored = store.write_memory(hermes_home, "user", ["  Name: Ana ", "", "Lives in Nantes"], lock=lock)
+    assert stored == ["Name: Ana", "Lives in Nantes"]
+    assert locked == [hermes_home / "memories" / "USER.md"]
+    assert (hermes_home / "memories" / "USER.md").read_text() == "Name: Ana\n§\nLives in Nantes"
+    read = store.read_memory(hermes_home, "user")
+    assert read["entries"] == ["Name: Ana", "Lives in Nantes"] and read["updated_at"]
+    with pytest.raises(ValueError):
+        store.write_memory(hermes_home, "memory", ["a\n§\nb"])
+    with pytest.raises(ValueError):
+        store.read_memory(hermes_home, "soul")

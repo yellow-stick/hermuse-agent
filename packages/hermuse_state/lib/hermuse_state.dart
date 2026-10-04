@@ -2,13 +2,18 @@
 library;
 
 export 'src/activity.dart';
+export 'src/agents.dart';
+export 'src/app_theme.dart';
 export 'src/app_update.dart';
 export 'src/automations.dart';
 export 'src/computer.dart';
 export 'src/connections.dart';
+export 'src/identity.dart';
+export 'src/media.dart';
 export 'src/model_selection.dart';
 export 'src/model_tiers.dart';
 export 'src/onboarding.dart';
+export 'src/permissions.dart';
 export 'src/product.dart';
 export 'src/providers.dart';
 export 'src/remote_setup.dart';

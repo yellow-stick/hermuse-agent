@@ -27,9 +27,13 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
     knee-aware week, tracked in Goals.
   - Otto's main chat: customer-interview synthesis → one-pager in the
     Library, plus which AI subscription the chat runs on.
-- The profile panel's Automations tab lists fictional Hermes cron jobs: the
-  four Hermuse schedules (feed, ideas, goals check-in, reflection) on both
-  instances, plus Ava's own "Evening recap". Pause, run now and delete are
+- The profile panel's Upcoming tab lists fictional Hermes cron jobs: the
+  Hermuse heartbeat on both instances, plus Ava's own jobs (a one-shot
+  reminder, daily, weekly and every-6-hours ones) with their run history;
+  the Hermuse maintenance schedules (feed, ideas, goals check-in,
+  reflection) are served but hidden by the app. Activity lists recorded
+  tasks, Identity shows the SOUL and memory files, Settings → Permissions
+  reads "Ask only when needed". Pause, run now, delete and every save are
   refused with the read-only message.
 - Its own computer. And you own it. The electricity and Annecy answers
   carry a Browser card: `browser_*` transcript rows render the card, and
@@ -51,10 +55,14 @@ host: no Hermuse relay, no Hermes instance. Everything it shows is fictional.
 
 - `DemoTransport` replaces the Hermes WebSocket: `session.resume` returns the
   transcripts of `lib/src/content.dart` (browser steps ride as `browser_*`
-  tool rows with their page URLs), every other call is refused.
-- `demoPluginClient` answers the Hermuse plugin routes: feed/ideas/goals/
-  library/reflections/system files as before, Hermes' cron job list
-  (`GET /api/cron/jobs`), plus the fake computer —
+  tool rows with their page URLs), `profiles.list`/`profiles.describe`
+  return the agent and its SOUL, `config.get approvals.mode` answers
+  `smart`; every other call is refused.
+- `demoPluginClient` answers the Hermuse plugin routes: feed/ideas (plus
+  the plugin's seeded starter ideas)/goals/tasks/memory/library/
+  reflections/system files, Hermes' cron routes (`GET /api/cron/jobs`,
+  `/{id}`, `/{id}/runs`) and their run sessions' messages
+  (`GET /api/sessions/{id}/messages`), plus the fake computer —
   `GET computer/status` (running), `GET computer/thumbnail` and
   `GET computer/snapshots/<toolId>` from the embedded frames of
   `lib/src/computer_frames.dart`, and the `POST computer/ticket` that opens

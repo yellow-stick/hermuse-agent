@@ -3,13 +3,16 @@ enum InstanceKind {
   /// Installed and supervised by Hermuse on this desktop.
   local,
 
+  /// Local service managed by the operating system, not the desktop app.
+  system,
+
   /// Reached over the network (VPS, another machine, a tunnel).
   remote,
 }
 
 /// How Hermuse authenticates against an instance's dashboard.
 enum AuthMethod {
-  /// Loopback backend spawned by Hermuse: `X-Hermes-Session-Token` + `?token=`.
+  /// Private loopback backend: `X-Hermes-Session-Token` + `?token=`.
   loopbackToken,
 
   /// Dashboard password provider (`POST /auth/password-login`, cookie session).

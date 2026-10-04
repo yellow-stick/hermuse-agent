@@ -100,10 +100,18 @@ bool hermesVersionSupported(String text) {
 /// session obtained by [passwordLogin]. Cookies are held in memory only; on
 /// the web the browser owns them and the jar stays empty.
 final class HermesRestClient {
-  HermesRestClient(this._client, {required this.baseUrl, this.sessionToken});
+  HermesRestClient(
+    this._client, {
+    required this.baseUrl,
+    this.sessionToken,
+    this.profile,
+  });
 
   final Uri baseUrl;
   final String? sessionToken;
+
+  /// Optional request scope; authentication and status routes stay unscoped.
+  final String? profile;
   final http.Client _client;
   final Map<String, String> _cookies = {};
 
@@ -112,8 +120,17 @@ final class HermesRestClient {
 
   Uri resolve(String path, [Map<String, String>? query]) => baseUrl.replace(
     path: '${baseUrl.path}$path',
-    queryParameters: query == null || query.isEmpty ? null : query,
+    queryParameters: profile != null && _isProfileRoute(path)
+        ? {'profile': profile!, ...?query}
+        : query == null || query.isEmpty
+        ? null
+        : query,
   );
+
+  bool _isProfileRoute(String path) =>
+      path.startsWith('/api/') &&
+      path != '/api/status' &&
+      !path.startsWith('/api/auth/');
 
   Future<HermesStatus> getStatus() async =>
       HermesStatus.fromJson(await getJson('/api/status'));
@@ -174,6 +191,9 @@ final class HermesRestClient {
   Future<Map<String, Object?>> putJson(String path, Object? body) =>
       _send('PUT', path, body: body);
 
+  Future<Map<String, Object?>> patchJson(String path, Object? body) =>
+      _send('PATCH', path, body: body);
+
   Future<Map<String, Object?>> delete(String path) => _send('DELETE', path);
 
   /// `DELETE` with a JSON body (`DELETE /api/env` takes `{key, profile?}`).
@@ -205,6 +225,13 @@ final class HermesRestClient {
     Map<String, String>? query,
     Object? body,
   }) async {
+    final explicitProfile = body is Map<String, Object?>
+        ? body['profile'] as String?
+        : null;
+    final requestProfile = query?['profile'] ?? explicitProfile ?? profile;
+    if (requestProfile != null && _isProfileRoute(path)) {
+      query = {'profile': requestProfile, ...?query};
+    }
     final request = http.Request(method, resolve(path, query))
       ..headers['accept'] = 'application/json'
       ..followRedirects = false;
@@ -218,7 +245,13 @@ final class HermesRestClient {
     }
     if (body != null) {
       request.headers['content-type'] = 'application/json';
-      request.body = jsonEncode(body);
+      request.body = jsonEncode(
+        requestProfile != null &&
+                _isProfileRoute(path) &&
+                body is Map<String, Object?>
+            ? {'profile': requestProfile, ...body}
+            : body,
+      );
     }
     final http.Response response;
     try {

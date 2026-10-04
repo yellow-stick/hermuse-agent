@@ -9,7 +9,7 @@
 # outlive `flutter run` and are reused by the next run; the Orca archive hook
 # stops a worktree's display with the worktree. Needs kasmvncserver
 # (https://github.com/kasmtech/KasmVNC/releases), openbox, caddy, dbus and
-# gnome-keyring. Extra arguments go to `flutter run`.
+# gnome-keyring, pkexec and policykit-1-gnome. Extra arguments go to `flutter run`.
 set -euo pipefail
 
 proxy_port=6901
@@ -23,12 +23,32 @@ else
   name="$(basename "$root" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n-' '-')"
 fi
 
-for bin in Xkasmvnc openbox caddy flock dbus-run-session gnome-keyring-daemon xdpyinfo flutter; do
+for bin in Xkasmvnc openbox caddy flock dbus-run-session gnome-keyring-daemon pkexec xdpyinfo flutter dart; do
   if ! command -v "$bin" >/dev/null; then
     echo "remote-app: $bin is not on PATH" >&2
     exit 1
   fi
 done
+if [ ! -x /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 ]; then
+  echo "remote-app: install policykit-1-gnome for administrator password dialogs" >&2
+  exit 1
+fi
+
+# Prepare the subscription bridge before starting the app. Reuse a verified
+# binary offline; downloads must match the committed lock and never rewrite it.
+case "$(uname -m)" in
+  x86_64) bridge_platform=linux-amd64 ;;
+  aarch64|arm64) bridge_platform=linux-arm64 ;;
+  *) echo "remote-app: unsupported Linux architecture for CLIProxyAPI" >&2; exit 1 ;;
+esac
+(
+  cd "$root/packages/hermuse_host"
+  if ! dart run tool/fetch_cliproxy.dart --platform "$bridge_platform" --check; then
+    dart run tool/fetch_cliproxy.dart --platform "$bridge_platform" --frozen-lockfile
+  fi
+  # The privileged service helper embeds this checkout's plugin and installer.
+  dart run tool/build_linux_service.dart
+)
 
 state="${XDG_CACHE_HOME:-$HOME/.cache}/hermuse-remote"
 mkdir -p "$state/routes"
@@ -164,8 +184,13 @@ fi
 echo "remote-app: http://$name.localhost:$proxy_port (display :$display; all: http://localhost:$proxy_port)"
 echo "remote-app: from another computer: ssh -N -L $proxy_port:127.0.0.1:$proxy_port $USER@${host:-<this-host>}"
 cd "$root/apps/hermuse_app"
-# A private session bus with an unlocked keyring: the app keeps credentials
-# only in the system keyring, which a headless session lacks.
-exec env -u DBUS_SESSION_BUS_ADDRESS DISPLAY=":$display" dbus-run-session -- bash -c \
-  'printf "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null && exec flutter run -d linux "$@"' \
-  remote-app "$@"
+# A private session bus with an unlocked keyring and a graphical polkit agent:
+# Openbox supplies neither credential storage nor administrator password dialogs.
+exec env -u DBUS_SESSION_BUS_ADDRESS DISPLAY=":$display" dbus-run-session -- bash -ec \
+  'printf "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+   /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &
+   agent=$!
+   trap '\''kill "$agent" 2>/dev/null || true'\'' EXIT
+   flutter run -d linux "$@"' \
+  remote-app "--dart-define=HERMUSE_WORKSPACE_ROOT=$root" \
+  "--dart-define=HERMUSE_CLIPROXY_DEV_ROOT=$root/packages/hermuse_host" "$@"

@@ -898,13 +898,22 @@ void main() {
             'name': 'Meta (bridge)',
             'base_url': 'http://127.0.0.1:8317/v1',
             'model': 'spark-1.3',
+            'is_current': true,
           },
         ],
+        'current': {'provider': 'meta-bridge', 'model': 'spark-1.3'},
       });
       final state = await bridgeCards();
       final meta = state.cards.where((c) => c.id == 'bridge:meta').single;
       expect(meta.state, ConnectionCardState.connected);
       expect(meta.detail, contains('dev@shop.com'));
+      // Hermes names it by the key it saved it under, never by the card id
+      // (`/model … --provider`, `/api/model/set`); it runs the main model.
+      expect(meta.hermesProvider, 'meta-bridge');
+      expect(meta.isDefault, isTrue);
+      expect(state.cards.where((c) => c.isDefault).map((c) => c.id), [
+        'bridge:meta',
+      ]);
       // Credentials without registration: disconnected with a nudge.
       rest.routes['GET /api/providers/custom-endpoints'] = ScriptedRest.json({
         'endpoints': [],

@@ -177,7 +177,9 @@ void main() {
     expect(seed, "Let's discuss: Oslo in May\n\nFjords are thawing.");
   });
 
-  testWidgets('goals: the box marks a tracked goal done', (tester) async {
+  testWidgets('goals: the box completes a goal, and reopens it', (
+    tester,
+  ) async {
     var goal = <String, Object?>{
       'id': 'g1',
       'title': 'Run 10k',
@@ -194,17 +196,34 @@ void main() {
       'GET /api/plugins/hermuse/goals': (_) => {
         'goals': [goal],
       },
-      'POST /api/plugins/hermuse/goals/g1/update': (request) {
+      'PATCH /api/plugins/hermuse/goals/g1': (request) {
         final body = jsonDecode(request.body) as Map<String, Object?>;
-        goal = {...goal, 'status': body['status'] ?? goal['status']};
+        final done = body['done']! as bool;
+        goal = {...goal, 'done': done, 'status': done ? 'done' : 'tracking'};
         return goal;
       },
     });
     expect(find.text('Run 10k'), findsOneWidget);
     await tester.tap(find.bySemanticsLabel('Mark Run 10k complete'));
     await tester.pumpAndSettle();
-    final update = calls.singleWhere((c) => c.method == 'POST');
-    expect(jsonDecode(update.body), containsPair('status', 'done'));
+    // Done, the goal leaves the list for the folded "Completed goals".
     expect(find.text('Run 10k'), findsNothing);
+    await tester.tap(find.text('Completed goals (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Run 10k'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Mark Run 10k not done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Completed goals (1)'), findsNothing);
+    expect(find.bySemanticsLabel('Mark Run 10k complete'), findsOneWidget);
+    expect(
+      [
+        for (final c in calls)
+          if (c.method == 'PATCH') jsonDecode(c.body),
+      ],
+      [
+        {'done': true},
+        {'done': false},
+      ],
+    );
   });
 }

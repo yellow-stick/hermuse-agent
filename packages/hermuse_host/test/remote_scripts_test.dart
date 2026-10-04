@@ -4,6 +4,245 @@ import 'package:hermuse_host/src/remote_scripts.dart';
 import 'package:test/test.dart';
 
 void main() {
+  group('Canonical dashboard service', () {
+    late _Machine machine;
+    setUp(() async {
+      machine = await _Machine.create();
+      await Directory('${machine.root.path}/provision').create();
+      await Directory('${machine.root.path}/etc/systemd/system')
+          .create(recursive: true);
+      await machine._executable('curl', 'exit 0\n');
+    });
+    tearDown(() => machine.root.delete(recursive: true));
+
+    Future<ProcessResult> token() => machine.run(
+      ensureDashboardTokenScript.replaceAll(
+        'info.st_uid != 0',
+        'info.st_uid != os.getuid()',
+      ),
+    );
+
+    test('creates a private token once and preserves it across service maintenance', () async {
+      final first = await token();
+      expect(first.exitCode, 0, reason: '${first.stderr}');
+      expect('${first.stdout}'.trim(), matches(RegExp(r'^[A-Za-z0-9_-]{64}$')));
+      final credential = machine.file('provision/dashboard.env');
+      final initial = await credential.readAsString();
+      expect((await credential.stat()).mode & 0x1ff, 0x180);
+      for (var retry = 0; retry < 2; retry++) {
+        final configure = await machine.run(configureDashboardScript());
+        expect(configure.exitCode, 0, reason: '${configure.stderr}');
+        final reused = await token();
+        expect(reused.exitCode, 0, reason: '${reused.stderr}');
+        expect(reused.stdout, first.stdout);
+        expect(await credential.readAsString(), initial);
+      }
+      final unit = await machine
+          .file('etc/systemd/system/hermuse-dashboard.service')
+          .readAsLines();
+      final settings = <String, String>{
+        for (final line in unit)
+          if (line.contains('='))
+            line.split('=').first: line.substring(line.indexOf('=') + 1),
+      };
+      expect(settings['User'], 'hermes');
+      expect(settings['Group'], 'hermes');
+      expect(settings['ExecStart'], contains('--host 127.0.0.1'));
+      expect(settings['ExecStart'], contains('--port 9119'));
+      expect(settings['EnvironmentFile'], '-${credential.path}');
+      expect(
+        await machine.file('state/hermuse-dashboard.service.enabled').exists(),
+        isTrue,
+      );
+      expect(
+        await machine.file('state/hermuse-dashboard.service.active').exists(),
+        isTrue,
+      );
+    });
+
+    test(
+      'refuses an exposed existing credential without rewriting it',
+      () async {
+        final credential = machine.file('provision/dashboard.env');
+        const existing = 'untrusted existing credential\n';
+        await credential.writeAsString(existing);
+        await Process.run('chmod', ['0644', credential.path]);
+        final result = await token();
+        expect(result.exitCode, isNot(0));
+        expect(await credential.readAsString(), existing);
+      },
+    );
+
+    test('refuses a credential symlink without touching its target', () async {
+      final other = machine.file('other-secret');
+      await other.writeAsString('keep this secret');
+      await Link(machine.file('provision/dashboard.env').path)
+          .create(other.path);
+      final result = await token();
+      expect(result.exitCode, isNot(0));
+      expect(await other.readAsString(), 'keep this secret');
+    });
+  }, skip: Platform.isLinux ? false : 'Linux canonical service recipes');
+
+  group('Canonical scheduler service', () {
+    late _Machine machine;
+    setUp(() async {
+      machine = await _Machine.create();
+      await Directory('${machine.root.path}/etc/systemd/system')
+          .create(recursive: true);
+      // The gateway's cron ticker stamps its heartbeat when it starts.
+      await machine._executable('systemctl', r'''
+action=$1
+unit=${@: -1}
+case "$action" in
+  is-active) test -e "$FAKE_ROOT/state/$unit.active" ;;
+  is-enabled) test -e "$FAKE_ROOT/state/$unit.enabled" ;;
+  enable) touch "$FAKE_ROOT/state/$unit.enabled" ;;
+  daemon-reload) touch "$FAKE_ROOT/state/daemon-reload" ;;
+  restart)
+    touch "$FAKE_ROOT/state/$unit.active"
+    printf '%s' "$unit" >> "$FAKE_ROOT/state/restarts"
+    if [ ! -e "$FAKE_ROOT/state/ticker-broken" ]; then
+      python3 -c 'import time; print(time.time())' > "$FAKE_ROOT/heartbeat"
+    fi ;;
+  *) exit 42 ;;
+esac
+''');
+    });
+    tearDown(() => machine.root.delete(recursive: true));
+
+    Future<ProcessResult> run(String script) => machine.run(
+      script.replaceAll(
+        schedulerHeartbeatFile,
+        '${machine.root.path}/heartbeat',
+      ),
+    );
+    File unit() => machine.file('etc/systemd/system/hermuse-gateway.service');
+    Future<String> health() async =>
+        '${(await run(schedulerHealthScript)).stdout}'.trim();
+
+    test(
+      'runs the Hermes gateway as the hermes user without takeover flags',
+      () {
+        final settings = <String, List<String>>{};
+        for (final line in gatewayService.split('\n')) {
+          final separator = line.indexOf('=');
+          if (separator <= 0 || line.startsWith('#')) continue;
+          settings
+              .putIfAbsent(line.substring(0, separator), () => [])
+              .add(line.substring(separator + 1));
+        }
+        expect(
+          gatewayService,
+          startsWith('# Managed by Hermuse remote installer\n'),
+        );
+        expect(settings['ExecStart'], [
+          '/home/hermes/.local/bin/hermes gateway run',
+        ]);
+        expect(gatewayService, isNot(contains('--replace')));
+        expect(settings['User'], ['hermes']);
+        expect(settings['Group'], ['hermes']);
+        expect(settings['WorkingDirectory'], ['/home/hermes/.hermes']);
+        expect(
+          settings['Environment'],
+          containsAll([
+            'HOME=/home/hermes',
+            'HERMES_HOME=/home/hermes/.hermes',
+            'HERMES_SUPERVISED_CHILD=1',
+          ]),
+        );
+        expect(settings['Restart'], ['always']);
+        expect(settings['RestartForceExitStatus'], ['75']);
+        expect(settings['RestartPreventExitStatus'], ['78']);
+        expect(settings['WantedBy'], ['multi-user.target']);
+        expect(gatewayUnit, 'hermuse-gateway.service');
+      },
+    );
+
+    test(
+      'installs, enables and proves a ticking scheduler idempotently',
+      () async {
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+        for (var attempt = 0; attempt < 2; attempt++) {
+          final configure = await run(configureSchedulerScript());
+          expect(configure.exitCode, 0, reason: '${configure.stderr}');
+          expect(await unit().readAsString(), '$gatewayService\n');
+          expect(
+            await machine
+                .file('state/hermuse-gateway.service.enabled')
+                .exists(),
+            isTrue,
+          );
+          expect(await health(), 'HERMUSE_HEALTH_V1:ready');
+        }
+        expect((await unit().stat()).mode & 0x1ff, 0x1a4);
+        expect(
+          await machine.file('state/restarts').readAsString(),
+          'hermuse-gateway.service' * 2,
+        );
+      },
+    );
+
+    test(
+      'reports a missing, stopped, modified or silent scheduler for repair',
+      () async {
+        final configure = await run(configureSchedulerScript());
+        expect(configure.exitCode, 0, reason: '${configure.stderr}');
+        expect(await health(), 'HERMUSE_HEALTH_V1:ready');
+
+        final active = machine.file('state/hermuse-gateway.service.active');
+        await active.delete();
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+        await active.create();
+
+        final stale = DateTime.now().millisecondsSinceEpoch / 1000 - 600;
+        await machine.file('heartbeat').writeAsString('$stale');
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+        await machine.file('heartbeat').delete();
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+        expect((await run(configureSchedulerScript())).exitCode, 0);
+
+        await unit().writeAsString('$gatewayService\nExecStartPre=/bin/true\n');
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+        expect(
+          (await run(schedulerServiceStatusScript)).stdout.toString().trim(),
+          'HERMUSE_HEALTH_V1:repair',
+        );
+        await unit().delete();
+        expect(await health(), 'HERMUSE_HEALTH_V1:repair');
+      },
+    );
+
+    test(
+      'refuses an unrelated unit and a symlink without replacing them',
+      () async {
+        const foreign = '[Service]\nExecStart=/usr/bin/other\n';
+        await unit().writeAsString(foreign);
+        final refused = await run(configureSchedulerScript());
+        expect(refused.exitCode, isNot(0));
+        expect(await unit().readAsString(), foreign);
+        await unit().delete();
+        final target = machine.file('other.service');
+        await target.writeAsString(foreign);
+        await Link(unit().path).create(target.path);
+        expect((await run(configureSchedulerScript())).exitCode, isNot(0));
+        expect(await target.readAsString(), foreign);
+        expect(await machine.file('state/restarts').exists(), isFalse);
+      },
+    );
+
+    test('fails when the restarted gateway never ticks', () async {
+      await machine._executable('sleep', 'exit 0\n');
+      await machine.file('state/ticker-broken').create();
+      final result = await run(configureSchedulerScript());
+      expect(result.exitCode, isNot(0));
+      expect(
+        '${result.stderr}',
+        contains('The scheduler did not start ticking.'),
+      );
+    });
+  }, skip: Platform.isLinux ? false : 'Linux canonical service recipes');
+
   group('Remote plugin staging', () {
     late _Machine machine;
     setUp(() async {
@@ -616,6 +855,8 @@ case "$action" in
   disable) rm -f "$FAKE_ROOT/state/$unit.enabled" ;;
   stop) rm -f "$FAKE_ROOT/state/$unit" "$FAKE_ROOT/state/$unit.active" ;;
   reload-or-restart) touch "$FAKE_ROOT/state/$unit.active" ;;
+  restart) touch "$FAKE_ROOT/state/$unit.active" ;;
+  daemon-reload) ;;
   show) printf '%s\n' "caddy run --config $FAKE_ROOT/etc/caddy/Caddyfile" ;;
   *) exit 42 ;;
 esac
@@ -710,6 +951,7 @@ if [ "$1:$2" = '-c:%u' ]; then printf '0\n'; else exec /usr/bin/stat "$@"; fi
       '-c',
       script
           .replaceAll('/etc/caddy', '${root.path}/etc/caddy')
+          .replaceAll('/etc/systemd/system', '${root.path}/etc/systemd/system')
           .replaceAll(provisionRoot, '${root.path}/provision')
           .replaceAll('tar -C / ', 'tar -C ${shellQuote(root.path)} '),
     ],

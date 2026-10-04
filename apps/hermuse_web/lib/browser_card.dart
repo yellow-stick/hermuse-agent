@@ -28,9 +28,10 @@ String browserTaskTitle(String threadTitle) =>
 /// Keeps the computer client of [instanceId] alive while subscribed; `read()`
 /// yields it.
 ProviderSubscription<Future<ComputerClient>> listenComputerClient(
-  String instanceId,
-) => HermuseScope.container.listen(
-  computerClientProvider(instanceId).future,
+  String instanceId, {
+  required String profile,
+}) => HermuseScope.container.listen(
+  computerClientProvider(instanceId, profile: profile).future,
   (_, _) {},
 );
 
@@ -96,6 +97,7 @@ class HermuseBrowserCard extends StatefulComponent {
     required this.block,
     required this.title,
     required this.instanceId,
+    required this.profile,
     required this.onOpen,
     super.key,
   });
@@ -105,6 +107,7 @@ class HermuseBrowserCard extends StatefulComponent {
   /// Task title ([browserTaskTitle]), shown once the turn is done.
   final String title;
   final String instanceId;
+  final String profile;
 
   /// Opens the computer viewer.
   final VoidCallback onOpen;
@@ -235,7 +238,9 @@ class _HermuseBrowserCardState extends State<HermuseBrowserCard> {
   void didUpdateComponent(HermuseBrowserCard oldComponent) {
     super.didUpdateComponent(oldComponent);
     if (!kIsWeb) return;
-    final instanceChanged = oldComponent.instanceId != component.instanceId;
+    final instanceChanged =
+        oldComponent.instanceId != component.instanceId ||
+        oldComponent.profile != component.profile;
     if (instanceChanged) {
       _client?.close();
       _client = null;
@@ -270,6 +275,7 @@ class _HermuseBrowserCardState extends State<HermuseBrowserCard> {
     try {
       final client = await (_client ??= listenComputerClient(
         component.instanceId,
+        profile: component.profile,
       )).read();
       jpeg = running
           ? await client.thumbnail()

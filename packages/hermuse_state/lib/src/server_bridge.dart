@@ -19,8 +19,10 @@ const serverBridgeInstallPlugin = 'Install the Hermuse plugin on this server';
 ///
 /// A Hermes reached over the network calls its custom endpoint from its own
 /// host, where the sidecar's `127.0.0.1` is the server itself. A `remote`
-/// instance on this machine's loopback keeps the sidecar.
+/// instance on this machine's loopback keeps the sidecar. A system-managed
+/// local service instead owns its bridge, independently of the desktop app.
 bool bridgeOnServer(HermesInstance? instance) {
+  if (instance?.kind == InstanceKind.system) return true;
   if (instance == null || instance.kind != InstanceKind.remote) return false;
   final host = instance.baseUrl.host;
   return host != 'localhost' && host != '::1' && !host.startsWith('127.');

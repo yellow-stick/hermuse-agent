@@ -19,6 +19,34 @@ def _server_hermes(monkeypatch):
     monkeypatch.delenv("HERMES_DESKTOP", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_media_env(monkeypatch):
+    """The server's own media provider settings never leak into tests."""
+    monkeypatch.delenv("HERMUSE_MEDIA_ENDPOINT", raising=False)
+    monkeypatch.delenv("HERMUSE_MEDIA_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_internet(monkeypatch):
+    """Tests never reach the internet (feed posts fetch their source's image):
+    only IP literals and localhost resolve."""
+    import ipaddress
+    import socket
+
+    real = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else str(host or "")
+        try:
+            ipaddress.ip_address(name.split("%", 1)[0])
+        except ValueError:
+            if name not in ("localhost", ""):
+                raise socket.gaierror(socket.EAI_NONAME, f"no network in tests: {name}")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)
+
+
 @pytest.fixture()
 def hermes_home(tmp_path, monkeypatch):
     home = tmp_path / "home"

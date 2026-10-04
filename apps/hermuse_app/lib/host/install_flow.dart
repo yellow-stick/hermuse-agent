@@ -295,18 +295,12 @@ final class _InstallFlowScreenState extends ConsumerState<InstallFlowScreen> {
       (_toolsFailed || (_prereqs != null && !_prereqs!.ok));
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.symmetric(
-      vertical: YsSpace.xxl + YsSpace.lg,
-      horizontal: YsSpace.xl,
-    ),
-    child: SetupCard(
-      title: 'Install Hermes',
-      status: _status,
-      items: [_tools(), _hermes()],
-      log: _log,
-      actions: [YsButton.neutral(label: 'Cancel', onPressed: widget.onCancel)],
-    ),
+  Widget build(BuildContext context) => SetupCard(
+    title: 'Install Hermes',
+    status: _status,
+    items: [_tools(), _hermes()],
+    log: _log,
+    actions: [YsButton.neutral(label: 'Cancel', onPressed: widget.onCancel)],
   );
 
   String get _status => switch (_phase) {

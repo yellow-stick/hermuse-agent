@@ -108,6 +108,23 @@ account.
 
 ### What Hermuse installs
 
+SSH setup and Linux **Install on this computer** use the same account,
+`/home/hermes/.hermes`, system service, provisioning engine and ownership journal.
+There is no separate desktop-owned Linux backend. Local setup keeps the service
+private; SSH setup adds the authenticated public access described below.
+Installing locally after SSH setup preserves the existing public configuration.
+Closing a desktop client never stops this system-managed service.
+
+If the SSH login account has a legacy per-user Hermes installation and no
+canonical instance exists, setup requests explicit migration approval before
+provisioning it. The reviewed inventory must still match when migration starts.
+A verified private data backup and the original home are retained; executable
+trees are rebuilt from pinned sources. Existing canonical data is never merged:
+when both homes exist, setup reuses the canonical instance and preserves the
+legacy home. Unsafe paths, active legacy processes and existing computer-volume
+references require manual resolution; see
+[legacy migration](desktop.md#existing-per-user-installations).
+
 **Setting up your server** shows the current step, completed steps and
 technical output under **Show details**:
 
@@ -117,9 +134,10 @@ technical output under **Show details**:
 | Guarded firewall setup | Install UFW if missing, keep existing rules, add the SSH port (including the server-side port if forwarded) and TCP 80/443 when needed, then enable UFW. A fresh SSH login checks that access still works. |
 | Dedicated Hermes account | Create the non-root `hermes` user with home `/home/hermes`; store Hermes and its data in `/home/hermes/.hermes`. |
 | Hermes Agent | Reuse the exact pinned checkout only when its bootstrap marker and launcher also pass inspection. Otherwise download the pinned Hermes Agent **0.21.5** installer, verify its SHA-256 and repair its non-interactive installation stages as `hermes`. Model setup is left for onboarding. |
-| Hermuse plugin and jobs | Upload the plugin bundled with the desktop app, enable it, and register the daily feed, weekly ideas, weekly goals check-in and nightly reflection jobs. |
+| Hermuse plugin and jobs | Upload the plugin bundled with the desktop app, enable it, and register the daily feed, weekly ideas, weekly goals check-in and nightly reflection jobs, plus the 30-minute heartbeat. |
 | Docker and agent's computer | Install the distribution's `docker.io` if Docker is missing; start its system service and add `hermes` to the `docker` group. Download the computer image, or build it on the server if the pull fails, then start the computer and check that it is ready. |
 | Dashboard account | Generate a new random password for dashboard user `admin`, store its hash in Hermes configuration, and start `hermuse-dashboard.service` as the `hermes` user. The dashboard binds only to `127.0.0.1:9119`. |
+| Scheduler | Install and start `hermuse-gateway.service`, which runs `hermes gateway run` as the `hermes` user next to the dashboard. It is Hermes' scheduler: it runs every scheduled job (your reminders and briefings, the heartbeat, the plugin's jobs) and delivers their results into your main chat. |
 | Web app | Only when you answered **Yes**, or kept from an earlier setup. Download `ghcr.io/yellow-stick/hermuse-web:<plugin version>` (the web app and its relay, matching the bundled plugin) and run it as container `hermuse-web`, read-only, bound to `127.0.0.1:9120`. The relay allows only this server's dashboard. Answering **No** on a rerun keeps a healthy existing web app; **Uninstall** removes it. |
 | Caddy and public HTTPS | Install Caddy if missing, add a dedicated reverse-proxy site, and obtain HTTPS for `https://hermuse.<public-ip-with-dashes>.sslip.io`, plus `https://app.hermuse.<public-ip-with-dashes>.sslip.io` for the web app. The `hermuse.` prefix keeps other services on the bare IP hostname separate. No domain purchase is needed. |
 | Final readiness checks | From your desktop, verify HTTPS, Hermes compatibility, password login, protected plugin access, all four jobs and the running computer, and, with the web app, that its relay reaches the dashboard, before reporting success. |
@@ -140,8 +158,9 @@ Hermes inspection verifies the pinned entrypoint, exact installer-generated
 launcher and Python target, then imports only the pinned lightweight version
 module in isolated Python with bytecode writes disabled. It deliberately does
 not run `hermes --version` or load CLI/config/banner startup paths, which can
-self-repair or write update caches. Full dashboard readiness is still exercised
-after repairs.
+self-repair or write update caches. Node and npm must also execute successfully:
+an upstream bootstrap completion marker does not excuse missing dashboard build
+tools. Full dashboard readiness is still exercised after repairs.
 
 SSH trust/authentication, administrator and ownership guards always run for the
 current session. A firewall change still requires a fresh pinned-key SSH login.
@@ -227,7 +246,8 @@ If a previous restoration is still pending, wait for it before retrying.
 For a failure at **Caddy and public HTTPS** or **Final readiness checks**,
 check the provider firewall, router/NAT, public IPv4 address and `sslip.io`
 DNS—not just UFW. For the automatic install's dashboard logs, use
-`sudo journalctl -u hermuse-dashboard`; computer image logs are in
+`sudo journalctl -u hermuse-dashboard`, and for the scheduler
+`sudo journalctl -u hermuse-gateway`; computer image logs are in
 `/home/hermes/.hermes/hermuse/computer/build.log`.
 
 A failure at **Web app** is usually the image download from `ghcr.io`
@@ -308,6 +328,15 @@ systemctl --user restart hermes-dashboard
 
 Hermuse signs in with the user name `admin` and that password. The password
 stays between Hermuse and your Hermes.
+
+Scheduled jobs need Hermes' scheduler, its **gateway**, running next to the
+dashboard: reminders, briefings, the 30-minute heartbeat and the plugin's
+jobs only fire while it runs, and it delivers their results into your main
+chat. Run it the same way, as `~/.config/systemd/user/hermes-gateway.service`
+with `ExecStart=%h/.local/bin/hermes gateway run` (same `[Unit]` and
+`[Install]` sections, `Description=Hermes Agent Gateway`), then
+`systemctl --user enable --now hermes-gateway`. Without it the **Upcoming**
+tab says the scheduler is not running, and items only run from **Run now**.
 
 ## 2. Give the dashboard an HTTPS address
 
@@ -428,6 +457,16 @@ A **Browser** card appears at the top of the answer with a live picture of the
 agent's screen. See [The agent's computer](agent-computer.md) for everything
 you can do with it.
 
+Then ask for something later:
+
+> Remind me in 5 minutes to stretch.
+
+The reminder shows under **Upcoming** in the profile panel. When it fires, a
+small **Scheduled: <name>** line and the agent's message arrive in your main
+chat, whichever app is open, or the next time you open it. The heartbeat
+writes there too, only when something needs you. See
+[the profile panel](profile-panel.md#upcoming).
+
 ## Without the one-click install
 
 **Server set up by the desktop app**: run **Connect to a machine** again. It
@@ -506,6 +545,36 @@ model of its side tasks (titles, approvals, summaries). When Hermes warns
 about a model (an expensive one, or a tier that trains on your data) it says
 why and asks before switching. The key is stored by Hermes on the server, not
 in the app.
+
+## Image generation
+
+Generated agent portraits and animations, and illustrations for Feed posts
+without a picture, need an image/video generation service you run: Hermuse
+does not provide one. The first supported service is **ContentFlow** (it
+drives Google Flow in a browser signed in to your Google account; generations
+use that account's Flow credits). Without it, the agent editor offers the
+bundled portraits only and Feed posts without a source picture stay without
+one.
+
+1. Run ContentFlow where your Hermes server can reach it: on the server
+   itself (`http://127.0.0.1:9400`, no token needed on loopback) or behind a
+   private tunnel with its `CONTENTFLOW_API_TOKEN` set.
+2. In the app, **Settings → Image generation** of the instance: enter the
+   endpoint and the token (if any), then **Test**. It shows whether the
+   service answers, your remaining credits and what one animation costs
+   (7 credits per 4-second clip with Omni 1.1 Flash). The token is kept on the
+   server and never shown again.
+3. Leave **Illustrate Feed posts without an image** on to give such posts a
+   generated picture.
+
+The setting is shared by every agent of the server (it lives in
+`~/.hermes/hermuse/media.json`, readable by the Hermes user only);
+`HERMUSE_MEDIA_ENDPOINT` and `HERMUSE_MEDIA_TOKEN` in the dashboard's
+environment override it. Animations are exported with **ffmpeg** on the
+server: servers Hermuse sets up have it; elsewhere install it
+(`sudo apt install ffmpeg`), or **Test** reports it missing and animating is
+refused. A refused generation is reported with the service's own message and
+never resubmitted automatically, so credits are not spent twice.
 
 ## Troubleshooting
 
