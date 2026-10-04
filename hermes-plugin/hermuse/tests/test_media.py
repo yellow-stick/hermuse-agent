@@ -264,6 +264,7 @@ def test_config_is_server_wide_whatever_the_profile(hermes_home):
 
 
 def test_status_reads_credits_and_video_cost(client, configured, monkeypatch):
+    monkeypatch.setattr(media.shutil, "which", lambda name: f"/usr/bin/{name}")
     status = client.get(f"{API}/media/status").json()
     assert status == {"configured": True, "reachable": True, "credits": 35, "video_cost": 7, "error": None}
     headers = configured.requests[-1][3]
