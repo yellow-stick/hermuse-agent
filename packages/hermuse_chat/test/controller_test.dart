@@ -649,6 +649,51 @@ void main() {
       },
     );
 
+    test('Hermes\' own answer in a run without a user is not shown as the '
+        'user\'s message', () async {
+      fake.on(
+        'session.resume',
+        (_) => {
+          'session_id': 'live-1',
+          'message_count': 3,
+          'info': const <String, Object?>{},
+          'messages': [
+            transcriptRow('user', brief, 5),
+            {
+              'role': 'tool',
+              'name': 'clarify',
+              'tool_call_id': 'c1',
+              'context': 'On fait quoi ?',
+            },
+            transcriptRow('assistant', 'Reminder kept for tomorrow.', 8),
+          ],
+        },
+      );
+      final chat = ChatController(
+        connections: _Connections(HermesConnection('vps', fake)),
+        ref: const ThreadRef(instanceId: 'vps', sessionId: 'stored-1'),
+        clarifyResults: (_) async => {
+          'c1':
+              '{"question": "On fait quoi ?", "user_response": "[single-query '
+              'mode: no user available to answer \'On fait quoi ?\'. Pick the '
+              'best option from [\'Now\', \'Later\'] using your own judgment '
+              'and continue.]"}',
+        },
+      );
+      addTearDown(chat.dispose);
+      await chat.ready;
+      final messages = chat.state.activeThread.messages;
+      expect(messages.map((m) => (m.author, m.plainText)), [
+        (Author.agent, 'Scheduled: Morning brief'),
+        (Author.agent, 'Reminder kept for tomorrow.'),
+      ]);
+      // The clarify row stays in the turn, without an answer of its own.
+      expect(
+        messages.last.blocks.whereType<ToolCallBlock>().single.name,
+        'clarify',
+      );
+    });
+
     test(
       'an approval card stays where it was asked, above the answer',
       () async {

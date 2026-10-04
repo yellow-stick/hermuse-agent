@@ -2484,7 +2484,8 @@ final class _PendingRequest {
 }
 
 /// The user's answer in a `clarify` tool result (one question, or a batch:
-/// one answer per line); '' when unanswered or unreadable.
+/// one answer per line); '' when unanswered, unreadable, or answered by
+/// Hermes itself because no user was there (a scheduled run).
 String _clarifyAnswerText(Object? result) {
   var data = result;
   if (data is String) {
@@ -2496,6 +2497,7 @@ String _clarifyAnswerText(Object? result) {
   }
   if (data is! Map) return '';
   String answer(Object? response) => switch (response) {
+    final String text when _headlessAnswer.hasMatch(text) => '',
     final String text => text.trim(),
     final List<Object?> picks => picks.whereType<String>().join(', '),
     _ => '',
@@ -2519,6 +2521,10 @@ String _withoutRecommended(String answer) {
 }
 
 const _recommended = '(recommended)';
+
+/// Hermes' own answer to a clarify asked with no user present (`hermes chat
+/// -q`, oneshot, cron): "[single-query mode: no user available to answer …]".
+final _headlessAnswer = RegExp(r'^\s*\[[\w -]+ mode: no user available');
 
 /// Hermes' JSON-RPC code for a session it does not have.
 const _sessionNotFound = 4007;
