@@ -561,8 +561,8 @@ credits may already be spent): the provider's message is kept as the job's
   id), locked-off camera, starting and ending in the neutral pose (`idle`
   breathes and blinks with the mouth closed). Each clip is polled every 5 s,
   downloaded, then exported by ffmpeg: the same centre square for every
-  state, 256 px, 20 fps, the last 0.4 s crossfaded into the first for a
-  seamless loop, animated WebP (libwebp), no audio. A failed clip marks its
+  state, 256 px, 20 fps, played forward then backward (ping-pong) so the
+  loop never jumps, animated WebP (libwebp), no audio. A failed clip marks its
   state `failed` and the job goes on; the job is `failed` only when no state
   succeeded. ffmpeg (installed on servers Hermuse sets up) is required:
   without it `/media/status` says so and `/avatar/animate` answers `409`.

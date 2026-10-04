@@ -48,7 +48,6 @@ SQUARE_FILE = "portrait-square.jpg"
 SQUARE_PX = 512
 CLIP_PX = 256
 CLIP_FPS = 20
-LOOP_FADE_S = 0.4
 WEBP_QUALITY = 70
 EXPORT_TIMEOUT_S = 180
 JOBS_KEPT = 10
@@ -440,23 +439,21 @@ def _duration(ffprobe: str, src: Path) -> float:
 
 def export_loop(src: Path, dest: Path) -> None:
     """*src* video → looping animated WebP *dest*: centre square, CLIP_PX,
-    CLIP_FPS, the last LOOP_FADE_S crossfaded into the first, no audio."""
+    CLIP_FPS, played forward then backward (ping-pong), no audio."""
     tools = media.ffmpeg_paths()
     if tools is None:
         raise ExportError(media.FFMPEG_MISSING)
     ffmpeg, ffprobe = tools
     duration = _duration(ffprobe, src)
-    fade = LOOP_FADE_S
-    if duration < 3 * fade:
+    if duration * CLIP_FPS < 3:
         raise ExportError(f"clip too short ({duration:.2f} s)")
-    # Output = clip[fade..end] whose last `fade` seconds blend into clip[0..fade]:
-    # its last frame leads into its first (clip at `fade`).
+    # Frames 0..n-1, then n-2..1: the loop turns at both ends without repeating
+    # a frame, so the clip's last pose never jumps back to its first.
     graph = (
         f"[0:v]crop=w='min(iw,ih)':h='min(iw,ih)',scale={CLIP_PX}:{CLIP_PX}:flags=lanczos,"
-        f"fps={CLIP_FPS},setsar=1,format=yuv420p,split=2[a][b];"
-        f"[a]trim=start={fade},setpts=PTS-STARTPTS[main];"
-        f"[b]trim=end={fade},setpts=PTS-STARTPTS[head];"
-        f"[main][head]xfade=transition=fade:duration={fade}:offset={duration - 2 * fade:.3f}[out]"
+        f"fps={CLIP_FPS},setsar=1,format=yuv420p,split=2[forward][back];"
+        f"[back]trim=start_frame=1,reverse,trim=start_frame=1,setpts=PTS-STARTPTS[backward];"
+        f"[forward][backward]concat=n=2:v=1:a=0[out]"
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".webp", dir=str(dest.parent))

@@ -58,8 +58,8 @@ Generation rules:
   closed; `replying` speaks expressively; `working` focused small gestures,
   mouth closed.
 - Export with ffmpeg (shipped on servers set up by Hermuse): the same centre
-  square crop for every state, 256×256, 20 fps, loop with a 0.4 s tail-to-head
-  crossfade, animated WebP ~0.5-1 MB; silent.
+  square crop for every state, 256×256, 20 fps, played forward then backward
+  (ping-pong) so the loop never jumps, animated WebP ~0.5-1 MB; silent.
 - One job at a time per profile, run on a background thread; each clip is
   submitted once; a failed clip marks its state `failed` and the job goes on
   with the next state; nothing is retried automatically.

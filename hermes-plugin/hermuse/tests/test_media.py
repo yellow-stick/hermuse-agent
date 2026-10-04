@@ -423,8 +423,18 @@ def test_animate_exports_loops_and_goes_on_after_a_failed_clip(client, configure
     assert loop.status_code == 200 and loop.headers["content-type"] == "image/webp"
     assert loop.headers["cache-control"] == "private, no-cache"
     image = Image.open(io.BytesIO(loop.content))
-    # 2 s clip at 20 fps minus the 0.4 s crossfaded into the head.
-    assert image.size == (256, 256) and image.n_frames == 32 and image.info.get("loop") == 0
+    # 2 s at 20 fps: frames 0..39 forward, then 38..1 backward.
+    assert image.size == (256, 256) and image.n_frames == 78 and image.info.get("loop") == 0
+
+    def frame(n):
+        image.seek(n)
+        return image.convert("L").tobytes()
+
+    def diff(a, b):
+        return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+
+    # The backward half mirrors the forward one: no jump at either turn.
+    assert diff(frame(10), frame(30)) > 5 * max(diff(frame(41), frame(37)), diff(frame(77), frame(1)))
     assert client.get(f"{API}/avatar/states/thinking").status_code == 404
     assert client.get(f"{API}/avatar/states/nope").status_code == 404
     assert (hermuse_root / "avatar" / "clips" / "idle.mp4").read_bytes() == clip_mp4
