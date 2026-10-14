@@ -222,7 +222,7 @@ jobs:
             exit 1
           fi
 
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: 0.12.20
           checksum: 6590717592ace991ff83a63fef799e3ad9d33ecc8f96c5d6bdd732496e79337f
@@ -322,7 +322,7 @@ jobs:
           cp "$RUNNER_TEMP/hermuse-work/fixture/$FIXTURE_FILE" upgrade-fixture/
           [ "$(dpkg-deb -f "upgrade-fixture/$FIXTURE_FILE" Version)" = "$FIXTURE_VERSION" ]
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-dist
           path: |
@@ -334,7 +334,7 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-sources
           path: dist/*.tar.gz
@@ -342,7 +342,7 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-upgrade-fixture
           path: upgrade-fixture/*.deb
@@ -408,7 +408,7 @@ jobs:
           jq -r '"macOS signing: signed=\(.signing.signed) notarized=\(.signing.notarized) stapled=\(.signing.stapled) \(.signing.reason // "")"' \
             macos/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-dist
           path: |
@@ -418,7 +418,7 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         # Evidence: uploaded even when a step above failed.
         if: always()
         with:
@@ -504,7 +504,7 @@ jobs:
           jq -r '"Windows signing: signed=\(.signing.signed) method=\(.signing.method) \(.signing.reason // "")"' \
             windows/VERSION.json | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-dist
           path: |
@@ -527,19 +527,19 @@ jobs:
           ref: ${{ needs.metadata.outputs.commit }}
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-dist
           path: in/linux
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-sources
           path: in/linux
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-dist
           path: in/macos
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-dist
           path: in/windows
@@ -549,7 +549,7 @@ jobs:
           COMMIT: ${{ needs.metadata.outputs.commit }}
         run: tool/release/assemble-release.sh --commit "$COMMIT" --linux in/linux --macos in/macos --windows in/windows --out release
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-dist
           path: release/
