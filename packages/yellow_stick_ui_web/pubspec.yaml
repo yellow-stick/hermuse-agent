@@ -8,7 +8,7 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
-  jaspr: ^0.23.5
+  jaspr: ^0.24.0-beta.0
   universal_web: ^1.1.1
   yellow_stick_ui_core: ^0.1.0
 
