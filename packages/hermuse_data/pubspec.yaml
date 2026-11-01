@@ -8,12 +8,12 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
-  drift: ^2.35.0
+  drift: ^2.35.3
   hermes_client: ^0.1.0
-  sqlite3: ^3.6.0
+  sqlite3: ^3.8.0
 
 dev_dependencies:
   build_runner: ^2.16.1
-  drift_dev: ^2.35.0
+  drift_dev: ^2.35.2
   lints: ^6.1.0
   test: ^1.26.0

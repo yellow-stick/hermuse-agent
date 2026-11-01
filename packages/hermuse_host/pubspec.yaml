@@ -9,7 +9,7 @@ environment:
 
 dependencies:
   cliproxy_client: ^0.1.0
-  crypto: ^3.0.7
+  crypto: ^3.0.8
   dartssh2: ^4.1.0
   hermes_client: ^0.1.0
   http: ^1.6.0
