@@ -115,6 +115,22 @@ class HermuseConnections extends StatefulComponent {
       textOverflow: .ellipsis,
       raw: {'white-space': 'nowrap'},
     ),
+    css('.hermuse-conn-name-row').styles(
+      display: .flex,
+      alignItems: .center,
+      gap: .all(YsSpace.sm.px),
+      raw: {'min-width': '0'},
+    ),
+    // Marks the provider running the instance's main model.
+    css('.hermuse-conn-default').styles(
+      padding: .symmetric(horizontal: YsSpace.sm.px, vertical: YsSpace.xxs.px),
+      radius: .circular(YsRadius.pill.px),
+      fontSize: YsType.caption.size.px,
+      lineHeight: YsType.caption.lineHeight.px,
+      color: .variable('--primary-ink'),
+      backgroundColor: .variable('--primary-muted'),
+      raw: {'flex-shrink': '0'},
+    ),
     css('.hermuse-conn-detail').styles(
       fontSize: 12.px,
       lineHeight: 16.px,
@@ -552,7 +568,11 @@ class _ConnectionCardState extends State<_ConnectionCard> {
               .text(_letter(card.name)),
           ]),
           span(classes: 'hermuse-conn-title', [
-            span(classes: 'hermuse-conn-name', [.text(title)]),
+            span(classes: 'hermuse-conn-name-row', [
+              span(classes: 'hermuse-conn-name', [.text(title)]),
+              if (card.isDefault)
+                span(classes: 'hermuse-conn-default', [.text('Default')]),
+            ]),
             if (subtitle.isNotEmpty && subtitle != title)
               span(classes: 'hermuse-conn-detail', [.text(subtitle)]),
           ]),
@@ -975,7 +995,11 @@ class _ModelSlotsState extends State<_ModelSlots> {
       div(classes: 'hermuse-conn-row', [
         div(classes: 'hermuse-conn-grow', []),
         YsButton.neutral(
-          label: _busy ? 'Working…' : 'Use as default',
+          label: _busy
+              ? 'Working…'
+              : component.card.isDefault
+              ? 'Update default'
+              : 'Use as default',
           onPressed: _busy || current.large == null
               ? null
               : () => unawaited(_makeDefault(context)),

@@ -20,7 +20,7 @@ final class JsonRpcPeer {
   int _nextId = 1;
 
   /// Server request ids currently awaiting the handler (dedupes redelivery).
-  final Set<String> _serving = {};
+  final Map<String, Object> _serving = {};
 
   Stream<HermesEvent> get events => _events.stream;
 
@@ -104,15 +104,23 @@ final class JsonRpcPeer {
       _serve(id, method, params);
 
   Future<void> _serve(Object id, String method, Object? rawParams) async {
-    if (!_serving.add('$id')) return;
+    final key = '$id';
+    if (_serving.containsKey(key)) return;
+    final delivery = Object();
+    _serving[key] = delivery;
     try {
-      await _handle(id, method, rawParams);
+      await _handle(id, method, rawParams, delivery);
     } finally {
-      _serving.remove('$id');
+      if (identical(_serving[key], delivery)) _serving.remove(key);
     }
   }
 
-  Future<void> _handle(Object id, String method, Object? rawParams) async {
+  Future<void> _handle(
+    Object id,
+    String method,
+    Object? rawParams,
+    Object delivery,
+  ) async {
     final params = rawParams is Map<String, Object?>
         ? rawParams
         : const <String, Object?>{};
@@ -130,9 +138,15 @@ final class JsonRpcPeer {
     }
     try {
       final result = await handler(request);
-      _reply(id, result: result.toJson());
+      if (identical(_serving['$id'], delivery)) {
+        _reply(id, result: result.toJson());
+      }
+    } on HermesRequestDetached {
+      // Detaching a chat is not a decision. A later resume may ask again.
     } on Object catch (e) {
-      _reply(id, error: {'code': -32000, 'message': '$e'});
+      if (identical(_serving['$id'], delivery)) {
+        _reply(id, error: {'code': -32000, 'message': '$e'});
+      }
     }
   }
 
@@ -150,6 +164,9 @@ final class JsonRpcPeer {
 
   /// Fails every in-flight call (socket dropped or closed).
   void failAll(Object error) {
+    // Replies from old handlers must never reach the replacement socket,
+    // even if the server reuses a request id after restarting.
+    _serving.clear();
     final pending = _pending.values.toList();
     _pending.clear();
     for (final p in pending) {

@@ -96,6 +96,7 @@ final class SideChatsState extends ConsumerState<SideChats> {
     final id = _chat.state.mainThread.id;
     return ThreadRef(
       instanceId: _chat.instanceId,
+      profile: _chat.profile,
       sessionId: _isDraft(id) ? '' : id,
     );
   }
@@ -169,7 +170,11 @@ final class SideChatsState extends ConsumerState<SideChats> {
           : "Couldn't pin the side chat",
       () => setSideChatPinned(
         ref.read(hermuseDatabaseProvider),
-        ThreadRef(instanceId: _chat.instanceId, sessionId: entry.threadId),
+        ThreadRef(
+          instanceId: _chat.instanceId,
+          sessionId: entry.threadId,
+          profile: _chat.profile,
+        ),
         pinned: !entry.pinned,
       ),
     ),

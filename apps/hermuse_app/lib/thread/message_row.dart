@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
@@ -8,6 +9,7 @@ import '../computer/browser_parts.dart' show browserTaskTitle;
 import 'browser_card.dart';
 import 'flight_card.dart' show FlightCard;
 import 'markdown_view.dart';
+import 'tool_icon.dart';
 
 /// One message row: bubble or card, reaction chip, hover actions.
 final class MessageRow extends StatefulWidget {
@@ -52,8 +54,18 @@ final class _MessageRowState extends State<MessageRow> {
     }
   }
 
+  /// An agent message made only of status notices (a scheduled job's brief,
+  /// "Scheduled: Morning briefing"): a compact centred line, not a bubble.
+  bool get _isStatusLine {
+    final blocks = widget.message.blocks;
+    return !_isUser &&
+        blocks.isNotEmpty &&
+        blocks.every((b) => b is NoticeBlock && !b.isError);
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isStatusLine) return _StatusLine(message: widget.message);
     final isCard = widget.message.blocks.any((b) => b is FlightResultsBlock);
     final bubble = isCard
         ? FlightCard(
@@ -255,7 +267,15 @@ final class _BubbleShell extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (var i = 0; i < blocks.length; i++) ...[
-                  if (i > 0) const SizedBox(height: 8),
+                  if (i > 0)
+                    SizedBox(
+                      // Consecutive tool rows read as one list.
+                      height:
+                          blocks[i] is ToolCallBlock &&
+                              blocks[i - 1] is ToolCallBlock
+                          ? 4
+                          : 8,
+                    ),
                   _BlockView(
                     block: blocks[i],
                     messageId: message.id,
@@ -379,50 +399,223 @@ final class _ReasoningViewState extends State<_ReasoningView> {
   }
 }
 
-final class _ToolCallView extends StatelessWidget {
+/// One tool call: icon, name, what it works on (the command in monospace),
+/// time and status. Opens on click to the full command, its output, Hermes'
+/// result line and the failure reason.
+final class _ToolCallView extends StatefulWidget {
   const _ToolCallView({required this.block});
+
+  final ToolCallBlock block;
+
+  @override
+  State<_ToolCallView> createState() => _ToolCallViewState();
+}
+
+final class _ToolCallViewState extends State<_ToolCallView> {
+  var _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final block = widget.block;
+    final kind = block.kind;
+    final title = block.title;
+    final mono = block.monospace;
+    final firstLine = block.headline;
+    final expandable = block.expandable;
+    final detailStyle = mono
+        ? YsType.code.flutter.copyWith(
+            fontFamily: YsType.monoFamily,
+            color: palette.contentMutedColor,
+          )
+        : YsType.small.flutter.copyWith(color: palette.contentMutedColor);
+    final status = block.running
+        ? const YsSpinner(size: 12)
+        : YsIconWidget(
+            block.failed ? YsIcon.xCircle : YsIcon.check,
+            size: 13,
+            // A reloaded row finished, but whether it worked is unknown.
+            color: block.failed
+                ? palette.errorColor
+                : block.outcomeKnown
+                ? palette.successColor
+                : palette.contentSubtleColor,
+          );
+    Widget header(bool hovered) => Row(
+      children: [
+        YsIconWidget(
+          toolIcon(kind),
+          size: 15,
+          color: block.failed ? palette.errorColor : palette.contentMutedColor,
+        ),
+        const SizedBox(width: YsSpace.sm),
+        Text(
+          title,
+          style: YsType.small.flutter.copyWith(
+            color: palette.contentColor,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        if (firstLine.isNotEmpty) ...[
+          const SizedBox(width: YsSpace.sm),
+          Expanded(
+            child: Text(
+              firstLine,
+              style: detailStyle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ] else
+          const Spacer(),
+        const SizedBox(width: YsSpace.sm),
+        if (block.duration case final duration?) ...[
+          Text(
+            formatToolDuration(duration),
+            style: YsType.caption.flutter.copyWith(
+              color: palette.contentSubtleColor,
+            ),
+          ),
+          const SizedBox(width: YsSpace.sm),
+        ],
+        SizedBox(width: 14, child: Center(child: status)),
+        if (expandable) ...[
+          const SizedBox(width: YsSpace.xs),
+          YsIconWidget(
+            _expanded ? YsIcon.chevronDown : YsIcon.chevronRight,
+            size: 13,
+            color: hovered
+                ? palette.contentMutedColor
+                : palette.contentSubtleColor,
+          ),
+        ],
+      ],
+    );
+    final semantic = [
+      if (block.running) 'Running',
+      title,
+      if (firstLine.isNotEmpty) firstLine,
+      if (block.failed) 'failed: ${block.error}',
+    ].join(', ');
+    return Semantics(
+      label: semantic,
+      expanded: expandable ? _expanded : null,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: palette.neutralWashColor,
+          border: Border.all(
+            color: block.failed ? palette.errorWashColor : palette.lineColor,
+          ),
+          borderRadius: BorderRadius.circular(YsRadius.row),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: YsSpace.md - 2,
+            vertical: YsSpace.sm - 1,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (expandable)
+                YsPressable(
+                  onPressed: () => setState(() => _expanded = !_expanded),
+                  semanticLabel: _expanded
+                      ? 'Hide $title details'
+                      : 'Show $title details',
+                  builder: (context, state) => header(state.hovered),
+                )
+              else
+                header(false),
+              if (_expanded && expandable) ...[
+                const SizedBox(height: YsSpace.sm),
+                _ToolDetails(block: block),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The opened tool row: the full command (`$ …`) and its output in a
+/// scrollable monospace well, Hermes' result line, the failure reason.
+final class _ToolDetails extends StatelessWidget {
+  const _ToolDetails({required this.block});
 
   final ToolCallBlock block;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    final detail = block.summary.isEmpty
-        ? block.name
-        : '${block.name} · ${block.summary}';
-    return Semantics(
-      label: block.running ? 'Running $detail' : detail,
-      // min: a row that expands would stretch the bubble to its max width.
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 14,
-            height: 22,
-            child: Center(
-              child: block.running
-                  ? const YsSpinner(size: 12)
-                  : YsIconWidget(
-                      YsIcon.check,
-                      size: 12,
-                      color: palette.successColor,
-                    ),
+    final code = YsType.code.flutter.copyWith(fontFamily: YsType.monoFamily);
+    final mono = block.monospace;
+    final line = block.line;
+    final hasWell = mono || block.output.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasWell)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.canvasColor,
+              borderRadius: BorderRadius.circular(YsRadius.row - 4),
             ),
-          ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              detail,
-              style: YsType.small.flutter.copyWith(
-                color: palette.contentMutedColor,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(YsSpace.sm + 2),
+                child: SelectableText.rich(
+                  // WidgetsApp has no Material localization delegates.
+                  // Selection and keyboard copy remain available.
+                  contextMenuBuilder: null,
+                  TextSpan(
+                    children: [
+                      if (line.isNotEmpty)
+                        TextSpan(
+                          text: mono ? '\$ $line' : line,
+                          style: code.copyWith(color: palette.contentColor),
+                        ),
+                      if (line.isNotEmpty && block.output.isNotEmpty)
+                        const TextSpan(text: '\n'),
+                      if (block.output.isNotEmpty)
+                        TextSpan(
+                          text: block.output,
+                          style: code.copyWith(
+                            color: palette.contentMutedColor,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            ),
+          )
+        else if (line.isNotEmpty)
+          SelectableText(
+            line,
+            contextMenuBuilder: null,
+            style: YsType.small.flutter.copyWith(color: palette.contentColor),
+          ),
+        if (block.resultLine.isNotEmpty) ...[
+          const SizedBox(height: YsSpace.xs + 2),
+          Text(
+            block.resultLine,
+            style: YsType.caption.flutter.copyWith(
+              color: palette.contentMutedColor,
             ),
           ),
         ],
-      ),
+        if (block.failed) ...[
+          const SizedBox(height: YsSpace.xs + 2),
+          Text(
+            block.error,
+            style: YsType.caption.flutter.copyWith(color: palette.errorColor),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -439,6 +632,47 @@ final class _NoticeView extends StatelessWidget {
       block.text,
       style: YsType.small.flutter.copyWith(
         color: block.isError ? palette.errorColor : palette.contentMutedColor,
+      ),
+    );
+  }
+}
+
+/// A notice-only agent message, centred and muted between the bubbles.
+final class _StatusLine extends StatelessWidget {
+  const _StatusLine({required this.message});
+
+  final Message message;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    final text = [
+      for (final block in message.blocks.whereType<NoticeBlock>()) block.text,
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: YsSpace.xs),
+      child: Semantics(
+        container: true,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            YsIconWidget(
+              YsIcon.upcoming,
+              size: YsLayout.inlineIcon,
+              color: palette.contentMutedColor,
+            ),
+            const SizedBox(width: YsSpace.xs),
+            Flexible(
+              child: Text(
+                text,
+                style: YsType.caption.flutter.copyWith(
+                  color: palette.contentMutedColor,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

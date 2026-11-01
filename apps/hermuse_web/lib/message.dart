@@ -6,6 +6,7 @@ import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
 import 'browser_card.dart';
 import 'markdown_view.dart';
+import 'tool_icon.dart';
 
 YsColor _brand(int value) => YsColor(value);
 
@@ -24,6 +25,7 @@ class MessageRow extends StatelessComponent {
     required this.onCustomAnswer,
     required this.onSelectOffer,
     required this.instanceId,
+    required this.profile,
     required this.taskTitle,
     required this.onOpenComputer,
     super.key,
@@ -49,6 +51,7 @@ class MessageRow extends StatelessComponent {
 
   /// Instance of the conversation (the browser card's computer).
   final String instanceId;
+  final String profile;
 
   /// Title of the browser task ([browserTaskTitle]).
   final String taskTitle;
@@ -59,6 +62,21 @@ class MessageRow extends StatelessComponent {
   @override
   Component build(BuildContext context) {
     final isUser = message.author == Author.user;
+    // A notice-only agent row (a scheduled job's brief, "Scheduled: …") is
+    // a status line between the turns, not a bubble.
+    if (!isUser &&
+        message.blocks.isNotEmpty &&
+        message.blocks.every(
+          (block) => block is NoticeBlock && !block.isError,
+        )) {
+      return div(classes: 'hermuse-msg hermuse-msg-status', [
+        for (final block in message.blocks.cast<NoticeBlock>())
+          p(classes: 'hermuse-msg-status-line', [
+            YsIconView(YsIcon.upcoming, size: YsLayout.inlineIcon),
+            span([.text(block.text)]),
+          ]),
+      ]);
+    }
     // The browser card is a bubble of its own above the turn's other
     // blocks, joined to them like grouped messages.
     final card = message.blocks.whereType<BrowserBlock>().firstOrNull;
@@ -99,6 +117,7 @@ class MessageRow extends StatelessComponent {
                       block: card,
                       title: taskTitle,
                       instanceId: instanceId,
+                      profile: profile,
                       onOpen: onOpenComputer,
                     ),
                   ],
@@ -148,7 +167,10 @@ class MessageRow extends StatelessComponent {
                         ReasoningBlock(:final text) => HermuseReasoning(
                           text: text,
                         ),
-                        ToolCallBlock tool => HermuseToolCall(tool: tool),
+                        ToolCallBlock tool => HermuseToolCall(
+                          key: ValueKey(tool.toolId),
+                          tool: tool,
+                        ),
                         // Drawn as the bubble above.
                         BrowserBlock() => .fragment([]),
                         NoticeBlock(:final text, :final isError) =>
@@ -244,6 +266,22 @@ class MessageRow extends StatelessComponent {
       css('.hermuse-msg-inner')
           .styles(display: .flex, flexDirection: .row, alignItems: .center),
       css('&.hermuse-msg-user .hermuse-msg-inner').styles(justifyContent: .end),
+      css('&.hermuse-msg-status').styles(
+        padding: .symmetric(vertical: YsSpace.xs.px),
+        alignItems: .center,
+        gap: .all(2.px),
+      ),
+      css('.hermuse-msg-status-line').styles(
+        margin: .zero,
+        fontSize: 12.px,
+        lineHeight: 16.px,
+        display: .flex,
+        alignItems: .center,
+        gap: .all(YsSpace.xs.px),
+        color: .variable('--content-subtle'),
+        textAlign: .center,
+        raw: {'overflow-wrap': 'anywhere'},
+      ),
       css('.hermuse-bubble').styles(
         padding: .symmetric(vertical: 11.px, horizontal: 15.px),
         display: .flex,
@@ -324,6 +362,97 @@ class MessageRow extends StatelessComponent {
         overflow: .hidden,
         textOverflow: .ellipsis,
         raw: {'white-space': 'nowrap'},
+      ),
+      // Tool call card: one header line, a disclosure for the details.
+      css('.hermuse-tool-card').styles(
+        display: .block,
+        fontSize: 13.px,
+        lineHeight: 18.px,
+        color: .variable('--content-muted'),
+        backgroundColor: .variable('--neutral-wash'),
+        border: .all(style: .solid, color: .variable('--line'), width: 1.px),
+        radius: .circular(YsRadius.row.px),
+        padding: .symmetric(vertical: 7.px, horizontal: 10.px),
+        raw: {'min-width': '0'},
+      ),
+      // Consecutive tool rows read as one list.
+      css('.hermuse-tool-card + .hermuse-tool-card')
+          .styles(margin: .only(top: (-YsSpace.xs).px)),
+      css('.hermuse-tool-card-failed')
+          .styles(raw: {'border-color': 'var(--error-wash)'}),
+      css('.hermuse-tool-head').styles(
+        display: .flex,
+        flexDirection: .row,
+        alignItems: .center,
+        gap: .all(YsSpace.sm.px),
+        raw: {'list-style': 'none', 'min-width': '0'},
+      ),
+      css('summary.hermuse-tool-head').styles(cursor: .pointer),
+      css('summary.hermuse-tool-head::-webkit-details-marker')
+          .styles(raw: {'display': 'none'}),
+      css('.hermuse-tool-icon, .hermuse-tool-status, .hermuse-tool-chevron')
+          .styles(display: .flex, raw: {'flex-shrink': '0'}),
+      css('.hermuse-tool-chevron').styles(
+        color: .variable('--content-subtle'),
+        raw: {'transition': 'transform ${YsMotion.fast}ms'},
+      ),
+      css('.hermuse-tool-card[open] .hermuse-tool-chevron')
+          .styles(raw: {'transform': 'rotate(90deg)'}),
+      css('summary.hermuse-tool-head:hover .hermuse-tool-chevron')
+          .styles(color: .variable('--content-muted')),
+      css('.hermuse-tool-ok').styles(color: .variable('--success')),
+      css('.hermuse-tool-failed').styles(color: .variable('--error')),
+      css('.hermuse-tool-title').styles(
+        color: .variable('--content'),
+        fontWeight: .w500,
+        raw: {'flex-shrink': '0'},
+      ),
+      css('.hermuse-tool-detail').styles(
+        overflow: .hidden,
+        textOverflow: .ellipsis,
+        raw: {'white-space': 'nowrap', 'flex': '1', 'min-width': '0'},
+      ),
+      css('.hermuse-tool-mono, .hermuse-tool-well').styles(
+        fontSize: YsType.code.size.px,
+        lineHeight: YsType.code.lineHeight.px,
+        raw: {'font-family': YsType.monoFamily},
+      ),
+      css('.hermuse-tool-time').styles(
+        fontSize: YsType.caption.size.px,
+        color: .variable('--content-subtle'),
+        raw: {'flex-shrink': '0'},
+      ),
+      css('.hermuse-tool-body').styles(
+        display: .flex,
+        flexDirection: .column,
+        gap: .all(6.px),
+        margin: .only(top: YsSpace.sm.px),
+      ),
+      css('.hermuse-tool-well').styles(
+        margin: .zero,
+        padding: .all(10.px),
+        backgroundColor: .variable('--canvas'),
+        radius: .circular((YsRadius.row - 4).px),
+        maxHeight: 240.px,
+        overflow: .auto,
+        raw: {'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere'},
+      ),
+      css('.hermuse-tool-command').styles(color: .variable('--content')),
+      css('.hermuse-tool-line').styles(
+        margin: .zero,
+        color: .variable('--content'),
+        raw: {'overflow-wrap': 'anywhere'},
+      ),
+      css('.hermuse-tool-summary').styles(
+        margin: .zero,
+        fontSize: YsType.caption.size.px,
+        lineHeight: YsType.caption.lineHeight.px,
+      ),
+      css('.hermuse-tool-error').styles(
+        margin: .zero,
+        fontSize: YsType.caption.size.px,
+        lineHeight: YsType.caption.lineHeight.px,
+        color: .variable('--error'),
       ),
       // Notice: status line; errors get the accent tint.
       css('.hermuse-notice').styles(
@@ -458,26 +587,108 @@ class HermuseReasoning extends StatelessComponent {
       ]);
 }
 
-/// One tool call: compact line with a spinner dot while running.
-class HermuseToolCall extends StatelessComponent {
+/// One tool call: icon, name, what it works on (the command in monospace),
+/// time and status. A disclosure opens it to the full command, its output,
+/// Hermes' result line and the failure reason. The open state is kept here:
+/// a re-render would otherwise drop the native `open` attribute.
+class HermuseToolCall extends StatefulComponent {
   const HermuseToolCall({required this.tool, super.key});
 
   final ToolCallBlock tool;
 
   @override
-  Component build(BuildContext context) => div(classes: 'hermuse-tool', [
-    div(
-      classes: tool.running
-          ? 'hermuse-tool-dot hermuse-tool-dot-running'
-          : 'hermuse-tool-dot',
-      [],
-    ),
-    span(classes: 'hermuse-tool-text', [
-      .text(
-        tool.summary.isEmpty ? tool.name : '${tool.name} — ${tool.summary}',
+  State<HermuseToolCall> createState() => _HermuseToolCallState();
+}
+
+class _HermuseToolCallState extends State<HermuseToolCall> {
+  var _open = false;
+
+  @override
+  Component build(BuildContext context) {
+    final tool = component.tool;
+    final mono = tool.monospace;
+    final line = tool.line;
+    final expandable = tool.expandable;
+    final duration = tool.duration;
+    final head = [
+      span(
+        classes: tool.failed
+            ? 'hermuse-tool-icon hermuse-tool-failed'
+            : 'hermuse-tool-icon',
+        [YsIconView(toolIcon(tool.kind), size: 15)],
       ),
-    ]),
-  ]);
+      span(classes: 'hermuse-tool-title', [.text(tool.title)]),
+      span(
+        classes: mono
+            ? 'hermuse-tool-detail hermuse-tool-mono'
+            : 'hermuse-tool-detail',
+        [.text(tool.headline)],
+      ),
+      if (duration != null)
+        span(classes: 'hermuse-tool-time', [
+          .text(formatToolDuration(duration)),
+        ]),
+      if (tool.running)
+        div(
+          classes: 'hermuse-tool-dot hermuse-tool-dot-running',
+          attributes: {'role': 'status', 'aria-label': 'Running'},
+          [],
+        )
+      else
+        span(
+          // A reloaded row finished, but whether it worked is unknown.
+          classes: tool.failed
+              ? 'hermuse-tool-status hermuse-tool-failed'
+              : tool.outcomeKnown
+              ? 'hermuse-tool-status hermuse-tool-ok'
+              : 'hermuse-tool-status',
+          attributes: {'aria-label': tool.failed ? 'Failed' : 'Done'},
+          [YsIconView(tool.failed ? YsIcon.xCircle : YsIcon.check, size: 13)],
+        ),
+      if (expandable)
+        span(classes: 'hermuse-tool-chevron', [
+          YsIconView(YsIcon.chevronRight, size: 13),
+        ]),
+    ];
+    final cardClasses = tool.failed
+        ? 'hermuse-tool-card hermuse-tool-card-failed'
+        : 'hermuse-tool-card';
+    if (!expandable) {
+      return div(classes: cardClasses, [
+        div(classes: 'hermuse-tool-head', head),
+      ]);
+    }
+    final resultLine = tool.resultLine;
+    return details(open: _open, classes: cardClasses, [
+      summary(
+        classes: 'hermuse-tool-head',
+        events: {
+          'click': (event) {
+            event.preventDefault();
+            setState(() => _open = !_open);
+          },
+        },
+        head,
+      ),
+      div(classes: 'hermuse-tool-body', [
+        if (mono || tool.output.isNotEmpty)
+          pre(classes: 'hermuse-tool-well', [
+            if (line.isNotEmpty)
+              span(classes: 'hermuse-tool-command', [
+                .text(mono ? '\$ $line' : line),
+              ]),
+            if (line.isNotEmpty && tool.output.isNotEmpty) .text('\n'),
+            if (tool.output.isNotEmpty)
+              span(classes: 'hermuse-tool-output', [.text(tool.output)]),
+          ])
+        else if (line.isNotEmpty)
+          p(classes: 'hermuse-tool-line', [.text(line)]),
+        if (resultLine.isNotEmpty)
+          p(classes: 'hermuse-tool-summary', [.text(resultLine)]),
+        if (tool.failed) p(classes: 'hermuse-tool-error', [.text(tool.error)]),
+      ]),
+    ]);
+  }
 }
 
 /// A status line inside the conversation (errors, cancelled requests).

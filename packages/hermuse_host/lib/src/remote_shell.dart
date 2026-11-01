@@ -104,7 +104,7 @@ final class RemoteResult {
   final int exitCode;
 }
 
-/// SSH/SFTP boundary used by the provisioner and its behavioral tests.
+/// Transport boundary shared by SSH and the trusted root-side local helper.
 abstract interface class RemoteShell {
   Future<RemoteResult> run(
     String command, {
@@ -117,6 +117,19 @@ abstract interface class RemoteShell {
   Future<void> writeFile(String path, Uint8List bytes, {int mode = 384});
 
   void close();
+}
+
+/// Separates the long-lived admission holder from serialized local commands.
+///
+/// Only the provisioner supplies this command, within the trusted helper.
+/// Desktop IPC must never expose it. Closing the shell stops the holder only
+/// after active provisioning commands finish, without killing package managers.
+abstract interface class RemoteOperationHolderShell implements RemoteShell {
+  Future<RemoteResult> holdOperation(
+    String command, {
+    required Duration timeout,
+    required void Function(String line) onLine,
+  });
 }
 
 typedef RemoteConnector = Future<RemoteShell> Function({

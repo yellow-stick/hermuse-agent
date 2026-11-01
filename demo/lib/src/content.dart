@@ -18,11 +18,14 @@ final class DemoRow {
     : role = 'user',
       reasoning = null,
       tool = null,
+      job = null,
+      age = null,
       args = const {};
 
-  const DemoRow.agent(this.text, {this.reasoning})
+  const DemoRow.agent(this.text, {this.reasoning, this.age})
     : role = 'assistant',
       tool = null,
+      job = null,
       args = const {};
 
   /// A finished tool call; [text] is the summary its row shows. Browser
@@ -30,13 +33,33 @@ final class DemoRow {
   /// like the live transcript does.
   const DemoRow.tool(String this.tool, this.text, {this.args = const {}})
     : role = 'tool',
-      reasoning = null;
+      reasoning = null,
+      job = null,
+      age = null;
+
+  /// The output of the scheduled [job] handed to the main chat, as Hermes
+  /// stores it: a user row starting `[Cronjob "<name>" output — `.
+  const DemoRow.brief(String this.job, String output, {this.age})
+    : role = 'user',
+      text =
+          '[Cronjob "$job" output — scheduled job, not the user. Review it, '
+          'act on anything that needs action, and summarize for the chat.]'
+          '\n\n$output',
+      reasoning = null,
+      tool = null,
+      args = const {};
 
   /// Hermes transcript role: `user`, `assistant` or `tool`.
   final String role;
   final String text;
   final String? reasoning;
   final String? tool;
+
+  /// Name of the scheduled job of a [DemoRow.brief] row.
+  final String? job;
+
+  /// Time from this row to page load; null for a row 40 s before the next.
+  final Duration? age;
 
   /// Raw tool arguments (page URL, element text) of `browser_*` rows.
   final Map<String, Object?> args;
@@ -80,6 +103,10 @@ final class DemoInstance {
     required this.artifacts,
     required this.reflections,
     required this.files,
+    required this.tasks,
+    required this.memory,
+    required this.userMemory,
+    required this.soul,
   });
 
   final String id;
@@ -101,6 +128,17 @@ final class DemoInstance {
   /// Managed system files (`IDENTITY.md`, …) and `PREFERENCES.md`.
   final Map<String, String> files;
 
+  /// Recorded tasks (`GET /tasks`), newest first, each with an `age`
+  /// (finished that long before page load) and a `took` ([Duration]).
+  final List<Map<String, Object?>> tasks;
+
+  /// Entries of the agent's `MEMORY.md` and `USER.md` (`GET /memory/…`).
+  final List<String> memory;
+  final List<String> userMemory;
+
+  /// The default profile's SOUL.md (`profiles.describe`).
+  final String soul;
+
   Iterable<DemoChat> get chats => [main, ...sideChats];
 }
 
@@ -118,6 +156,21 @@ const _ava = DemoInstance(
     title: '',
     age: Duration(minutes: 12),
     rows: [
+      DemoRow.brief(
+        'Evening recap',
+        'Done today: Annecy hotel booked (€270, free cancellation until '
+            'Thursday), nightly to-do list scheduled for 02:00. Tomorrow: sign '
+            'the school trip form. Open: the Voltia renewal letter.',
+      ),
+      DemoRow.agent(
+        'Quick evening recap:\n\n'
+        '- **Annecy:** the Hôtel du Lac is booked, free cancellation until '
+        'Thursday.\n'
+        '- **Tomorrow:** sign the school trip form — it is pre-filled.\n'
+        '- **Still open:** the Voltia renewal letter. Want me to look at it '
+        'in the morning?',
+        age: Duration(hours: 15, minutes: 29),
+      ),
       DemoRow.user(
         'Can you sort out our electricity contract? The renewal came in '
         'and it looks expensive.',
@@ -278,11 +331,15 @@ const _ava = DemoInstance(
       'topic': 'Overnight',
       'body':
           'From last night’s pass (18 emails, 6 commits reviewed):\n\n'
-          '☐ Sign the school trip form (pre-filled, due Friday)\n'
-          '☐ Fix the failing checkout test (`cart_test.dart`)\n'
-          '☐ Reply to Marc about the invoice\n'
-          '☐ Dentist moved to Thu 9:30 — nothing to do',
+          '- ☐ Sign the school trip form (pre-filled, **due Friday**)\n'
+          '- ☐ Fix the failing checkout test (`cart_test.dart`)\n'
+          '- ☐ Reply to Marc about the invoice\n'
+          '- ☑ Dentist moved to Thu 9:30 — nothing to do',
       'sources': <String>[],
+      'why':
+          'You asked for a clean to-do list every morning from the nightly '
+          'inbox and commits review.',
+      'image_url': null,
       'age': Duration(hours: 1),
       'reactions': {'love': ''},
     },
@@ -291,10 +348,19 @@ const _ava = DemoInstance(
       'title': 'Annecy this weekend: sun, 19 °C',
       'topic': 'Weekend',
       'body':
-          'Clear skies over the lake Saturday and Sunday, water still 19 °C. '
-          'Your hotel is booked and the trains are holding at €29 — I tell '
-          'you if they drop below €25.',
+          '## Forecast\n\n'
+          'Clear skies over the lake Saturday and Sunday, water still '
+          '**19 °C**.\n\n'
+          '## Your bookings\n\n'
+          '- Hôtel du Lac: booked, free cancellation until Thursday\n'
+          '- Trains: holding at **€29** — I tell you if they drop below €25\n\n'
+          'Details in the [weather report]'
+          '(https://example.com/meteo/annecy-weekend).',
       'sources': ['https://example.com/meteo/annecy-weekend'],
+      'why':
+          'Your Annecy weekend is in three days and swimming depends on the '
+          'weather.',
+      'image_url': null,
       'age': Duration(hours: 3),
       'reactions': <String, Object?>{},
     },
@@ -303,11 +369,29 @@ const _ava = DemoInstance(
       'title': 'Week 3 of your half-marathon plan',
       'topic': 'Running',
       'body':
-          'Two weeks done, 15 % of the way there. This week: an easy 6 km, '
-          'strides on Thursday, 9 km flat on Sunday while the knee settles. '
+          'Two weeks done, **15 %** of the way there. This week:\n\n'
+          '1. Easy 6 km on Tuesday\n'
+          '2. Strides on Thursday\n'
+          '3. 9 km flat on Sunday while the knee settles\n\n'
           'Check-in Sunday evening as usual.',
       'sources': <String>[],
+      'why': 'You are tracking the Lyon half-marathon goal with me.',
+      'image_url': null,
       'age': Duration(hours: 4),
+      'reactions': <String, Object?>{},
+    },
+    {
+      'id': 'feed-ava-4',
+      'title': 'Lyon water bill goes up in January',
+      'topic': 'Household',
+      'body':
+          'The city voted a **+6 %** water tariff from January 1st. For your '
+          'flat that is about €2 more a month — nothing to do, I just keep '
+          'it in the yearly budget.',
+      'sources': ['https://example.com/lyon/water-tariff-2027'],
+      'why': '',
+      'image_url': null,
+      'age': Duration(days: 1, hours: 2),
       'reactions': <String, Object?>{},
     },
   ],
@@ -319,6 +403,8 @@ const _ava = DemoInstance(
           'After the trip, drop me your photos and I lay out a small album '
           'by day, with the lake spots from the itinerary.',
       'group': 'Travel',
+      'icon': 'travel',
+      'seeded': false,
       'first_step': 'Create a shared album before you leave.',
       'age': Duration(days: 1),
       'feedback': <Object?>[],
@@ -331,6 +417,8 @@ const _ava = DemoInstance(
           'against the cheapest green offer and switch us if we overpay by '
           'more than €10 a month.',
       'group': 'Home',
+      'icon': 'money',
+      'seeded': false,
       'first_step': 'Let me schedule it for next September.',
       'age': Duration(days: 3),
       'feedback': <Object?>[],
@@ -344,6 +432,11 @@ const _ava = DemoInstance(
       'why': 'Prove to myself I can train steadily for three months.',
       'target_date': '2026-12-20',
       'status': 'tracking',
+      'done': false,
+      'source': 'user',
+      'status_line': 'Week 3 of 12 · 15 %',
+      'parent_id': null,
+      'cron_job_id': 'ava-half-marathon-checkin',
       'age': Duration(days: 9),
       'timeline': [
         {'age': Duration(days: 9), 'note': 'Plan started', 'progress': '0 %'},
@@ -366,6 +459,11 @@ const _ava = DemoInstance(
       'why': 'Stop overpaying a renewal that crept up 29 %.',
       'target_date': '2026-10-10',
       'status': 'tracking',
+      'done': false,
+      'source': 'agent',
+      'status_line': 'Switched: €76 a month, was €98',
+      'parent_id': null,
+      'cron_job_id': null,
       'age': Duration(days: 6),
       'timeline': [
         {
@@ -378,6 +476,53 @@ const _ava = DemoInstance(
           'note': 'Switched to Lumen Pure at €0.18/kWh',
           'progress': '€76 / month',
         },
+      ],
+    },
+    {
+      'id': 'goal-ava-1-strength',
+      'title': 'Hip and glute strength twice a week',
+      'category': 'health',
+      'why': 'Keeps the knee happy while the mileage grows.',
+      'target_date': '',
+      'status': 'tracking',
+      'done': false,
+      'source': 'user',
+      'status_line': '1 of 2 sessions this week',
+      'parent_id': 'goal-ava-1',
+      'cron_job_id': null,
+      'age': Duration(days: 2),
+      'timeline': <Object?>[],
+    },
+    {
+      'id': 'goal-ava-1-shoes',
+      'title': 'Buy road shoes before week 4',
+      'category': 'health',
+      'why': '',
+      'target_date': '2026-10-05',
+      'status': 'done',
+      'done': true,
+      'source': 'user',
+      'status_line': 'Bought on Saturday',
+      'parent_id': 'goal-ava-1',
+      'cron_job_id': null,
+      'age': Duration(days: 5),
+      'timeline': <Object?>[],
+    },
+    {
+      'id': 'goal-ava-3',
+      'title': 'Lyon → Annecy trains under €25',
+      'category': 'travel',
+      'why': 'You asked me to tell you when the fares drop.',
+      'target_date': '2026-10-09',
+      'status': 'tracking',
+      'done': false,
+      'source': 'agent',
+      'status_line': 'Cheapest today: €29 each way',
+      'parent_id': null,
+      'cron_job_id': 'ava-train-fares',
+      'age': Duration(hours: 20),
+      'timeline': [
+        {'age': Duration(hours: 2), 'note': 'Checked fares', 'progress': '€29'},
       ],
     },
   ],
@@ -429,14 +574,151 @@ const _ava = DemoInstance(
         'Follow: household admin and prices, weekend trips from Lyon, '
         'running. At most three posts a day, concrete news only.',
     'HEARTBEAT.md':
-        '# Heartbeat\n\nEvery morning at 07:30: calendar check, weather, '
-        'one suggestion for the day.\n'
-        'Every night at 02:00: go through new emails (Email: connected), '
-        'act on what is actionable, report the rest in the morning feed.',
+        '# Heartbeat\n\nEvery 30 minutes: check the calendar, the inbox '
+        '(Email: connected) and the price watches; message Léa only when '
+        'something needs her.',
     'PREFERENCES.md':
         '# Preferences\n\n- No messages after 22:00\n- Prefer trains under '
         '4 hours\n- Vegetarian most days\n- Reads French and English bills',
   },
+  tasks: [
+    {
+      'id': 'task-ava-1',
+      'session_id': '20260930_074512_ava000',
+      'turn_id': 't1',
+      'title': 'Switch the electricity contract',
+      'summary': 'Switched to Lumen Pure at €0.18/kWh, saving €22 a month',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': [
+        'read_file',
+        'browser_navigate',
+        'browser_click',
+        'browser_type',
+      ],
+      'age': Duration(minutes: 12),
+      'took': Duration(minutes: 6),
+    },
+    {
+      'id': 'task-ava-2',
+      'session_id': '20260930_074512_ava000',
+      'turn_id': 'hb-0930',
+      'title': 'Morning check',
+      'summary': 'Calendar clear until the dentist on Thursday; sunny, 17 °C',
+      'status': 'completed',
+      'source': 'heartbeat',
+      'tools': ['web_search', 'memory'],
+      'age': Duration(hours: 2, minutes: 28),
+      'took': Duration(minutes: 1),
+    },
+    {
+      'id': 'task-ava-3',
+      'session_id': '20260930_021048_ava010',
+      'turn_id': 'night-0930',
+      'title': 'Nightly inbox and commits review',
+      'summary': '18 emails read, 2 answered; 1 failing test found',
+      'status': 'completed',
+      'source': 'cron',
+      'tools': ['terminal', 'web_extract', 'memory'],
+      'age': Duration(hours: 7),
+      'took': Duration(minutes: 9),
+    },
+    {
+      'id': 'task-ava-4',
+      'session_id': '20260929_220412_ava011',
+      'turn_id': 't1',
+      'title': 'Schedule the nightly to-do list',
+      'summary': 'Nightly review at 02:00, recap in the Feed at 07:00',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['cronjob'],
+      'age': Duration(hours: 11),
+      'took': Duration(seconds: 40),
+    },
+    {
+      'id': 'task-ava-5',
+      'session_id': '',
+      'turn_id': 'fares-0929',
+      'title': 'Check Lyon → Annecy train fares',
+      'summary': 'The fare site timed out; retrying at the next run',
+      'status': 'failed',
+      'source': 'cron',
+      'tools': ['browser_navigate'],
+      'age': Duration(hours: 14),
+      'took': Duration(minutes: 2),
+    },
+    {
+      'id': 'task-ava-6',
+      'session_id': '20260929_183002_ava001',
+      'turn_id': 't2',
+      'title': 'Book the Hôtel du Lac',
+      'summary': 'Two nights, €270 with breakfast, free cancellation',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['browser_navigate', 'browser_type'],
+      'age': Duration(hours: 20),
+      'took': Duration(minutes: 4),
+    },
+    {
+      'id': 'task-ava-7',
+      'session_id': '20260929_183002_ava001',
+      'turn_id': 't1',
+      'title': 'Plan a weekend in Annecy',
+      'summary': 'Train + lakeside hotel, about €360 for two',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['web_search', 'web_search', 'web_search'],
+      'age': Duration(hours: 20, minutes: 30),
+      'took': Duration(minutes: 3),
+    },
+    {
+      'id': 'task-ava-8',
+      'session_id': '20260928_064418_ava002',
+      'turn_id': 't2',
+      'title': 'Ease the plan for a tight knee',
+      'summary': 'Long run cut to 9 km, strength work added',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['memory'],
+      'age': Duration(days: 2),
+      'took': Duration(minutes: 1),
+    },
+    {
+      'id': 'task-ava-9',
+      'session_id': '20260928_064418_ava002',
+      'turn_id': 't1',
+      'title': 'Build a half-marathon plan',
+      'summary': 'Stopped before the plan was saved',
+      'status': 'interrupted',
+      'source': 'chat',
+      'tools': ['web_search', 'cronjob'],
+      'age': Duration(days: 2, hours: 1),
+      'took': Duration(minutes: 2),
+    },
+  ],
+  memory: [
+    'Léa’s electricity is with Lumen Pure since Sept 30, €0.18/kWh.',
+    'Nightly review runs at 02:00; the recap goes to the Feed at 07:00.',
+    'Half-marathon plan: three runs a week, long run on Sunday.',
+    'Fare site watto.example times out at night: retry after 06:00.',
+  ],
+  userMemory: [
+    'Léa lives in Lyon with her partner and one child at primary school.',
+    'Prefers trains under 4 hours, never flies for weekends.',
+    'Vegetarian most days.',
+    'Left knee gets tight after long runs.',
+    'No messages after 22:00.',
+  ],
+  soul:
+      '# Ava\n\n'
+      'You are Ava, the personal assistant of Léa, in Lyon.\n\n'
+      '## How you work\n\n'
+      '- Act first on boring admin, then report what you did.\n'
+      '- Keep answers short: one question at a time.\n'
+      '- Answer in the language of the question.\n\n'
+      '## Never\n\n'
+      '- Message after 22:00.\n'
+      '- Pay for anything without asking.',
 );
 
 const _otto = DemoInstance(
@@ -517,6 +799,10 @@ const _otto = DemoInstance(
           'Contoso announced threshold alerts in Slack channels, available on '
           'every plan. It is the feature customers asked for last week.',
       'sources': ['https://example.com/contoso/slack-alerts'],
+      'why':
+          'Slack alerts came up in last week’s interviews; you follow '
+          'competitors.',
+      'image_url': null,
       'age': Duration(hours: 5),
       'reactions': {'discuss': ''},
     },
@@ -529,6 +815,8 @@ const _otto = DemoInstance(
           'Four of six customers needed a call to finish onboarding. '
           'Offer it as a bookable 30-minute session inside the app.',
       'group': 'Onboarding',
+      'icon': 'people',
+      'seeded': false,
       'first_step': 'Count setup calls in the last quarter.',
       'age': Duration(hours: 2),
       'feedback': <Object?>[],
@@ -542,6 +830,11 @@ const _otto = DemoInstance(
       'why': 'The first week decides whether a team stays.',
       'target_date': '2027-03-31',
       'status': 'tracking',
+      'done': false,
+      'source': 'user',
+      'status_line': 'Median setup: 6 days, target 3',
+      'parent_id': null,
+      'cron_job_id': null,
       'age': Duration(days: 14),
       'timeline': <Object?>[],
     },
@@ -563,13 +856,175 @@ const _otto = DemoInstance(
         '# Otto\n\nWork assistant. Precise, cites its sources, writes in '
         'short bullet points.',
     'FEED_PROMPT.md': 'Competitors, B2B pricing, product analytics.',
-    'HEARTBEAT.md': '# Heartbeat\n\nWeekdays at 09:00: overnight summary.',
+    'HEARTBEAT.md':
+        '# Heartbeat\n\nEvery 30 minutes during work hours: check new '
+        'customer emails and competitor news; message only when something '
+        'needs you.',
     'PREFERENCES.md': '# Preferences\n\n- Work hours only (09:00–18:00)',
   },
+  tasks: [
+    {
+      'id': 'task-atl-1',
+      'session_id': '20260930_090301_atl000',
+      'turn_id': 't3',
+      'title': 'Draft the Slack alerts one-pager',
+      'summary': 'Saved to the Library: problem, three alerts, two sprints',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['write_file'],
+      'age': Duration(hours: 1, minutes: 5),
+      'took': Duration(minutes: 2),
+    },
+    {
+      'id': 'task-atl-2',
+      'session_id': '20260929_140922_atl001',
+      'turn_id': 't1',
+      'title': 'Scan competitor seat pricing',
+      'summary': 'Two of three competitors give read-only seats away',
+      'status': 'completed',
+      'source': 'chat',
+      'tools': ['web_search', 'web_search', 'web_search'],
+      'age': Duration(days: 1),
+      'took': Duration(minutes: 3),
+    },
+  ],
+  memory: [
+    'Product review is every Thursday at 14:00.',
+    'Interview notes live in interviews/YYYY-MM-DD.md.',
+  ],
+  userMemory: [
+    'Otto’s user leads product at a B2B analytics startup.',
+    'Wants sources cited, bullet points over prose.',
+  ],
+  soul:
+      '# Otto\n\n'
+      'You are Otto, a work assistant for a product lead.\n\n'
+      '- Cite your sources.\n'
+      '- Write short bullet points.\n'
+      '- Work hours only: 09:00–18:00.',
 );
 
-/// One demo Hermes cron job: runs every day (`weekday` null) or once a
-/// week (`weekday` 1 = Monday … 7 = Sunday) at `hour`:00, server time.
+/// The Hermuse plugin's starter catalog (`store.SEED_IDEAS`), offered on
+/// every instance after its own ideas.
+const demoSeedIdeas = [
+  {
+    'id': 'seed-inbox-triage',
+    'title': 'I’ll sort your inbox every morning',
+    'pitch':
+        'Each morning I go through new mail, flag what needs you today, '
+        'draft replies for the quick ones and summarise the rest in one '
+        'message.',
+    'group': 'Productivity',
+    'icon': 'inbox',
+    'first_step':
+        'Tell me which mailbox to watch and what counts as urgent for you.',
+  },
+  {
+    'id': 'seed-paperwork',
+    'title': 'I’ll keep track of your paperwork deadlines',
+    'pitch':
+        'Renewals, tax forms, insurance and subscriptions: I keep a list of '
+        'what is due when and remind you early enough to act calmly.',
+    'group': 'Productivity',
+    'icon': 'documents',
+    'first_step': 'List the documents or contracts you worry about forgetting.',
+  },
+  {
+    'id': 'seed-workout-plan',
+    'title': 'I’ll plan your workouts around your week',
+    'pitch':
+        'I build a weekly training plan that fits your schedule and level, '
+        'check in after each session and adjust the next ones.',
+    'group': 'Health & Fitness',
+    'icon': 'workout',
+    'first_step': 'Tell me your goal, your level and the days you can train.',
+  },
+  {
+    'id': 'seed-health-checkups',
+    'title': 'I’ll remind you of check-ups and refills',
+    'pitch':
+        'Dentist, eye exam, vaccines, prescriptions: I track when each one '
+        'is due and nudge you before it slips.',
+    'group': 'Health & Fitness',
+    'icon': 'health',
+    'first_step':
+        'Share your last check-up dates and any regular prescriptions.',
+  },
+  {
+    'id': 'seed-price-watch',
+    'title': 'I’ll watch prices on things you want to buy',
+    'pitch':
+        'Give me the items you are eyeing; I check prices regularly and '
+        'tell you when one drops or a better deal shows up.',
+    'group': 'Shopping',
+    'icon': 'shopping',
+    'first_step': 'Name one item and the price you would happily pay.',
+  },
+  {
+    'id': 'seed-returns',
+    'title': 'I’ll make sure you never miss a return window',
+    'pitch':
+        'When you buy something you are unsure about, I note the return '
+        'deadline and remind you a few days before it closes.',
+    'group': 'Shopping',
+    'icon': 'returns',
+    'first_step': 'Tell me about a recent purchase you might send back.',
+  },
+  {
+    'id': 'seed-budget-check',
+    'title': 'I’ll give you a weekly spending check-in',
+    'pitch':
+        'Once a week I go over what you tell me you spent, compare it with '
+        'your budget and point out anything worth adjusting.',
+    'group': 'Money',
+    'icon': 'money',
+    'first_step':
+        'Tell me your monthly budget and the categories you care about.',
+  },
+  {
+    'id': 'seed-birthdays',
+    'title': 'I’ll remember birthdays and suggest gifts',
+    'pitch':
+        'I keep the important dates of the people you care about and remind '
+        'you a week ahead with a few gift or message ideas.',
+    'group': 'Relationships',
+    'icon': 'people',
+    'first_step': 'Give me three people and their birthdays to start with.',
+  },
+  {
+    'id': 'seed-trip-planner',
+    'title': 'I’ll plan your next trip with you',
+    'pitch':
+        'From dates and budget to bookings and a day-by-day plan, I research '
+        'options, keep track of what is booked and what is still open.',
+    'group': 'Travel',
+    'icon': 'travel',
+    'first_step': 'Tell me where you would like to go and roughly when.',
+  },
+  {
+    'id': 'seed-local-events',
+    'title': 'I’ll find things to do in your city each week',
+    'pitch':
+        'Every week I look for concerts, markets, exhibitions and events '
+        'near you that match your interests, and share a short pick.',
+    'group': 'Home & city',
+    'icon': 'city',
+    'first_step': 'Tell me your city and what you enjoy doing.',
+  },
+];
+
+/// One past run of a [DemoJob]: whether it ended well and the start of
+/// what it answered.
+final class DemoRun {
+  const DemoRun(this.output, {this.ok = true});
+  final String output;
+  final bool ok;
+}
+
+/// One demo Hermes cron job, server time: every day (`weekday` null) or
+/// once a week (`weekday` 1 = Monday … 7 = Sunday) at `hour`:00; every
+/// [everyMinutes] ([DemoJob.every]); or once, [onceInDays] days after page
+/// load at `hour`:00 ([DemoJob.once]).
 final class DemoJob {
   const DemoJob({
     required this.id,
@@ -577,23 +1032,64 @@ final class DemoJob {
     required this.hour,
     this.weekday,
     this.hermuseKey,
-  });
+    this.runs = const [],
+  }) : everyMinutes = null,
+       onceInDays = null;
+
+  const DemoJob.every({
+    required this.id,
+    required this.name,
+    required int minutes,
+    this.hermuseKey,
+    this.runs = const [],
+  }) : everyMinutes = minutes,
+       hour = 0,
+       weekday = null,
+       onceInDays = null;
+
+  const DemoJob.once({
+    required this.id,
+    required this.name,
+    required int inDays,
+    required this.hour,
+  }) : onceInDays = inDays,
+       weekday = null,
+       hermuseKey = null,
+       everyMinutes = null,
+       runs = const [];
 
   final String id;
   final String name;
   final int hour;
   final int? weekday;
+  final int? everyMinutes;
+  final int? onceInDays;
 
-  /// The Hermuse plugin schedule it belongs to (`feed`, `ideas`, …); null
-  /// for the user's own jobs.
+  /// The Hermuse plugin schedule it belongs to (`feed`, `ideas`, …,
+  /// `heartbeat`); null for the user's own jobs.
   final String? hermuseKey;
+
+  /// Past runs, newest first, one per previous slot.
+  final List<DemoRun> runs;
 
   /// The cron expression (`0 8 * * *`, `0 9 * * 1`).
   String get cron => '0 $hour * * ${weekday == null ? '*' : weekday! % 7}';
 }
 
-/// The Hermuse plugin's jobs, on every demo instance.
+/// The Hermuse plugin's jobs, on every demo instance: the heartbeat (listed)
+/// and the maintenance jobs (hidden by the app).
 const demoHermuseJobs = [
+  DemoJob.every(
+    id: 'hermuse-heartbeat',
+    name: 'Heartbeat',
+    minutes: 30,
+    hermuseKey: 'heartbeat',
+    runs: [
+      DemoRun('Nothing needed you.'),
+      DemoRun('Calendar clear until the dentist on Thursday; sunny, 17 °C.'),
+      DemoRun('Nothing needed you.'),
+    ],
+  ),
   DemoJob(
     id: 'hermuse-feed',
     name: 'Hermuse feed (daily)',
@@ -625,6 +1121,56 @@ const demoHermuseJobs = [
 /// The user's own jobs, by instance id.
 const demoUserJobs = {
   '6f1c2a4e-8d3b-4c7a-9e21-5b0d7f3a1c01': [
-    DemoJob(id: 'ava-evening-recap', name: 'Evening recap', hour: 18),
+    DemoJob(
+      id: 'ava-evening-recap',
+      name: 'Evening recap',
+      hour: 18,
+      runs: [
+        DemoRun(
+          'Done today: Annecy hotel booked (€270, free cancellation until '
+          'Thursday), nightly to-do list scheduled for 02:00. Tomorrow: sign '
+          'the school trip form. Open: the Voltia renewal letter.',
+        ),
+        DemoRun('Quiet day: nothing pending, the trains are still at €29.'),
+      ],
+    ),
+    DemoJob(
+      id: 'ava-nightly-review',
+      name: 'Nightly inbox and commits review',
+      hour: 2,
+      runs: [
+        DemoRun(
+          '18 emails read, 2 answered, 3 newsletters skipped. 6 commits '
+          'reviewed: 1 failing test in checkout (cart_test.dart).',
+        ),
+        DemoRun('Could not reach the mail server; retried twice.', ok: false),
+        DemoRun('11 emails read, 1 answered. No new commits.'),
+      ],
+    ),
+    DemoJob(
+      id: 'ava-half-marathon-checkin',
+      name: 'Half-marathon check-in',
+      hour: 19,
+      weekday: 7,
+      runs: [
+        DemoRun('Week 2 done. Knee tight: long run cut to 9 km this week.'),
+        DemoRun('Week 1 done, all three runs felt easy.'),
+      ],
+    ),
+    DemoJob.every(
+      id: 'ava-train-fares',
+      name: 'Watch Lyon → Annecy train fares',
+      minutes: 360,
+      runs: [
+        DemoRun('Cheapest fare still €29 each way.'),
+        DemoRun('The fare site timed out.', ok: false),
+      ],
+    ),
+    DemoJob.once(
+      id: 'ava-school-form',
+      name: 'Remind me to sign the school trip form',
+      inDays: 1,
+      hour: 8,
+    ),
   ],
 };

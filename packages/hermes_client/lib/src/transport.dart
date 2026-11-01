@@ -15,7 +15,8 @@ enum ConnectionState {
 }
 
 /// Answers a server → client request. The returned object is sent as the
-/// JSON-RPC `result`; a thrown error becomes a JSON-RPC error.
+/// JSON-RPC `result`; a thrown error becomes a JSON-RPC error, except
+/// `HermesRequestDetached`, which leaves the request unanswered on the server.
 typedef ServerRequestHandler = Future<JsonObject> Function(
   HermesServerRequest<JsonObject> request,
 );

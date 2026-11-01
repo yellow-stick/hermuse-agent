@@ -2,8 +2,8 @@ import 'package:hermes_contract/hermes_contract.dart';
 
 import 'transport.dart';
 
-/// One instance's transport shared by every chat on it: server requests are
-/// routed to the handler registered for their live session id.
+/// One profile's transport, shared by its chats. Server requests are routed
+/// to the handler registered for their live session id.
 final class HermesConnection {
   HermesConnection(this.instanceId, this.transport) {
     transport.onServerRequest(_route);
@@ -35,5 +35,8 @@ final class HermesConnection {
 
 /// Resolves the shared connection of an instance, connecting lazily.
 abstract interface class HermesConnections {
-  Future<HermesConnection> connectionFor(String instanceId);
+  Future<HermesConnection> connectionFor(
+    String instanceId, {
+    String profile = 'default',
+  });
 }

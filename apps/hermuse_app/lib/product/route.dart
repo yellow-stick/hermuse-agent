@@ -166,28 +166,48 @@ final class HermuseRouteArt extends StatelessWidget {
   );
 }
 
-/// Section group: 14/20/500 head + 12 gaps.
+/// Section group: 14/20/500 head + 12 gaps. [accent] puts a small primary
+/// ink dot before the head (the agent's own "Tracking" goals).
 final class HermuseRouteSection extends StatelessWidget {
   const HermuseRouteSection({
     required this.head,
     required this.children,
+    this.accent = false,
     super.key,
   });
 
   final String head;
   final List<Widget> children;
+  final bool accent;
 
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
+    final text = Text(
+      head,
+      style: YsType.label.flutter.copyWith(color: palette.contentColor),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          head,
-          style: YsType.label.flutter.copyWith(color: palette.contentColor),
-        ),
+        if (accent)
+          Row(
+            children: [
+              Container(
+                width: YsLayout.statusDot,
+                height: YsLayout.statusDot,
+                decoration: BoxDecoration(
+                  color: palette.primaryInkColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: YsSpace.sm),
+              Expanded(child: text),
+            ],
+          )
+        else
+          text,
         const SizedBox(height: 12),
         for (var i = 0; i < children.length; i++) ...[
           if (i > 0) const SizedBox(height: 12),

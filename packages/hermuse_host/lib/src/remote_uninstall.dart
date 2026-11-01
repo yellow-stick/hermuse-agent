@@ -122,9 +122,9 @@ final class RemoteUninstallOutcome {
 
 /// Inspects and removes only verifiably installer-owned server resources.
 ///
-/// Both operations use the installer's SSH/key/password and TOFU transport.
-/// Inspection closes its session. Removal reconnects with the same accepted
-/// host key and refuses changed inventory or an active setup transaction.
+/// SSH operations use host-key verification and reconnect after inspection.
+/// Local operations use a root shell inside the trusted helper. Both execute
+/// identical ownership recipes and refuse changed inventory or active setup.
 /// Credentials never enter the ownership journal or a remote command.
 class RemoteUninstaller {
   RemoteUninstaller({RemoteConnector? connect})
@@ -155,6 +155,32 @@ class RemoteUninstaller {
     String username = 'root',
     String password = '',
     required Future<bool> Function(RemoteHostKey) onHostKey,
+  }) => _inspect(
+    host: host,
+    port: port,
+    username: username,
+    password: password,
+    onHostKey: onHostKey,
+  );
+
+  /// Inspects through a root shell owned by the trusted local helper.
+  Future<RemoteUninstallInventory> inspectLocal({required RemoteShell shell}) =>
+      _inspect(
+        host: 'localhost',
+        port: 22,
+        username: 'root',
+        password: '',
+        onHostKey: (_) async => false,
+        localShell: shell,
+      );
+
+  Future<RemoteUninstallInventory> _inspect({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+    required Future<bool> Function(RemoteHostKey) onHostKey,
+    RemoteShell? localShell,
   }) async {
     final cancellation = _begin();
     final attempt = _UninstallAttempt(
@@ -164,6 +190,7 @@ class RemoteUninstaller {
       username: username,
       password: password,
       onHostKey: onHostKey,
+      localShell: localShell,
       cancellation: cancellation,
       emit: (_) {},
     );
@@ -188,6 +215,41 @@ class RemoteUninstaller {
     required RemoteUninstallInventory inventory,
     bool purge = false,
     required Future<bool> Function(RemoteHostKey) onHostKey,
+  }) => _run(
+    host: host,
+    port: port,
+    username: username,
+    password: password,
+    inventory: inventory,
+    purge: purge,
+    onHostKey: onHostKey,
+  );
+
+  /// Removes a confirmed canonical inventory through the same owned recipes.
+  Stream<RemoteUninstallProgress> runLocal({
+    required RemoteShell shell,
+    required RemoteUninstallInventory inventory,
+    bool purge = false,
+  }) => _run(
+    host: 'localhost',
+    port: 22,
+    username: 'root',
+    password: '',
+    inventory: inventory,
+    purge: purge,
+    onHostKey: (_) async => false,
+    localShell: shell,
+  );
+
+  Stream<RemoteUninstallProgress> _run({
+    required String host,
+    required int port,
+    required String username,
+    required String password,
+    required RemoteUninstallInventory inventory,
+    required bool purge,
+    required Future<bool> Function(RemoteHostKey) onHostKey,
+    RemoteShell? localShell,
   }) {
     final cancellation = _begin();
     late final StreamController<RemoteUninstallProgress> events;
@@ -200,6 +262,7 @@ class RemoteUninstaller {
           username: username,
           password: password,
           onHostKey: onHostKey,
+          localShell: localShell,
           cancellation: cancellation,
           emit: (event) {
             if (!events.isClosed) events.add(event);
@@ -282,6 +345,7 @@ final class _UninstallAttempt {
     required this.onHostKey,
     required this.cancellation,
     required this.emit,
+    this.localShell,
   });
 
   final RemoteUninstaller uninstaller;
@@ -292,6 +356,7 @@ final class _UninstallAttempt {
   final Future<bool> Function(RemoteHostKey) onHostKey;
   final RemoteCancellation cancellation;
   final void Function(RemoteUninstallProgress) emit;
+  final RemoteShell? localShell;
   RemoteShell? _shell;
   bool _root = false;
   var _step = RemoteUninstallStep.connect;
@@ -313,19 +378,21 @@ final class _UninstallAttempt {
       );
     }
     emit(const RemoteUninstallStepStarted(RemoteUninstallStep.connect));
-    _shell = await cancellation.bind(
-      uninstaller._connect(
-        host: host,
-        port: port,
-        username: username,
-        password: password,
-        verifyHostKey: (key) => uninstaller._trust.verify(
-          key,
-          (key) => cancellation.bind(onHostKey(key)),
-        ),
-        cancellation: cancellation,
-      ),
-    );
+    _shell =
+        localShell ??
+        await cancellation.bind(
+          uninstaller._connect(
+            host: host,
+            port: port,
+            username: username,
+            password: password,
+            verifyHostKey: (key) => uninstaller._trust.verify(
+              key,
+              (key) => cancellation.bind(onHostKey(key)),
+            ),
+            cancellation: cancellation,
+          ),
+        );
     final identity = await cancellation.bind(_shell!.run('id -u'));
     if (identity.exitCode != 0) {
       throw const RemoteInstallFailed(
@@ -334,6 +401,12 @@ final class _UninstallAttempt {
       );
     }
     _root = identity.stdout.trim() == '0';
+    if (localShell != null && !_root) {
+      throw const RemoteInstallFailed(
+        'connect',
+        'Local removal requires the trusted root helper.',
+      );
+    }
     if (!_root) {
       final sudo = await cancellation.bind(_shell!.run('sudo -n true'));
       if (sudo.exitCode != 0) {
@@ -404,7 +477,7 @@ final class _UninstallAttempt {
         username: username,
       );
 
-  void close() => _shell?.close();
+  void close() => (_shell ?? localShell)?.close();
 }
 
 Map<String, Object?> _frame(String stdout, String prefix) {

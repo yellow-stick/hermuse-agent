@@ -25,11 +25,7 @@ Future<void> main() async {
       '${support.path}${Platform.pathSeparator}'
       'hermes-install.json';
   final host = isDesktop
-      ? LocalHermesHost.system(
-          secrets,
-          installJournalPath: journalPath,
-          setupAssistant: Platform.isLinux,
-        )
+      ? LocalHermesHost.system(secrets, installJournalPath: journalPath)
       : null;
   final container = ProviderContainer(
     overrides: [
@@ -38,15 +34,13 @@ Future<void> main() async {
       if (host != null) ...localHostOverrides(host),
       if (host != null && Platform.isLinux)
         linuxSetupServicesProvider.overrideWithValue(
-          await LinuxSetupServices.forHost(host, journalPath: journalPath),
+          await LinuxSetupServices.forHost(host),
         ),
     ],
   );
   if (host != null) {
-    // On quit: a setup step still running (an authorization, an APT
-    // transaction, an install stage) finishes and no other starts; then the
-    // backend and sidecar Hermuse started stop (the binding keeps the
-    // listener alive).
+    // Finish or safely stop setup on quit. Linux's canonical system service
+    // remains running; other desktops stop only their owned subprocesses.
     AppLifecycleListener(
       onExitRequested: () async {
         if (Platform.isLinux) {

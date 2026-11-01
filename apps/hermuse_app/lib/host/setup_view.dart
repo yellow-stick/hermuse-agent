@@ -1,8 +1,8 @@
+import 'package:flutter/material.dart' show SelectableText;
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
-
-import '../shell/screens.dart';
 
 /// A line above a setup checklist that concerns no single row: how the
 /// last run ended, what holds the whole system back, a stop in progress.
@@ -19,11 +19,107 @@ final class SetupNotice {
   final bool alert;
 }
 
-/// The card of the desktop setup flows, the Linux assistant, the macOS and
-/// Windows install and the component checklist of a remote Hermes alike:
-/// the drawing when there is one, the overall progress ring with the title
-/// and what happens now, notices, the checklist of components, the technical
-/// log behind "Show details", and the actions that concern no single row.
+/// A bounded operation surface with independent content and log scrolling.
+///
+/// The caller supplies a scrollable [content]. Header and footer remain
+/// outside that scroller; on very short windows they can scroll independently.
+final class SetupOperationFrame extends StatelessWidget {
+  const SetupOperationFrame({
+    required this.header,
+    required this.content,
+    this.footer,
+    this.log = const [],
+    this.busy = false,
+    super.key,
+  });
+
+  final Widget header;
+  final Widget content;
+  final Widget? footer;
+  final List<String> log;
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = YsTheme.of(context);
+    return LayoutBuilder(
+      builder: (context, viewport) {
+        final spacing = viewport.maxHeight < YsLayout.operationComfortHeight
+            ? YsSpace.sm
+            : YsSpace.xl;
+        return Padding(
+          padding: EdgeInsets.all(spacing),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: YsLayout.operationMaxWidth,
+              ),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: palette.paperColor,
+                  borderRadius: BorderRadius.circular(YsRadius.bubble),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.all(spacing),
+                  child: LayoutBuilder(
+                    builder: (context, card) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight:
+                                card.maxHeight *
+                                YsLayout.operationHeaderFraction,
+                          ),
+                          child: SingleChildScrollView(
+                            primary: false,
+                            child: header,
+                          ),
+                        ),
+                        const SizedBox(height: YsSpace.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(flex: 3, child: content),
+                              if (log.isNotEmpty) ...[
+                                const SizedBox(height: YsSpace.sm),
+                                Expanded(
+                                  flex: 2,
+                                  child: InstallLogBox(log: log),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (footer case final footer?) ...[
+                          const SizedBox(height: YsSpace.sm),
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxHeight:
+                                  card.maxHeight *
+                                  YsLayout.operationFooterFraction,
+                            ),
+                            child: SingleChildScrollView(
+                              primary: false,
+                              child: footer,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Shared install checklist with compact progress, bounded logs and actions.
 final class SetupCard extends StatelessWidget {
   const SetupCard({
     required this.title,
@@ -43,8 +139,7 @@ final class SetupCard extends StatelessWidget {
   /// What happens now, under the title.
   final String status;
 
-  /// The drawing heading the card, hero-sized: it draws in, and a new one
-  /// fades in and draws itself.
+  /// An optional compact illustration beside the heading.
   final YsArt? art;
 
   /// Work under way: [art] loops.
@@ -79,81 +174,49 @@ final class SetupCard extends StatelessWidget {
                     },
               ) /
               items.length;
-    // Sections come and go with their spacing, easing the card's height.
-    Widget section(bool shown, Widget child) => YsResize(
-      child: shown
-          ? Padding(
-              padding: const EdgeInsets.only(top: YsSpace.lg),
-              child: child,
-            )
-          : const SizedBox(width: double.infinity),
-    );
-    // Headings, notices and the log line up with the rows' badges.
-    const inset = EdgeInsets.symmetric(horizontal: YsSpace.sm);
-    return YsDialogCard(
-      children: [
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (art case final art?) ...[
-              AnimatedSwitcher(
-                duration: Duration(
-                  milliseconds: MediaQuery.disableAnimationsOf(context)
-                      ? 0
-                      : YsStepMotion.swap,
-                ),
-                child: YsDialogArt(art, busy: busy, key: ValueKey(art)),
-              ),
-              const SizedBox(height: YsSpace.lg),
-            ],
-            Padding(
-              padding: inset,
-              child: _Header(
-                title: title,
-                status: status,
-                progress: progress,
-                label: items.length > 1 ? '$settled/${items.length}' : null,
-                onReady: onReady,
-              ),
+    return SetupOperationFrame(
+      busy: busy,
+      header: Row(
+        children: [
+          Expanded(
+            child: _Header(
+              title: title,
+              status: status,
+              progress: progress,
+              label: items.length > 1 ? '$settled/${items.length}' : null,
+              onReady: onReady,
             ),
-            section(
-              notices.isNotEmpty,
-              Padding(
-                padding: inset,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  spacing: YsSpace.sm,
-                  children: [for (final notice in notices) _Notice(notice)],
-                ),
-              ),
-            ),
-            const SizedBox(height: YsSpace.lg),
-            YsChecklist(items: items),
-            section(
-              log.isNotEmpty,
-              Padding(
-                padding: inset,
-                child: YsDisclosure(
-                  label: 'Show details',
-                  openLabel: 'Hide details',
-                  child: InstallLogBox(log: log),
-                ),
-              ),
-            ),
-            section(
-              actions.isNotEmpty,
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                spacing: YsSpace.sm,
-                children: actions,
-              ),
-            ),
+          ),
+          if (art case final art?) ...[
+            const SizedBox(width: YsSpace.sm),
+            YsArtView(art, size: YsLayout.progressRing, busy: busy),
           ],
-        ),
-      ],
+        ],
+      ),
+      content: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          for (final notice in notices)
+            Padding(
+              padding: const EdgeInsets.only(
+                left: YsSpace.sm,
+                right: YsSpace.sm,
+                bottom: YsSpace.sm,
+              ),
+              child: _Notice(notice),
+            ),
+          YsChecklist(items: items),
+        ],
+      ),
+      log: log,
+      footer: actions.isEmpty
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              spacing: YsSpace.sm,
+              children: actions,
+            ),
     );
   }
 }
@@ -263,8 +326,9 @@ final class _Notice extends StatelessWidget {
   }
 }
 
-/// Lines of technical output in a box that scrolls: the last ones of a log,
-/// kept on the newest ([follow]), or a report read from the top.
+/// Selectable technical output with a visible scrollbar and a copy action.
+///
+/// Live output follows the tail only until the reader scrolls away from it.
 final class InstallLogBox extends StatefulWidget {
   const InstallLogBox({required this.log, this.follow = true, super.key});
 
@@ -277,6 +341,43 @@ final class InstallLogBox extends StatefulWidget {
 
 final class _InstallLogBoxState extends State<InstallLogBox> {
   final _scroll = ScrollController();
+  bool _following = true;
+  bool _copied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _following = widget.follow;
+    _scheduleFollow();
+  }
+
+  @override
+  void didUpdateWidget(InstallLogBox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.follow) {
+      _following = false;
+    } else if (!oldWidget.follow) {
+      _following = true;
+    }
+    _scheduleFollow();
+  }
+
+  void _scheduleFollow() {
+    if (!widget.follow || !_following) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _following && _scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.log.join('\n')));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _copied = false);
+  }
 
   @override
   void dispose() {
@@ -287,13 +388,7 @@ final class _InstallLogBoxState extends State<InstallLogBox> {
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    if (widget.follow) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scroll.hasClients) {
-          _scroll.jumpTo(_scroll.position.maxScrollExtent);
-        }
-      });
-    }
+    final output = widget.log.join('\n');
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.canvasColor,
@@ -301,19 +396,78 @@ final class _InstallLogBoxState extends State<InstallLogBox> {
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: YsLayout.logMaxHeight),
-        child: SingleChildScrollView(
-          controller: _scroll,
-          padding: const EdgeInsets.all(YsSpace.md),
-          child: SizedBox(
-            width: double.infinity,
-            child: Text(
-              widget.log.join('\n'),
-              style: YsType.code.flutter.copyWith(
-                fontFamily: YsType.monoFamily,
-                color: palette.contentMutedColor,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
+                primary: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: YsSpace.md,
+                    vertical: YsSpace.xs,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Activity log',
+                          style: YsType.caption.flutter.copyWith(
+                            color: palette.contentMutedColor,
+                          ),
+                        ),
+                      ),
+                      YsButton.icon(
+                        icon: _copied ? YsIcon.check : YsIcon.copy,
+                        semanticLabel: _copied ? 'Copied' : 'Copy log',
+                        tooltip: _copied ? 'Copied' : 'Copy log',
+                        onPressed: widget.log.isEmpty ? null : _copy,
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
+            Flexible(
+              flex: 3,
+              child: NotificationListener<ScrollUpdateNotification>(
+                onNotification: (notification) {
+                  if (notification.depth == 0) {
+                    _following =
+                        widget.follow &&
+                        notification.metrics.extentAfter <=
+                            YsLayout.logTailTolerance;
+                  }
+                  return false;
+                },
+                child: RawScrollbar(
+                  controller: _scroll,
+                  thumbVisibility: true,
+                  interactive: true,
+                  thumbColor: palette.contentMutedColor,
+                  radius: const Radius.circular(YsRadius.row),
+                  child: SingleChildScrollView(
+                    controller: _scroll,
+                    padding: const EdgeInsets.all(YsSpace.md),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SelectableText(
+                        output,
+                        // WidgetsApp has no Material localization delegates.
+                        // Selection and keyboard copy remain available.
+                        contextMenuBuilder: null,
+                        style: YsType.code.flutter.copyWith(
+                          fontFamily: YsType.monoFamily,
+                          color: palette.contentMutedColor,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

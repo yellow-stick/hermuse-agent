@@ -5,13 +5,26 @@ import 'package:hermes_client/hermes_client.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
+import 'settings.dart';
+
 /// Left icon rail (72 wide): destinations, then the instance switcher, then
 /// app/settings at the bottom.
 ///
 /// Instances render as letter discs under the destinations; the active one
 /// is highlighted. The trailing `+` opens the add-instance screen.
 /// Product destinations of the rail (chat + plugin surfaces).
-enum HermuseDestination { chat, feed, ideas, goals, library }
+enum HermuseDestination {
+  chat(YsIcon.chat, 'Chat'),
+  feed(YsIcon.feed, 'Feed'),
+  ideas(YsIcon.ideas, 'Ideas'),
+  goals(YsIcon.goals, 'Goals'),
+  library(YsIcon.library, 'Library');
+
+  const HermuseDestination(this.icon, this.label);
+
+  final YsIcon icon;
+  final String label;
+}
 
 class HermuseRail extends StatelessComponent {
   const HermuseRail({
@@ -20,6 +33,7 @@ class HermuseRail extends StatelessComponent {
     required this.onSelectInstance,
     this.onAddInstance,
     this.onOpenInstances,
+    required this.onOpenSettings,
     required this.destination,
     required this.onDestination,
     required this.chatsPanelOpen,
@@ -34,6 +48,7 @@ class HermuseRail extends StatelessComponent {
   /// Null hides the entry (the read-only demo manages no instances).
   final VoidCallback? onAddInstance;
   final VoidCallback? onOpenInstances;
+  final VoidCallback onOpenSettings;
 
   /// Currently shown product surface.
   final HermuseDestination destination;
@@ -44,14 +59,6 @@ class HermuseRail extends StatelessComponent {
   final bool chatsPanelOpen;
   final VoidCallback onToggleChatsPanel;
 
-  static const _destinations = [
-    (YsIcon.chat, 'Chat', HermuseDestination.chat),
-    (YsIcon.feed, 'Feed', HermuseDestination.feed),
-    (YsIcon.ideas, 'Ideas', HermuseDestination.ideas),
-    (YsIcon.goals, 'Goals', HermuseDestination.goals),
-    (YsIcon.library, 'Library', HermuseDestination.library),
-  ];
-
   @override
   Component build(BuildContext context) => nav(
     classes: 'hermuse-rail',
@@ -61,9 +68,9 @@ class HermuseRail extends StatelessComponent {
         // The marker slides along the rail's edge to the current
         // destination.
         div(classes: 'hermuse-rail-dests', [
-          for (final (icon, label, target) in _destinations)
+          for (final target in HermuseDestination.values)
             _item(
-              label: label,
+              label: target.label,
               classes: target == destination ? 'hermuse-rail-current' : null,
               attributes:
                   target == HermuseDestination.chat &&
@@ -76,7 +83,7 @@ class HermuseRail extends StatelessComponent {
                   ? onToggleChatsPanel
                   : () {},
               builder: (state) => YsMotionIconView(
-                icon,
+                target.icon,
                 size: YsLayout.railIconSize,
                 strokeWidth: YsLayout.railIconStroke,
                 hovered: state.hovered,
@@ -124,16 +131,10 @@ class HermuseRail extends StatelessComponent {
           ),
       ]),
       div(classes: 'hermuse-rail-bottom', [
-        if (onOpenInstances case final onOpen?)
-          _item(
-            label: 'Instances',
-            onPressed: onOpen,
-            builder: (state) => YsIconView(
-              YsIcon.menu,
-              size: YsLayout.railIconSize,
-              strokeWidth: YsLayout.railIconStroke,
-            ),
-          ),
+        HermuseSettingsMenu(
+          onSettings: onOpenSettings,
+          onInstances: onOpenInstances,
+        ),
       ]),
     ],
   );

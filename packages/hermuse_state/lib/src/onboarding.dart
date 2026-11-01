@@ -411,6 +411,7 @@ class Onboarding extends _$Onboarding {
     if (existing.sessions.isNotEmpty) {
       thread = ThreadRef(
         instanceId: instanceId,
+        profile: setup.name,
         sessionId: existing.sessions.first.id,
       );
     } else {
@@ -432,6 +433,7 @@ class Onboarding extends _$Onboarding {
       );
       thread = ThreadRef(
         instanceId: instanceId,
+        profile: setup.name,
         sessionId: created.storedSessionId,
       );
       // The backend must not name the session after the hidden runbook row.
@@ -440,6 +442,7 @@ class Onboarding extends _$Onboarding {
             HermesMethods.sessionTitle,
             SessionTitleParams(
               sessionId: created.sessionId,
+              profile: setup.name,
               title: setupChatTitle,
             ),
           )
@@ -583,9 +586,14 @@ const setupGreetingSeed =
 /// Authenticated REST client of one instance, borrowed from its live
 /// [DashboardTransport]. Overridable for tests whose transport is a fake.
 @riverpod
-Future<HermesRestClient> restClient(Ref ref, String instanceId) async {
-  final transport = (await ref.watch(connectionProvider(instanceId).future))
-      .transport;
+Future<HermesRestClient> restClient(
+  Ref ref,
+  String instanceId, {
+  String profile = 'default',
+}) async {
+  final transport = (await ref.watch(
+    connectionProvider(instanceId, profile: profile).future,
+  )).transport;
   if (transport is! DashboardTransport) {
     throw StateError(
       'restClientProvider($instanceId) needs a DashboardTransport; '

@@ -411,6 +411,7 @@ void main() {
         .startProfileConversation();
     expect(thread.instanceId, 'vps');
     expect(thread.sessionId, 'guide-stored');
+    expect(thread.profile, 'hermes-setup');
     expect(
       container.read(onboardingProvider('vps')).value?.step,
       OnboardingStep.ready,

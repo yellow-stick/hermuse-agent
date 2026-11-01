@@ -74,7 +74,7 @@ final class OnboardingProvider
   }
 }
 
-String _$onboardingHash() => r'13dd85f84961dd3550e2d9bf3be0a792b0381ea8';
+String _$onboardingHash() => r'7138d528be75d3fb16d5b18102dbe27eeb2a396d';
 
 /// Onboarding state machine of one instance, over its shared connection.
 ///
@@ -170,7 +170,7 @@ final class RestClientProvider
   /// [DashboardTransport]. Overridable for tests whose transport is a fake.
   RestClientProvider._({
     required RestClientFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'restClientProvider',
@@ -186,7 +186,7 @@ final class RestClientProvider
   String toString() {
     return r'restClientProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -197,8 +197,8 @@ final class RestClientProvider
 
   @override
   FutureOr<HermesRestClient> create(Ref ref) {
-    final argument = this.argument as String;
-    return restClient(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return restClient(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -212,13 +212,17 @@ final class RestClientProvider
   }
 }
 
-String _$restClientHash() => r'8d16d079fa3a7fb6642547053d20738e81274c93';
+String _$restClientHash() => r'48f0a2e64699ede49078c8d2cda3b25402d484d9';
 
 /// Authenticated REST client of one instance, borrowed from its live
 /// [DashboardTransport]. Overridable for tests whose transport is a fake.
 
 final class RestClientFamily extends $Family
-    with $FunctionalFamilyOverride<FutureOr<HermesRestClient>, String> {
+    with
+        $FunctionalFamilyOverride<
+          FutureOr<HermesRestClient>,
+          (String, {String profile})
+        > {
   RestClientFamily._()
     : super(
         retry: null,
@@ -231,8 +235,11 @@ final class RestClientFamily extends $Family
   /// Authenticated REST client of one instance, borrowed from its live
   /// [DashboardTransport]. Overridable for tests whose transport is a fake.
 
-  RestClientProvider call(String instanceId) =>
-      RestClientProvider._(argument: instanceId, from: this);
+  RestClientProvider call(String instanceId, {String profile = 'default'}) =>
+      RestClientProvider._(
+        argument: (instanceId, profile: profile),
+        from: this,
+      );
 
   @override
   String toString() => r'restClientProvider';

@@ -21,6 +21,7 @@ HERMUSE_ICON_SIZES="48 128 256 512"
 # Bundle slots copied after `flutter build linux`, never stripped/modified.
 HERMUSE_BUNDLE_CLIPROXY="lib/cliproxy"
 HERMUSE_BUNDLE_HELPER="libexec/hermuse-linux-setup"
+HERMUSE_BUNDLE_SERVICE="libexec/hermuse-linux-service"
 
 hermuse_log() { printf '==> %s\n' "$*" >&2; }
 hermuse_warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -158,7 +159,7 @@ check_elf_tree() {
 # Digests come from HERMUSE_CLIPROXY_SHA256 / HERMUSE_LINUX_HELPER_SHA256
 # when set (build-release.sh), otherwise from the lock/helper source.
 check_bundle() {
-  local bundle="$1" cliproxy_sha helper_sha path
+  local bundle="$1" cliproxy_sha helper_sha service_sha path
   [ -x "$bundle/$HERMUSE_BINARY" ] || hermuse_die "$bundle/$HERMUSE_BINARY missing or not executable"
   [ -d "$bundle/data/flutter_assets" ] || hermuse_die "$bundle/data/flutter_assets missing"
   [ -f "$bundle/data/icudtl.dat" ] || hermuse_die "$bundle/data/icudtl.dat missing"
@@ -167,12 +168,15 @@ check_bundle() {
   [ -f "$bundle/lib/libsqlite3.so" ] || hermuse_die "$bundle/lib/libsqlite3.so (sqlite3 hook, FTS5) missing"
   cliproxy_sha="${HERMUSE_CLIPROXY_SHA256:-$(jq -er '.platforms["linux-amd64"].binary_sha256' "$HERMUSE_REPO/packages/hermuse_host/cliproxy.lock")}"
   helper_sha="${HERMUSE_LINUX_HELPER_SHA256:-$(sha256_of "$HERMUSE_LINUX_DIR/hermuse-linux-setup")}"
-  for path in "$HERMUSE_BUNDLE_CLIPROXY" "$HERMUSE_BUNDLE_HELPER"; do
+  service_sha="${HERMUSE_LINUX_SERVICE_SHA256:-$(cat "$bundle/$HERMUSE_BUNDLE_SERVICE.sha256")}"
+  [[ "$service_sha" =~ ^[0-9a-f]{64}$ ]] || hermuse_die "missing service-helper build digest"
+  for path in "$HERMUSE_BUNDLE_CLIPROXY" "$HERMUSE_BUNDLE_HELPER" "$HERMUSE_BUNDLE_SERVICE"; do
     [ -f "$bundle/$path" ] && [ ! -L "$bundle/$path" ] || hermuse_die "$bundle/$path missing"
     [ "$(stat -c %a "$bundle/$path")" = 755 ] || hermuse_die "$bundle/$path must be mode 0755"
   done
   verify_sha256 "$bundle/$HERMUSE_BUNDLE_CLIPROXY" "$cliproxy_sha" "bundle $HERMUSE_BUNDLE_CLIPROXY"
   verify_sha256 "$bundle/$HERMUSE_BUNDLE_HELPER" "$helper_sha" "bundle $HERMUSE_BUNDLE_HELPER"
+  verify_sha256 "$bundle/$HERMUSE_BUNDLE_SERVICE" "$service_sha" "bundle $HERMUSE_BUNDLE_SERVICE"
 }
 
 # render_icons <out dir> — hicolor PNGs + scalable SVG from the app icon.

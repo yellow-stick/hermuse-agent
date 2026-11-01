@@ -48,62 +48,54 @@ final class ComponentsScreen extends ConsumerWidget {
         : setup[RemotePart.model].status.settled
         ? onChat
         : onSetUpModel;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(
-        vertical: YsSpace.xxl + YsSpace.lg,
-        horizontal: YsSpace.xl,
-      ),
-      child: SetupCard(
-        art: switch (phase) {
-          RemoteSetupPhase.unreachable ||
-          RemoteSetupPhase.failed => YsArt.unreachable,
-          RemoteSetupPhase.ready => YsArt.ready,
-          _ => YsArt.remote,
-        },
-        busy:
-            phase == RemoteSetupPhase.checking ||
-            phase == RemoteSetupPhase.installing,
-        title: "What's on ${instance.label}",
-        status: setup.headline,
-        items: [
-          for (final row in setup.parts)
-            _item(row, () {
-              if (row.action == RemoteAction.setUpModel) {
-                onSetUpModel();
-              } else {
-                unawaited(checklist.run(row.part));
-              }
-            }),
-        ],
-        notices: [
-          if (setup.unreachable case final reason?)
-            SetupNotice(reason, alert: true),
-        ],
-        // One main action: the installs when offered, else reaching the
-        // Hermes again when it does not answer, else Continue.
-        actions: [
-          if (everything)
-            YsButton.primary(
-              label: 'Install everything missing',
-              onPressed: working
-                  ? null
-                  : () => unawaited(checklist.installEverything()),
-            ),
-          if (unreachable)
-            YsButton.primary(
-              label: working ? 'Checking…' : 'Check again',
-              onPressed: working
-                  ? null
-                  : () => unawaited(checklist.checkAgain()),
-            ),
-          if (everything || unreachable)
-            YsButton.neutral(label: 'Continue', onPressed: onContinue)
-          else
-            YsButton.primary(label: 'Continue', onPressed: onContinue),
-        ],
-        // The ring plays its ready moment; leaving stays the user's choice.
-        onReady: phase == RemoteSetupPhase.ready ? () {} : null,
-      ),
+    return SetupCard(
+      art: switch (phase) {
+        RemoteSetupPhase.unreachable ||
+        RemoteSetupPhase.failed => YsArt.unreachable,
+        RemoteSetupPhase.ready => YsArt.ready,
+        _ => YsArt.remote,
+      },
+      busy:
+          phase == RemoteSetupPhase.checking ||
+          phase == RemoteSetupPhase.installing,
+      title: "What's on ${instance.label}",
+      status: setup.headline,
+      items: [
+        for (final row in setup.parts)
+          _item(row, () {
+            if (row.action == RemoteAction.setUpModel) {
+              onSetUpModel();
+            } else {
+              unawaited(checklist.run(row.part));
+            }
+          }),
+      ],
+      notices: [
+        if (setup.unreachable case final reason?)
+          SetupNotice(reason, alert: true),
+      ],
+      // One main action: the installs when offered, else reaching the
+      // Hermes again when it does not answer, else Continue.
+      actions: [
+        if (everything)
+          YsButton.primary(
+            label: 'Install everything missing',
+            onPressed: working
+                ? null
+                : () => unawaited(checklist.installEverything()),
+          ),
+        if (unreachable)
+          YsButton.primary(
+            label: working ? 'Checking…' : 'Check again',
+            onPressed: working ? null : () => unawaited(checklist.checkAgain()),
+          ),
+        if (everything || unreachable)
+          YsButton.neutral(label: 'Continue', onPressed: onContinue)
+        else
+          YsButton.primary(label: 'Continue', onPressed: onContinue),
+      ],
+      // The ring plays its ready moment; leaving stays the user's choice.
+      onReady: phase == RemoteSetupPhase.ready ? () {} : null,
     );
   }
 

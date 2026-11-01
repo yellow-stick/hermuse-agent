@@ -39,6 +39,14 @@ abstract final class YsSpace {
 /// Hairline width used for borders and dividers.
 const ysHairline = 1.2;
 
+/// Liquid glass: the backdrop of a floating control is blurred by [blur]
+/// px and saturated by [saturation], then tinted with the palette `glass`
+/// roles. Flutter kit `YsGlass`, web kit class `ys-glass`.
+abstract final class YsGlassMaterial {
+  static const blur = 20.0;
+  static const saturation = 1.8;
+}
+
 /// Motion timings (milliseconds).
 abstract final class YsMotion {
   static const fast = 120;

@@ -1,3 +1,5 @@
+import 'tools.dart';
+
 /// Who wrote a message.
 enum Author { agent, user }
 
@@ -54,6 +56,11 @@ final class ToolCallBlock extends Block {
     required this.toolId,
     required this.name,
     this.summary = '',
+    this.detail = '',
+    this.output = '',
+    this.error = '',
+    this.duration,
+    this.outcomeKnown = true,
     this.running = true,
   });
 
@@ -62,14 +69,71 @@ final class ToolCallBlock extends Block {
   /// Tool name, e.g. `terminal`, `web_search`.
   final String name;
 
-  /// Preview while running, result summary once done.
+  /// Hermes' one line: its preview while running, the result once done.
   final String summary;
+
+  /// What the call works on: the full command, the query, the address
+  /// (`toolDetail`).
+  final String detail;
+
+  /// The command's printed output (terminal tools).
+  final String output;
+
+  /// Why it failed, one line; '' when it succeeded or still runs.
+  final String error;
+
+  /// How long it ran, when Hermes timed it.
+  final Duration? duration;
+
+  /// Whether [output] and [error] are known: a reloaded transcript omits
+  /// most tool results, so its rows cannot tell success from failure.
+  final bool outcomeKnown;
   final bool running;
 
-  ToolCallBlock done(String summary) => ToolCallBlock(
+  bool get failed => error.isNotEmpty;
+
+  // How the row reads, the same in both apps.
+
+  ToolKind get kind => toolKindOf(name);
+
+  String get title => toolTitle(name);
+
+  /// Commands and code show in monospace.
+  bool get monospace => kind == ToolKind.terminal || kind == ToolKind.code;
+
+  /// What the row says: [detail], else Hermes' line.
+  String get line => detail.isNotEmpty ? detail : summary;
+
+  /// The first line of [line], on the closed row.
+  String get headline => line.split('\n').first;
+
+  /// Hermes' result line when it adds to [line] (`Did 5 searches in 1.9s`
+  /// under a query); a command's preview only repeats the command.
+  String get resultLine =>
+      !monospace && summary.isNotEmpty && summary != line ? summary : '';
+
+  /// Whether opening the row shows more than its closed line.
+  bool get expandable =>
+      output.isNotEmpty ||
+      failed ||
+      line.contains('\n') ||
+      headline.length > 60 ||
+      resultLine.isNotEmpty;
+
+  ToolCallBlock done({
+    required String summary,
+    String? detail,
+    String output = '',
+    String error = '',
+    Duration? duration,
+  }) => ToolCallBlock(
     toolId: toolId,
     name: name,
     summary: summary,
+    detail: detail == null || detail.isEmpty ? this.detail : detail,
+    output: output,
+    error: error,
+    duration: duration,
     running: false,
   );
 }
@@ -316,43 +380,41 @@ enum ChatConnection {
   error,
 }
 
-/// Icon shown beside an activity entry.
-enum ActivityKind { webSearch, completed }
-
-/// A tool the agent finished in a chat: one row of the profile panel's
-/// Activity tab, kept on the device (`ChatObserver.toolCompleted`).
-final class ActivityItem {
-  const ActivityItem({
-    required this.tool,
-    required this.summary,
-    required this.at,
-    this.sessionId = '',
+/// A turn the agent is running in one chat: the live row on top of the
+/// profile panel's Activity tab, stopped with `ChatController.interrupt`.
+final class RunningTask {
+  const RunningTask({
+    required this.threadId,
+    required this.isMain,
+    required this.threadTitle,
+    required this.request,
+    required this.step,
   });
 
-  /// Hermes' tool name (`web_search`, `browser_navigate`, …).
-  final String tool;
+  final String threadId;
 
-  /// Hermes' one-line result, '' when it sent none.
-  final String summary;
+  /// It runs in the main chat (a scheduled job or a heartbeat lands there).
+  final bool isMain;
 
-  /// When the tool finished.
-  final DateTime at;
+  /// Title of the side chat it runs in ('' while untitled); the apps name
+  /// the main chat themselves.
+  final String threadTitle;
 
-  /// Session of the chat it ran in ('' for a chat not created yet).
-  final String sessionId;
+  /// First line of the user's message that started it; '' for a turn the
+  /// server started (a scheduled job, the heartbeat).
+  final String request;
 
-  /// Web tools (`web_search`, `web_extract`) get the web search icon; a
-  /// `tool_search` or `session_search` is not the web.
-  ActivityKind get kind =>
-      tool.startsWith('web_') ? ActivityKind.webSearch : ActivityKind.completed;
-
-  /// The tool name in words: `browser_navigate` → "Browser navigate".
-  String get title {
-    final words = tool.replaceAll(RegExp(r'[_\-.]+'), ' ').trim();
-    if (words.isEmpty) return 'Tool';
-    return '${words[0].toUpperCase()}${words.substring(1)}';
-  }
+  /// What the agent is doing now ([agentStepLabel]): "Searching the web".
+  final String step;
 }
+
+/// Name of the scheduled job whose output [text] hands to the main chat
+/// (Hermes' `[Cronjob "<name>" output — …]` brief), or null when [text] is
+/// no such brief.
+String? cronBriefJobName(String text) =>
+    _cronBrief.firstMatch(text.trimLeft())?.group(1);
+
+final _cronBrief = RegExp(r'^\[Cronjob "(.*?)" output — ');
 
 /// An approval request of the agent nobody answered yet.
 final class ApprovalRequest {
@@ -380,9 +442,9 @@ final class ApprovalRequest {
 /// Tabs of the profile panel.
 enum PanelTab {
   activity('Activity', 'Nothing yet'),
-  approvals('Approvals', 'No approvals waiting'),
-  automations('Automations', 'Nothing scheduled'),
-  connectors('Connectors', 'Coming soon');
+  approvals('Approvals', 'No approvals yet'),
+  upcoming('Upcoming', 'Nothing scheduled'),
+  identity('Identity', '');
 
   const PanelTab(this.label, this.emptyText);
   final String label;

@@ -4,6 +4,7 @@ Architecture: amd64
 Maintainer: Yellow Stick <contact@yellow-stick.com>
 Installed-Size: @INSTALLED_SIZE@
 Depends: @DEPENDS@
+Recommends: fonts-noto-color-emoji
 Section: utils
 Priority: optional
 Homepage: https://hermuse.app

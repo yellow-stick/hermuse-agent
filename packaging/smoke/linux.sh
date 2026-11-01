@@ -584,14 +584,17 @@ c0_test_base() {
 }
 
 bundle_integrity() { # <id> <bundle-dir>: embedded bridge + helper against VERSION.json
-  local id=$1 dir=$2 cliproxy helper ok=0 detail
+  local id=$1 dir=$2 cliproxy helper service ok=0 detail
   cliproxy=$(jq -r '.cliproxy.binary_sha256' "$VERSION_JSON")
   helper=$(jq -r '.linux_helper.sha256' "$VERSION_JSON")
+  service=$(jq -r '.linux_service.sha256' "$VERSION_JSON")
   [ "$(sha_of "$dir/lib/cliproxy")" = "$cliproxy" ] || ok=1
   [ "$(sha_of "$dir/libexec/hermuse-linux-setup")" = "$helper" ] || ok=1
+  [ "$(sha_of "$dir/libexec/hermuse-linux-service")" = "$service" ] || ok=1
+  [ -x "$dir/libexec/hermuse-linux-service" ] || ok=1
   [ -x "$dir/lib/cliproxy" ] && [ -x "$dir/libexec/hermuse-linux-setup" ] || ok=1
-  detail="lib/cliproxy $(sha_of "$dir/lib/cliproxy"), libexec/hermuse-linux-setup $(sha_of "$dir/libexec/hermuse-linux-setup")"
-  pass_or_fail "$id" bundle-integrity "$ok" "$detail (expected $cliproxy / $helper, both executable)"
+  detail="lib/cliproxy $(sha_of "$dir/lib/cliproxy"), libexec/hermuse-linux-setup $(sha_of "$dir/libexec/hermuse-linux-setup"), libexec/hermuse-linux-service $(sha_of "$dir/libexec/hermuse-linux-service")"
+  pass_or_fail "$id" bundle-integrity "$ok" "$detail (expected $cliproxy / $helper / $service, all executable)"
 }
 
 install_deb() { # <id> <deb-file> <expected-version>

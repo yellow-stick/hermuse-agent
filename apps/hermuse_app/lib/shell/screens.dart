@@ -479,12 +479,20 @@ final class YsDialogBody extends StatelessWidget {
 /// First-run screen: the registry is empty, so there is no chat yet. The
 /// mascot says hello above one big card per way to start.
 final class WelcomeScreen extends ConsumerWidget {
-  const WelcomeScreen({required this.onConnect, this.onInstall, super.key});
+  const WelcomeScreen({
+    required this.onConnect,
+    this.onInstall,
+    this.onUninstall,
+    super.key,
+  });
 
   final VoidCallback onConnect;
 
   /// Desktop only: install (or adopt) Hermes on this computer.
   final VoidCallback? onInstall;
+
+  /// Reviews local ownership even when setup failed before registration.
+  final VoidCallback? onUninstall;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -560,6 +568,13 @@ final class WelcomeScreen extends ConsumerWidget {
                           ],
                         ),
                 ),
+                if (onUninstall case final uninstall?) ...[
+                  const SizedBox(height: YsSpace.lg),
+                  YsButton.neutral(
+                    label: 'Review local installation',
+                    onPressed: uninstall,
+                  ),
+                ],
               ],
             ),
           ),

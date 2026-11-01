@@ -305,7 +305,10 @@ jobs:
           [ "$(wc -l <SHA256SUMS.txt)" = 4 ]
           jq -e --arg commit "$COMMIT" --arg version "$APP_VERSION" --arg deb "$DEB_VERSION" '
             .source.commit == $commit and .source.dirty == false
-            and .app.version == $version and .app.debian_version == $deb' VERSION.json
+            and .app.version == $version and .app.debian_version == $deb
+            and .linux_service.path == "libexec/hermuse-linux-service"
+            and .linux_service.plugin == "embedded"
+            and (.linux_service.sha256 | test("^[0-9a-f]{64}$"))' VERSION.json
 
       - name: Upgrade fixture (lower Debian version, never published)
         env:

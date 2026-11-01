@@ -52,9 +52,10 @@ DemoComputer _computerFor(DemoInstance instance) => instance.label == 'Otto'
     ? const DemoComputer(thumbnail: 'annecy')
     : const DemoComputer(
         thumbnail: 'energy-form',
-        // Row index → frame of the electricity journey (main chat rows 1-3).
-        // The Annecy booking is served by chat title (see plugin_api).
-        snapshots: {1: 'energy', 2: 'energy', 3: 'energy-form'},
+        // Row index → frame of the electricity journey (main chat rows 3-5,
+        // after the evening recap brief). The Annecy booking is served by
+        // chat title (see plugin_api).
+        snapshots: {3: 'energy', 4: 'energy', 5: 'energy-form'},
       );
 
 /// Chromium tabs the fake stream reports: same three pages for both
@@ -109,6 +110,7 @@ Future<void> seedDemo(HermuseDatabase db, {DateTime? now}) async {
       await db.upsertSession(
         SessionRow(
           instanceId: instance.id,
+          profile: 'default',
           sessionId: chat.id,
           title: chat.title,
           parentId: identical(chat, instance.main) ? null : instance.main.id,
@@ -138,6 +140,7 @@ List<CachedMessage> _searchRows(DemoInstance instance, DemoChat chat) {
   final out = <CachedMessage>[];
   CachedMessage row(int index, String author, String text) => CachedMessage(
     instanceId: instance.id,
+    profile: 'default',
     sessionId: chat.id,
     messageId: 'row-${base + index}',
     author: author,
@@ -154,6 +157,10 @@ List<CachedMessage> _searchRows(DemoInstance instance, DemoChat chat) {
 
   for (final (i, r) in chat.rows.indexed) {
     switch (r.role) {
+      case 'user' when r.job != null:
+        // A scheduled job's brief shows as a notice line, not the user's.
+        endTurn();
+        out.add(row(i, 'agent', 'Scheduled: ${r.job}'));
       case 'user':
         endTurn();
         out.add(row(i, 'user', r.text));

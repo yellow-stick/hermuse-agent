@@ -10,6 +10,7 @@ import 'package:hermuse_app/shell/app.dart';
 import 'package:hermuse_app/shell/instances.dart';
 import 'package:hermuse_data/hermuse_data.dart';
 import 'package:hermuse_data/native.dart';
+import 'package:hermuse_host/hermuse_host.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -278,6 +279,142 @@ void main() {
     );
 
     testWidgets(
+      'should sign in to the local dashboard when only the password is entered',
+      (tester) async {
+        final hermes = _DashboardHermes();
+        addTearDown(hermes.db.close);
+        hermes.authenticated.complete();
+        hermes.secrets.writable.complete();
+        await hermes.pump(
+          tester,
+          localSystem: true,
+          initialUsername: null,
+          initialPassword: null,
+        );
+        await tester.enterText(_dashboardField('Password'), _dashboardPassword);
+        await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
+        await tester.pumpAndSettle();
+
+        expect(hermes.savedId, localInstanceId);
+        expect(
+          (await hermes.db.loadInstances()).single.kind,
+          InstanceKind.system,
+        );
+        expect(
+          await hermes.secrets.read(localInstanceId, SecretKeys.username),
+          'admin',
+        );
+      },
+    );
+
+    testWidgets(
+      'should reject a blank username locally and allow correcting it',
+      (tester) async {
+        final hermes = _DashboardHermes();
+        addTearDown(hermes.db.close);
+        hermes.authenticated.complete();
+        hermes.secrets.writable.complete();
+        await hermes.pump(tester, localSystem: true);
+        await tester.enterText(_dashboardField('Username'), '   ');
+        await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
+        await tester.pumpAndSettle();
+
+        expect(hermes.logins, isEmpty);
+        expect(await hermes.db.loadInstances(), isEmpty);
+        expect(hermes.savedId, isNull);
+
+        await tester.enterText(_dashboardField('Username'), 'admin');
+        await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
+        await tester.pumpAndSettle();
+        expect(hermes.savedId, localInstanceId);
+      },
+    );
+
+    for (final replacing in [false, true]) {
+      testWidgets(
+        'should ${replacing ? 'replace legacy registration' : 'register the system service'} after dashboard login',
+        (tester) async {
+          final hermes = _DashboardHermes();
+          addTearDown(hermes.db.close);
+          hermes.authenticated.complete();
+          hermes.secrets.writable.complete();
+          if (replacing) {
+            final registry = HermesRegistry(
+              DriftInstanceStore(hermes.db),
+              hermes.secrets,
+            );
+            await registry.add(
+              HermesInstance(
+                id: localInstanceId,
+                label: 'Legacy',
+                kind: InstanceKind.local,
+                baseUrl: Uri.parse('http://127.0.0.1:43210'),
+                auth: AuthMethod.loopbackToken,
+              ),
+            );
+          }
+          await hermes.pump(tester, localSystem: true);
+          expect(_dashboardField('Instance URL'), findsNothing);
+          await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
+          await tester.pumpAndSettle();
+          final instance = (await hermes.db.loadInstances()).single;
+          expect(instance.id, localInstanceId);
+          expect(instance.kind, InstanceKind.system);
+          expect(instance.auth, AuthMethod.password);
+          expect(instance.baseUrl, Uri.parse('http://127.0.0.1:9119'));
+          expect(hermes.savedId, localInstanceId);
+          expect(
+            await hermes.secrets.read(localInstanceId, SecretKeys.password),
+            _dashboardPassword,
+          );
+        },
+      );
+    }
+
+    testWidgets(
+      'should preserve the existing registration when local dashboard login is rejected',
+      (tester) async {
+        final hermes = _DashboardHermes();
+        addTearDown(hermes.db.close);
+        hermes.secrets.writable.complete();
+        final registry = HermesRegistry(
+          DriftInstanceStore(hermes.db),
+          hermes.secrets,
+        );
+        final existing = HermesInstance(
+          id: localInstanceId,
+          label: 'Legacy',
+          kind: InstanceKind.local,
+          baseUrl: Uri.parse('http://127.0.0.1:43210'),
+          auth: AuthMethod.loopbackToken,
+        );
+        await registry.add(existing);
+        await hermes.secrets.write(
+          localInstanceId,
+          SecretKeys.sessionToken,
+          _goodToken,
+        );
+        await hermes.pump(tester, localSystem: true);
+        await tester.enterText(_dashboardField('Password'), 'rejected');
+        await tester.tap(find.widgetWithText(YsButton, 'Save and connect'));
+        await tester.pumpAndSettle();
+        final retained = (await hermes.db.loadInstances()).single;
+        expect(retained.kind, existing.kind);
+        expect(retained.baseUrl, existing.baseUrl);
+        expect(retained.auth, existing.auth);
+        expect(
+          await hermes.secrets.read(localInstanceId, SecretKeys.sessionToken),
+          _goodToken,
+        );
+        expect(
+          await hermes.secrets.read(localInstanceId, SecretKeys.password),
+          isNull,
+        );
+        expect(hermes.savedId, isNull);
+      },
+    );
+
+    testWidgets(
       'should discard a stale probe and never send generated credentials to an edited URL',
       (tester) async {
         final hermes = _DashboardHermes()..statusRelease = Completer<void>();
@@ -372,7 +509,13 @@ final class _DashboardHermes {
   var unreachable = false;
   String? savedId;
 
-  Future<void> pump(WidgetTester tester, {bool settle = true}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    bool settle = true,
+    bool localSystem = false,
+    String? initialUsername = 'admin',
+    String? initialPassword = _dashboardPassword,
+  }) async {
     tester.view
       ..physicalSize = const Size(900, 1400)
       ..devicePixelRatio = 1;
@@ -416,9 +559,12 @@ final class _DashboardHermes {
               palette: YsPalette.dark,
               child: Overlay.wrap(
                 child: AddInstanceScreen(
-                  initialUrl: _dashboardUrl,
-                  initialUsername: 'admin',
-                  initialPassword: _dashboardPassword,
+                  localSystem: localSystem,
+                  initialUrl: localSystem
+                      ? 'http://127.0.0.1:9119'
+                      : _dashboardUrl,
+                  initialUsername: initialUsername,
+                  initialPassword: initialPassword,
                   autoProbe: true,
                   onDone: (id) => savedId = id,
                   onCancel: () {},

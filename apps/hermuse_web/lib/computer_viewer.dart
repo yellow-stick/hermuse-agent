@@ -63,29 +63,43 @@ class HermuseComputerViewer extends StatefulComponent {
         raw: {'min-width': '0', 'min-height': '0'},
       ),
       css('.hermuse-computer-head').styles(
-        minHeight: 48.px,
         display: .flex,
-        flexDirection: .row,
-        flexWrap: .wrap,
-        alignItems: .center,
-        gap: .all(8.px),
-        padding: .symmetric(horizontal: 16.px, vertical: 6.px),
+        minHeight: 48.px,
+        padding: .symmetric(horizontal: YsSpace.lg.px, vertical: YsSpace.md.px),
         border: .only(
           bottom: .solid(color: .variable('--line'), width: 1.px),
         ),
+        flexDirection: .row,
+        flexWrap: .wrap,
+        alignItems: .center,
+        gap: .all(YsSpace.md.px),
+        backgroundColor: .variable('--paper'),
         raw: {'flex-shrink': '0'},
       ),
       css('.hermuse-computer-titles').styles(
         display: .flex,
-        flexDirection: .column,
+        flexDirection: .row,
+        alignItems: .center,
+        gap: .all(YsSpace.md.px),
         flex: .grow(1),
-        raw: {'min-width': '0', 'flex-basis': '0'},
+        raw: {'min-width': '0', 'flex-basis': '160px'},
+      ),
+      css('.hermuse-computer-title-icon').styles(
+        display: .inlineFlex,
+        flex: .shrink(0),
+        color: .variable('--content-muted'),
+      ),
+      css('.hermuse-computer-title-text').styles(
+        display: .flex,
+        minWidth: 0.px,
+        flexDirection: .column,
+        gap: .all(YsSpace.xxs.px),
       ),
       css('.hermuse-computer-title').styles(
         margin: .zero,
         overflow: .hidden,
-        fontSize: 15.px,
-        lineHeight: 20.px,
+        fontSize: YsType.heading.size.px,
+        lineHeight: YsType.heading.lineHeight.px,
         fontWeight: .w600,
         textOverflow: .ellipsis,
         raw: {'white-space': 'nowrap'},
@@ -93,8 +107,8 @@ class HermuseComputerViewer extends StatefulComponent {
       css('.hermuse-computer-subtitle').styles(
         margin: .zero,
         overflow: .hidden,
-        fontSize: 13.px,
-        lineHeight: 18.px,
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
         color: .variable('--content-muted'),
         textOverflow: .ellipsis,
         raw: {'white-space': 'nowrap'},
@@ -105,7 +119,8 @@ class HermuseComputerViewer extends StatefulComponent {
         flexWrap: .wrap,
         alignItems: .center,
         justifyContent: .end,
-        gap: .all(8.px),
+        gap: .all(YsSpace.sm.px),
+        raw: {'min-width': '0', 'max-width': '100%'},
       ),
       css('.hermuse-computer-close').styles(display: .flex),
       // Browser | Desktop: a segmented track with text segments.
@@ -114,71 +129,71 @@ class HermuseComputerViewer extends StatefulComponent {
         display: .flex,
         flexDirection: .row,
         alignItems: .center,
-        padding: .all(4.px),
-        radius: .circular(YsRadius.pill.px),
+        padding: .all(YsSpace.xs.px),
+        radius: .circular(YsRadius.row.px),
         backgroundColor: .variable('--neutral-ambient'),
       ),
       css('.hermuse-computer-mode').styles(
         height: 28.px,
-        padding: .symmetric(horizontal: 12.px),
-        radius: .circular(YsRadius.segment.px),
+        padding: .symmetric(horizontal: YsSpace.md.px),
+        radius: .circular(YsRadius.option.px),
         color: .variable('--content-muted'),
-        fontSize: 13.px,
-        lineHeight: 18.px,
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
         fontWeight: .w500,
       ),
       css('.hermuse-computer-mode:hover:enabled')
           .styles(color: .variable('--content')),
       css('.hermuse-computer-mode-on').styles(
         color: .variable('--content'),
-        backgroundColor: .variable('--neutral-film'),
+        backgroundColor: .variable('--paper'),
       ),
       css('.hermuse-computer-stop').styles(
         height: 36.px,
         display: .flex,
         flexDirection: .row,
         alignItems: .center,
-        gap: .all(6.px),
-        padding: .symmetric(horizontal: 12.px),
+        gap: .all(YsSpace.sm.px),
+        padding: .symmetric(horizontal: YsSpace.md.px),
         radius: .circular(YsRadius.pill.px),
-        color: .variable('--error'),
-        fontSize: 14.px,
-        lineHeight: 20.px,
+        color: .variable('--content'),
+        fontSize: YsType.label.size.px,
+        lineHeight: YsType.label.lineHeight.px,
         fontWeight: .w500,
       ),
       css('.hermuse-computer-stop:hover')
           .styles(backgroundColor: .variable('--neutral-film')),
-      css('.hermuse-computer-stop-filled')
-          .styles(color: Colors.white, backgroundColor: browserPillGrey),
-      css('.hermuse-computer-stop-filled .ys-icon')
+      css('.hermuse-computer-stop .ys-icon')
           .styles(color: .variable('--error')),
-      css('.hermuse-computer-stop-filled:hover').styles(
-        backgroundColor: browserPillGrey,
-        raw: {'filter': 'brightness(1.15)'},
-      ),
+      // Done needs a separate accessible name and a check icon, which the
+      // shared primary button does not expose. Keep its visual tokens.
       css('.hermuse-computer-primary').styles(
+        display: .inlineFlex,
         height: 36.px,
-        display: .flex,
+        padding: .symmetric(horizontal: YsSpace.lg.px),
+        radius: .circular(YsRadius.pill.px),
         flexDirection: .row,
+        justifyContent: .center,
         alignItems: .center,
-        gap: .all(6.px),
-        padding: .symmetric(horizontal: 16.px),
-        radius: .circular(24.px),
-        color: Colors.black,
-        backgroundColor: browserBlue,
-        fontSize: 14.px,
-        lineHeight: 20.px,
+        gap: .all(YsSpace.sm.px),
+        flex: .shrink(0),
+        color: .variable('--primary-content'),
+        fontSize: YsType.label.size.px,
         fontWeight: .w500,
+        lineHeight: YsType.label.lineHeight.px,
+        backgroundColor: .variable('--primary'),
         raw: {'white-space': 'nowrap'},
       ),
       css('.hermuse-computer-primary:hover:enabled')
-          .styles(raw: {'filter': 'brightness(1.1)'}),
-      css('.hermuse-computer-primary:disabled').styles(opacity: 0.5),
+          .styles(backgroundColor: .variable('--primary-2')),
+      css('.hermuse-computer-primary:disabled')
+          .styles(opacity: 0.5, cursor: .defaultCursor),
       css(
         '.hermuse-computer-mode:focus-visible, '
         '.hermuse-computer-stop:focus-visible, '
         '.hermuse-computer-primary:focus-visible, '
         '.hermuse-computer-retry:focus-visible, '
+        '.hermuse-computer-copy:focus-visible, '
         '.hermuse-computer-tab-main:focus-visible, '
         '.hermuse-computer-tab-close:focus-visible, '
         '.hermuse-computer-canvas:focus-visible',
@@ -193,13 +208,14 @@ class HermuseComputerViewer extends StatefulComponent {
       css('.hermuse-computer-tabs').styles(
         display: .flex,
         flexDirection: .row,
-        gap: .all(4.px),
-        padding: .symmetric(horizontal: 12.px, vertical: 6.px),
+        gap: .all(YsSpace.xs.px),
+        padding: .symmetric(horizontal: YsSpace.lg.px, vertical: YsSpace.sm.px),
         overflow: .only(x: .auto, y: .hidden),
         border: .only(
           bottom: .solid(color: .variable('--line'), width: 1.px),
         ),
-        raw: {'flex-shrink': '0'},
+        backgroundColor: .variable('--canvas'),
+        raw: {'flex-shrink': '0', 'min-width': '0'},
       ),
       css('.hermuse-computer-tab').styles(
         width: 172.px,
@@ -207,6 +223,8 @@ class HermuseComputerViewer extends StatefulComponent {
         display: .flex,
         flexDirection: .row,
         alignItems: .center,
+        boxSizing: .borderBox,
+        border: .all(color: Colors.transparent, width: 1.px),
         radius: .circular(YsRadius.row.px),
         color: .variable('--content-muted'),
         raw: {'flex-shrink': '0'},
@@ -214,8 +232,16 @@ class HermuseComputerViewer extends StatefulComponent {
       css('.hermuse-computer-tab:hover')
           .styles(backgroundColor: .variable('--neutral-film')),
       css('.hermuse-computer-tab-active').styles(
+        border: .all(color: .variable('--line'), width: 1.px),
         color: .variable('--content'),
-        backgroundColor: .variable('--neutral-ambient'),
+        backgroundColor: .variable('--paper'),
+      ),
+      css('.hermuse-computer-tab-active:hover')
+          .styles(backgroundColor: .variable('--paper')),
+      css('.hermuse-computer-tab-working').styles(
+        display: .inlineFlex,
+        flex: .shrink(0),
+        color: .variable('--primary-ink'),
       ),
       css('.hermuse-computer-tab-main').styles(
         height: 100.percent,
@@ -223,11 +249,11 @@ class HermuseComputerViewer extends StatefulComponent {
         flexDirection: .row,
         alignItems: .center,
         flex: .grow(1),
-        gap: .all(6.px),
-        padding: .only(left: 10.px, right: 2.px),
+        gap: .all(YsSpace.sm.px),
+        padding: .only(left: YsSpace.md.px, right: YsSpace.xxs.px),
         radius: .circular(YsRadius.row.px),
-        fontSize: 13.px,
-        lineHeight: 18.px,
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
         raw: {'min-width': '0'},
       ),
       css('.hermuse-computer-tab-host').styles(
@@ -238,7 +264,7 @@ class HermuseComputerViewer extends StatefulComponent {
       css('.hermuse-computer-tab-close').styles(
         width: 24.px,
         height: 24.px,
-        margin: .only(right: 6.px),
+        margin: .only(right: YsSpace.xs.px),
         display: .flex,
         justifyContent: .center,
         alignItems: .center,
@@ -255,7 +281,7 @@ class HermuseComputerViewer extends StatefulComponent {
         display: .flex,
         justifyContent: .center,
         alignItems: .center,
-        padding: .all(16.px),
+        padding: .all(YsSpace.lg.px),
         overflow: .hidden,
         raw: {'flex': '1 1 0', 'min-height': '0'},
       ),
@@ -263,8 +289,8 @@ class HermuseComputerViewer extends StatefulComponent {
         display: .block,
         maxWidth: 100.percent,
         maxHeight: 100.percent,
-        radius: .circular(6.px),
-        backgroundColor: Colors.black,
+        radius: .circular(YsRadius.row.px),
+        backgroundColor: .variable('--canvas'),
         raw: {'min-width': '0', 'min-height': '0'},
       ),
       css('.hermuse-computer-canvas-idle').styles(display: .none),
@@ -276,40 +302,50 @@ class HermuseComputerViewer extends StatefulComponent {
         flexDirection: .column,
         justifyContent: .center,
         alignItems: .center,
-        gap: .all(12.px),
-        padding: .all(24.px),
+        gap: .all(YsSpace.md.px),
+        padding: .all(YsSpace.xl.px),
         textAlign: .center,
       ),
       css('.hermuse-computer-notice-text').styles(
         margin: .zero,
         maxWidth: 420.px,
-        fontSize: 14.px,
-        lineHeight: 20.px,
+        fontSize: YsType.label.size.px,
+        lineHeight: YsType.label.lineHeight.px,
         color: .variable('--content-muted'),
         raw: {'overflow-wrap': 'anywhere'},
       ),
       css('.hermuse-computer-retry').styles(
         height: 36.px,
-        padding: .symmetric(horizontal: 16.px),
+        padding: .symmetric(horizontal: YsSpace.lg.px),
         radius: .circular(YsRadius.pill.px),
-        color: Colors.white,
-        backgroundColor: browserPillGrey,
-        fontSize: 14.px,
-        lineHeight: 20.px,
+        color: .variable('--content'),
+        fontSize: YsType.label.size.px,
         fontWeight: .w500,
+        lineHeight: YsType.label.lineHeight.px,
+        backgroundColor: .variable('--neutral-ambient'),
       ),
       css('.hermuse-computer-retry:hover, .hermuse-computer-copy:hover')
-          .styles(raw: {'filter': 'brightness(1.15)'}),
+          .styles(backgroundColor: .variable('--neutral-film')),
       // Command to paste on the Hermes host (Docker missing).
       css('.hermuse-computer-command').styles(
         display: .flex,
         alignItems: .center,
-        gap: .all(8.px),
+        gap: .all(YsSpace.sm.px),
         maxWidth: 560.px,
-        padding: .only(left: 14.px, top: 8.px, right: 8.px, bottom: 8.px),
+        padding: .only(
+          left: YsSpace.md.px,
+          top: YsSpace.sm.px,
+          right: YsSpace.sm.px,
+          bottom: YsSpace.sm.px,
+        ),
         radius: .circular(YsRadius.row.px),
         backgroundColor: .variable('--paper'),
-        raw: {'box-shadow': 'var(--raised)'},
+        raw: {
+          'box-shadow': 'var(--raised)',
+          'min-width': '0',
+          'width': '100%',
+          'box-sizing': 'border-box',
+        },
       ),
       css('.hermuse-computer-command-text').styles(
         margin: .zero,
@@ -318,6 +354,7 @@ class HermuseComputerViewer extends StatefulComponent {
         lineHeight: 20.px,
         textAlign: .left,
         raw: {
+          'min-width': '0',
           'user-select': 'all',
           'overflow-wrap': 'anywhere',
           'white-space': 'pre-wrap',
@@ -327,21 +364,21 @@ class HermuseComputerViewer extends StatefulComponent {
       ),
       css('.hermuse-computer-copy').styles(
         height: 28.px,
-        padding: .symmetric(horizontal: 12.px),
+        padding: .symmetric(horizontal: YsSpace.md.px),
         radius: .circular(YsRadius.pill.px),
-        color: Colors.white,
-        backgroundColor: browserPillGrey,
-        fontSize: 13.px,
-        lineHeight: 18.px,
+        color: .variable('--content'),
+        fontSize: YsType.small.size.px,
+        lineHeight: YsType.small.lineHeight.px,
         fontWeight: .w500,
+        backgroundColor: .variable('--neutral-ambient'),
         raw: {'flex-shrink': '0'},
       ),
     ]),
     // Narrow: the title shares its row with the close button only; the
     // actions wrap onto a second row, right-aligned.
-    css.media(MediaQuery.screen(maxWidth: 639.px), [
+    css.media(MediaQuery.screen(maxWidth: 799.px), [
       css('.hermuse-computer .hermuse-computer-titles')
-          .styles(raw: {'order': '1'}),
+          .styles(raw: {'order': '1', 'flex-basis': '0'}),
       css('.hermuse-computer .hermuse-computer-close')
           .styles(raw: {'order': '2'}),
       css('.hermuse-computer .hermuse-computer-actions')
@@ -412,8 +449,10 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
     super.dispose();
   }
 
-  Future<ComputerClient> _computer() =>
-      (_client ??= listenComputerClient(component.instanceId)).read();
+  Future<ComputerClient> _computer() => (_client ??= listenComputerClient(
+    component.instanceId,
+    profile: component.controller.profile,
+  )).read();
 
   static String _describe(Object error) =>
       error is HermesException ? error.message : '$error';
@@ -849,18 +888,21 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
       [
         div(classes: 'hermuse-computer-head', [
           div(classes: 'hermuse-computer-titles', [
-            h2(classes: 'hermuse-computer-title', [.text(title)]),
-            if (subtitle.isNotEmpty)
-              p(classes: 'hermuse-computer-subtitle', [.text(subtitle)]),
+            span(classes: 'hermuse-computer-title-icon', [
+              YsIconView(YsIcon.monitor, size: 20),
+            ]),
+            div(classes: 'hermuse-computer-title-text', [
+              h2(classes: 'hermuse-computer-title', [.text(title)]),
+              if (subtitle.isNotEmpty)
+                p(classes: 'hermuse-computer-subtitle', [.text(subtitle)]),
+            ]),
           ]),
           div(classes: 'hermuse-computer-actions', [
             _modes(session, view.mode),
             if (state.busy)
               YsPressable(
                 onPressed: () => unawaited(component.controller.interrupt()),
-                classes: inControl
-                    ? 'hermuse-computer-stop hermuse-computer-stop-filled'
-                    : 'hermuse-computer-stop',
+                classes: 'hermuse-computer-stop',
                 builder: (context, press) => .fragment([
                   BrowserGlyphView(BrowserGlyph.record, size: 18),
                   span([.text('Stop')]),
@@ -877,11 +919,9 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
                 ]),
               )
             else
-              YsPressable(
+              YsButton.primary(
+                label: 'Take control of the browser',
                 onPressed: session?.take,
-                classes: 'hermuse-computer-primary',
-                builder: (context, press) =>
-                    span([.text('Take control of the browser')]),
               ),
           ]),
           div(classes: 'hermuse-computer-close', [
@@ -1014,7 +1054,9 @@ class _HermuseComputerViewerState extends State<HermuseComputerViewer> {
           if (completed)
             YsIconView(YsIcon.checkCircle, size: 16)
           else
-            BrowserGlyphView(BrowserGlyph.globe, size: 16),
+            span(classes: 'hermuse-computer-tab-working', [
+              BrowserGlyphView(BrowserGlyph.globe, size: 16),
+            ]),
           span(classes: 'hermuse-computer-tab-host', [.text(tab.host)]),
         ]),
       ),

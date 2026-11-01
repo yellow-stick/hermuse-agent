@@ -86,7 +86,9 @@ registered on this relay**.
 ## 4. Open the web app
 
 Open `https://chat.example.com`, choose **Connect to a machine**, enter the
-Hermes URL, a name and the dashboard user name and password. Once it is saved,
+Hermes URL, a name and the dashboard user name and password. The username is
+prefilled with `admin`; change it if your dashboard uses another account. An
+empty username is rejected before any sign-in request. Once it is saved,
 the web app shows **What's on** that Hermes: Hermes itself, the Hermuse plugin,
 its background jobs, Docker, the agent's computer and a model provider, each
 found or missing. Click **Install** on what is missing (or **Install everything
@@ -100,6 +102,31 @@ the relay.
 
 To install the web app, use the install icon in the address bar
 (Chrome, Edge) or **Share → Add to Home Screen** (Safari).
+
+### Settings and instances
+
+Open the menu at the bottom of the navigation rail (in the bottom navigation
+on a phone). **Instances** opens your saved Hermes connections. **Settings**
+offers **System**, **Light** and **Dark** appearance; the choice is saved in
+this browser and survives reloads. **Dark** is the default, including the
+initial page before the app loads. **System** follows the device appearance
+only when explicitly selected. Closing Settings returns to the current chat.
+
+The **Yellow Stick account** section is marked **Work in progress**, with
+sign-in disabled. You do not need a Yellow Stick account to use the app.
+The read-only demo includes appearance settings but does not offer instance
+management.
+
+### Several agents on the same instance
+
+Use the chat header's **Agent** menu to switch profiles or **Add agent** to
+create one with its own portrait, name and SOUL prompt. **Edit agent** and
+the portrait's pencil reopen that profile's saved prompt. Each profile keeps
+its own main chat, side chats and product data; no extra relay registration
+is needed. Prompt changes apply to new conversations. See
+[Agents and the profile panel](profile-panel.md) for portrait, animation and
+plugin-update requirements. Creation and editing are disabled in the read-only
+demo.
 
 ## Troubleshooting
 

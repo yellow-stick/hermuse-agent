@@ -21,6 +21,7 @@ dependencies:
   hermuse_state: ^0.1.0
   hermuse_update: ^0.1.0
   http: ^1.6.0
+  path: ^1.9.1
   path_provider: ^2.1.6
   url_launcher: ^6.3.2
   uuid: ^4.6.0
@@ -42,6 +43,8 @@ flutter:
     - assets/images/hermuse-avatar.webp
     - assets/images/hermuse-standing.webp
     - assets/images/hermuse-wave.webp
+    - assets/images/agents/
+    - assets/images/agents/hermuse/
     # Hermes plugin installed on the local instance (tool/sync_plugin_assets.dart).
     - assets/hermes-plugin/hermuse/
     - assets/hermes-plugin/hermuse/computer/

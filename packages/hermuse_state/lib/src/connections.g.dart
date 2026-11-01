@@ -65,7 +65,7 @@ final class ConnectionCardsProvider
   }
 }
 
-String _$connectionCardsHash() => r'22f3c2ed1360f002bc8068aeebc839301955bf74';
+String _$connectionCardsHash() => r'9e1ae8f0b9fc5b2444323766f2d2f9c6853e8959';
 
 /// Connection cards of one instance: data-driven descriptors plus the
 /// device-code / API-key / custom-endpoint / disconnect actions.

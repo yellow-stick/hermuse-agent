@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:hermes_client/hermes_client.dart';
-import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:hermuse_state/hermuse_state.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -24,7 +23,9 @@ Map<String, Object?> job(
   String state = 'scheduled',
   bool enabled = true,
   String? origin,
+  String originKey = 'feed',
   Object? heartbeat,
+  bool? hidden,
 }) => {
   'id': id,
   'name': name,
@@ -37,10 +38,11 @@ Map<String, Object?> job(
   'last_run_at': last,
   'last_status': lastStatus,
   'last_error': lastStatus == 'error' ? 'model unreachable' : null,
-  'origin': origin == null ? null : {'source': origin, 'key': 'feed'},
+  'origin': origin == null ? null : {'source': origin, 'key': originKey},
   'deliver': 'local',
   'profile': 'default',
   'scheduler_heartbeat_age_s': heartbeat,
+  'hidden': ?hidden,
 };
 
 void main() {
@@ -164,6 +166,14 @@ void main() {
             'feed',
             'Hermuse feed (daily)',
             origin: 'hermuse',
+            next: '2026-10-02T07:00:00+02:00',
+          ),
+          job(
+            'heartbeat',
+            'Hermuse heartbeat',
+            origin: 'hermuse',
+            originKey: 'heartbeat',
+            schedule: const {'kind': 'interval', 'minutes': 30},
             next: '2026-10-03T08:00:00+02:00',
           ),
           job(
@@ -210,11 +220,25 @@ void main() {
     Future<AutomationBoard> board() =>
         container.read(automationsProvider('vps').future);
 
-    test('lists soonest next run first, paused last', () async {
-      final b = await board();
-      expect(b.automations.map((a) => a.id), ['recap', 'feed', 'paused']);
-      expect(b.automations.first.schedule, 'Every day at 6:00 PM');
-    });
+    test(
+      'lists soonest next run first, paused last; maintenance hidden',
+      () async {
+        final b = await board();
+        expect(b.automations.map((a) => a.id), [
+          'recap',
+          'heartbeat',
+          'paused',
+        ]);
+        expect(b.automations.first.schedule, 'Every day at 6:00 PM');
+        expect(
+          [
+            for (final s in b.sections)
+              '${s.group.label}: ${s.automations.map((a) => a.id).join(', ')}',
+          ],
+          ['Daily: recap, paused', 'Heartbeat: heartbeat'],
+        );
+      },
+    );
 
     test('a scheduler that never ticked is reported', () async {
       expect((await board()).schedulerStopped, isTrue);
@@ -242,7 +266,7 @@ void main() {
       expect(b.busy, isEmpty);
       // Paused jobs go last, by name.
       expect(b.automations.map((a) => (a.id, a.paused)), [
-        ('feed', false),
+        ('heartbeat', false),
         ('recap', true),
         ('paused', true),
       ]);
@@ -252,7 +276,7 @@ void main() {
       );
       await notifier.perform(b.automations[1], AutomationAction.resume);
       b = container.read(automationsProvider('vps')).value!;
-      expect(b.automations.map((a) => a.id), ['recap', 'feed', 'paused']);
+      expect(b.automations.map((a) => a.id), ['recap', 'heartbeat', 'paused']);
 
       routes['POST /api/cron/jobs/recap/trigger'] = (_) => json(
         job(
@@ -284,15 +308,15 @@ void main() {
             .value!
             .automations
             .map((a) => a.id),
-        ['feed', 'paused'],
+        ['heartbeat', 'paused'],
       );
 
-      final feed = b.automations.firstWhere((a) => a.id == 'feed');
+      final heartbeat = b.automations.firstWhere((a) => a.id == 'heartbeat');
       expect(
-        () => notifier.perform(feed, AutomationAction.delete),
+        () => notifier.perform(heartbeat, AutomationAction.delete),
         throwsStateError,
       );
-      expect(calls, isNot(contains('DELETE /api/cron/jobs/feed')));
+      expect(calls, isNot(contains('DELETE /api/cron/jobs/heartbeat')));
     });
 
     test('a refused action keeps the job and says why', () async {
@@ -303,33 +327,213 @@ void main() {
       }, 409);
       await notifier.perform(b.automations.first, AutomationAction.runNow);
       final after = container.read(automationsProvider('vps')).value!;
-      expect(after.automations.map((a) => a.id), ['recap', 'feed', 'paused']);
+      expect(after.automations.map((a) => a.id), [
+        'recap',
+        'heartbeat',
+        'paused',
+      ]);
       expect(after.error, contains('already running'));
       expect(after.busy, isEmpty);
     });
   });
 
-  test('activity groups by local day, newest first', () {
-    final now = DateTime(2026, 10, 2, 9);
-    ActivityItem at(DateTime when) =>
-        ActivityItem(tool: 'web_search', summary: '', at: when);
-    final days = activityDays([
-      at(DateTime(2026, 10, 2, 8, 30)),
-      at(DateTime(2026, 10, 2, 0, 5)),
-      at(DateTime(2026, 10, 1, 23, 59)),
-      at(DateTime(2026, 9, 28, 12)),
-      at(DateTime(2026, 9, 20, 12)),
-      at(DateTime(2025, 12, 31, 12)),
-    ], now);
+  test('Upcoming groups: reminders, daily, weekly, other, heartbeat', () {
+    UpcomingGroup group(Map<String, Object?> schedule) =>
+        upcomingGroupOf(schedule);
+    Map<String, Object?> cron(String expr) => {'kind': 'cron', 'expr': expr};
     expect(
-      [for (final d in days) (d.label, d.items.length)],
-      [
-        ('Today', 2),
-        ('Yesterday', 1),
-        ('Monday', 1),
-        ('Sep 20', 1),
-        ('Dec 31, 2025', 1),
+      group({'kind': 'once', 'run_at': '2026-10-04T09:00:00Z'}),
+      UpcomingGroup.reminders,
+    );
+    expect(group(cron('0 8 * * *')), UpcomingGroup.daily);
+    expect(group(cron('0 8,18 * * *')), UpcomingGroup.daily);
+    expect(group({'kind': 'interval', 'minutes': 1440}), UpcomingGroup.daily);
+    expect(group(cron('0 9 * * 1')), UpcomingGroup.weekly);
+    expect(group(cron('0 7 * * 1-5')), UpcomingGroup.weekly);
+    expect(group({'kind': 'interval', 'minutes': 10080}), UpcomingGroup.weekly);
+    expect(group(cron('*/15 * * * *')), UpcomingGroup.other);
+    expect(group(cron('0 */2 * * *')), UpcomingGroup.other);
+    expect(group(cron('0 6 1 * *')), UpcomingGroup.other);
+    expect(group({'kind': 'interval', 'minutes': 90}), UpcomingGroup.other);
+
+    final heartbeat = Automation.fromJson(
+      job(
+        'h',
+        'Hermuse heartbeat',
+        origin: 'hermuse',
+        originKey: 'heartbeat',
+        schedule: const {'kind': 'interval', 'minutes': 30},
+      ),
+    );
+    expect(
+      (heartbeat.group, heartbeat.hidden),
+      (UpcomingGroup.heartbeat, false),
+    );
+    expect(heartbeat.actions, [
+      AutomationAction.pause,
+      AutomationAction.runNow,
+    ]);
+    for (final key in ['feed', 'ideas', 'goals', 'reflection']) {
+      expect(
+        Automation.fromJson(job(key, key, origin: 'hermuse', originKey: key))
+            .hidden,
+        isTrue,
+      );
+    }
+    expect(Automation.fromJson(job('x', 'x', hidden: true)).hidden, isTrue);
+    expect(Automation.fromJson(job('y', 'Trip check')).hidden, isFalse);
+    // A one-shot reminder that already fired is no longer upcoming.
+    expect(
+      Automation.fromJson(
+        job(
+          'r',
+          'Stretch',
+          schedule: const {'kind': 'once', 'display': 'once in 2m'},
+          state: 'completed',
+          enabled: false,
+        ),
+      ).hidden,
+      isTrue,
+    );
+  });
+
+  test('run history: status, output excerpt, last_output fallback', () async {
+    http.Response json(Object? payload, [int status = 200]) =>
+        http.Response.bytes(
+          utf8.encode(jsonEncode(payload)),
+          status,
+          headers: {'content-type': 'application/json'},
+        );
+    final asked = <String>[];
+    final mock = MockClient((request) async {
+      asked.add('${request.url.path}?${request.url.query}');
+      return switch (request.url.path) {
+        '/api/cron/jobs/j1/runs' => json({
+          'runs': [
+            {'id': 'cron_j1_3', 'started_at': 1790000000.0, 'is_active': true},
+            {
+              'id': 'cron_j1_2',
+              'started_at': 1789990000.0,
+              'ended_at': 1789990060.0,
+              'end_reason': 'cron_complete',
+              'is_active': false,
+            },
+            {
+              'id': 'cron_j1_1',
+              'started_at': 1789980000.0,
+              'ended_at': 1789980060.0,
+              'end_reason': 'cron_incomplete_no_output',
+            },
+          ],
+          'limit': 10,
+        }),
+        '/api/cron/jobs/j1' => json(
+          job('j1', 'Brief')..['last_output'] = 'Last words',
+        ),
+        '/api/sessions/cron_j1_2/messages' => json({
+          'messages': [
+            {'role': 'user', 'content': 'prompt'},
+            {'role': 'assistant', 'content': 'Sunny, ${'x' * 400}'},
+            {'role': 'assistant', 'content': ''},
+          ],
+        }),
+        '/api/sessions/cron_j1_3/messages' => json({'messages': const []}),
+        _ => json({'detail': 'Session not found'}, 404),
+      };
+    });
+    final container = ProviderContainer(
+      overrides: [
+        restClientProvider('vps').overrideWith(
+          (ref) =>
+              HermesRestClient(mock, baseUrl: Uri.parse('https://vps.example')),
+        ),
       ],
+    );
+    addTearDown(container.dispose);
+    final runs = await container.read(
+      automationRunsProvider('vps', 'j1').future,
+    );
+    expect(runs.map((r) => (r.id, r.status)), [
+      ('cron_j1_3', AutomationRunStatus.running),
+      ('cron_j1_2', AutomationRunStatus.ok),
+      ('cron_j1_1', AutomationRunStatus.failed),
+    ]);
+    expect(runs[0].output, 'Last words');
+    expect(runs[1].output, startsWith('Sunny, '));
+    expect(runs[1].output.length, runOutputLimit);
+    expect(runs[2].output, '');
+    expect(
+      runs[1].startedAt,
+      DateTime.fromMillisecondsSinceEpoch(1789990000000),
+    );
+    expect(asked.first, '/api/cron/jobs/j1/runs?limit=10');
+  });
+
+  test('run history shows the delivered answer, not the narration', () async {
+    final mock = MockClient((request) async {
+      final payload = switch (request.url.path) {
+        '/api/cron/jobs/j1/runs' => {
+          'runs': [
+            {
+              'id': 'cron_j1_1',
+              'started_at': 1789990000.0,
+              'ended_at': 1789990060.0,
+              'end_reason': 'cron_complete',
+            },
+          ],
+        },
+        '/api/sessions/cron_j1_1/messages' => {
+          'messages': [
+            {'role': 'user', 'content': 'Daily briefing'},
+            {
+              'role': 'assistant',
+              'content': 'Checking the weather first.',
+              'tool_calls': [
+                {
+                  'id': 'c1',
+                  'function': {'name': 'web_search'},
+                },
+              ],
+            },
+            {'role': 'tool', 'content': '{"results": []}'},
+            {
+              'role': 'assistant',
+              'content':
+                  "I have enough (weather via wttr.in). Writing the briefing."
+                  '\n\n## Daily briefing\n\n### Weather in Nantes\n'
+                  '- 17°C, cloudy',
+            },
+            // A later narration that calls a tool delivers nothing.
+            {
+              'role': 'assistant',
+              'content': 'Saving a copy.',
+              'tool_calls': '[{"id": "c2"}]',
+            },
+          ],
+        },
+        _ => {'detail': 'Session not found'},
+      };
+      return http.Response.bytes(
+        utf8.encode(jsonEncode(payload)),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final container = ProviderContainer(
+      overrides: [
+        restClientProvider('vps').overrideWith(
+          (ref) =>
+              HermesRestClient(mock, baseUrl: Uri.parse('https://vps.example')),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final runs = await container.read(
+      automationRunsProvider('vps', 'j1').future,
+    );
+    expect(
+      runs.single.output,
+      'Daily briefing\n\nWeather in Nantes\n- 17°C, cloudy',
     );
   });
 }

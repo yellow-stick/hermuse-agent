@@ -20,9 +20,14 @@ import 'screens.dart';
 /// Reflections) above the list; the artifact detail and the system-file
 /// Markdown editor open as dialogs.
 class HermuseLibrary extends StatefulComponent {
-  const HermuseLibrary({required this.instance, super.key});
+  const HermuseLibrary({
+    required this.instance,
+    required this.profile,
+    super.key,
+  });
 
   final HermesInstance instance;
+  final String profile;
 
   @override
   State<HermuseLibrary> createState() => _HermuseLibraryState();
@@ -163,7 +168,10 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
     instance: component.instance,
     title: 'Library',
     child: HermuseWatch(
-      provider: artifactsProvider(component.instance.id),
+      provider: artifactsProvider(
+        component.instance.id,
+        profile: component.profile,
+      ),
       builder: (context, artifacts) => _body(context, artifacts),
     ),
   );
@@ -207,6 +215,7 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
           ),
           _LibrarySection.reflections => _Reflections(
             instanceId: component.instance.id,
+            profile: component.profile,
           ),
         },
       ]),
@@ -237,6 +246,7 @@ class _HermuseLibraryState extends State<HermuseLibrary> {
       if (_editingFile case final name?)
         _SystemFileEditor(
           instanceId: component.instance.id,
+          profile: component.profile,
           name: name,
           onClose: () => setState(() => _editingFile = null),
         ),
@@ -367,11 +377,13 @@ class _SystemFiles extends StatelessComponent {
 class _SystemFileEditor extends StatefulComponent {
   const _SystemFileEditor({
     required this.instanceId,
+    required this.profile,
     required this.name,
     required this.onClose,
   });
 
   final String instanceId;
+  final String profile;
   final String name;
   final VoidCallback onClose;
 
@@ -387,7 +399,11 @@ class _SystemFileEditorState extends State<_SystemFileEditor> {
 
   @override
   Component build(BuildContext context) => HermuseWatch(
-    provider: systemFileProvider(component.instanceId, component.name),
+    provider: systemFileProvider(
+      component.instanceId,
+      component.name,
+      profile: component.profile,
+    ),
     builder: (context, file) {
       final content = file.value?.content;
       if (!_loaded && content != null) {
@@ -429,6 +445,7 @@ class _SystemFileEditorState extends State<_SystemFileEditor> {
                             systemFileProvider(
                               component.instanceId,
                               component.name,
+                              profile: component.profile,
                             ).notifier,
                           )
                           .save(_draft);
@@ -447,13 +464,14 @@ class _SystemFileEditorState extends State<_SystemFileEditor> {
 
 /// Reflections list, newest first.
 class _Reflections extends StatelessComponent {
-  const _Reflections({required this.instanceId});
+  const _Reflections({required this.instanceId, required this.profile});
 
   final String instanceId;
+  final String profile;
 
   @override
   Component build(BuildContext context) => HermuseWatch(
-    provider: reflectionsProvider(instanceId),
+    provider: reflectionsProvider(instanceId, profile: profile),
     builder: (context, reflections) {
       final all = reflections.value ?? const <Reflection>[];
       if (reflections.isLoading && reflections.value == null) {

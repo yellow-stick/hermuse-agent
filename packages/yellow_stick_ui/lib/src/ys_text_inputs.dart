@@ -94,7 +94,8 @@ mixin _InputState<T extends StatefulWidget> on State<T> {
 }
 
 /// Auto-growing multiline input (1–6 lines), Enter submits, Shift+Enter adds
-/// a newline.
+/// a newline. With [enterSubmits] false Enter adds a newline too (a document
+/// editor); a null [maxLines] grows without limit.
 final class YsTextArea extends StatefulWidget {
   const YsTextArea({
     required this.controller,
@@ -109,6 +110,7 @@ final class YsTextArea extends StatefulWidget {
     this.minLines = 1,
     this.maxLines = 6,
     this.textInputAction = TextInputAction.send,
+    this.enterSubmits = true,
   });
 
   final TextEditingController controller;
@@ -120,8 +122,9 @@ final class YsTextArea extends StatefulWidget {
   final YsTextStyle textStyle;
   final String? semanticLabel;
   final int minLines;
-  final int maxLines;
+  final int? maxLines;
   final TextInputAction textInputAction;
+  final bool enterSubmits;
 
   @override
   State<YsTextArea> createState() => _YsTextAreaState();
@@ -152,7 +155,7 @@ final class _YsTextAreaState extends State<YsTextArea> with _InputState {
     final isEnter =
         event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
-    if (!isEnter) {
+    if (!isEnter || !widget.enterSubmits) {
       return KeyEventResult.ignored;
     }
     if (HardwareKeyboard.instance.isShiftPressed) {

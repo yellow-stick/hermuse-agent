@@ -33,6 +33,8 @@ final class ThreadView extends StatefulWidget {
     required this.needsSignIn,
     this.showFloatingHeader = true,
     this.instanceId,
+    this.agentSwitcher,
+    this.avatar = hermuseAvatar,
     super.key,
   });
 
@@ -61,6 +63,8 @@ final class ThreadView extends StatefulWidget {
 
   /// Hermes instance of this thread; null hides the composer model picker.
   final String? instanceId;
+  final Widget? agentSwitcher;
+  final ImageProvider avatar;
 
   /// Whether the floating header (Chats pill, or Back to main chat + side
   /// chat title pill; profile avatar) overlays the thread.
@@ -216,7 +220,7 @@ final class ThreadViewState extends State<ThreadView> {
             left: 12,
             top: 12,
             // Clear of the avatar on the right.
-            right: 60,
+            right: widget.agentSwitcher == null ? 60 : 260,
             child: Align(
               alignment: Alignment.centerLeft,
               child: _ThreadHeader(
@@ -233,12 +237,19 @@ final class ThreadViewState extends State<ThreadView> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (widget.agentSwitcher case final switcher?) ...[
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 190),
+                    child: switcher,
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (!widget.panelOpen) ...[
                   YsPressable(
                     onPressed: widget.onOpenPanel,
                     semanticLabel: 'Open panel',
                     builder: (context, state) =>
-                        const YsAvatar(hermuseAvatar, size: 36),
+                        YsAvatar(widget.avatar, size: 36),
                   ),
                 ],
               ],
@@ -342,8 +353,7 @@ final class _ThreadHeader extends StatelessWidget {
           size: 36,
           iconSize: 20,
           iconColor: palette.contentColor,
-          background: palette.paperClearColor,
-          raised: true,
+          glass: true,
         ),
         const SizedBox(width: 8),
         Flexible(
@@ -459,11 +469,26 @@ final class _Composer extends StatelessWidget {
         borderRadius: BorderRadius.circular(YsRadius.composer),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: palette.paperClearColor,
-              borderRadius: BorderRadius.circular(YsRadius.composer),
-              border: Border.all(color: palette.lineColor, width: ysHairline),
+          // Writing (the field focused) eases the outline to the accent ink,
+          // like the kit's input boxes.
+          child: ListenableBuilder(
+            listenable: focusNode,
+            builder: (context, child) => AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: YsMotion.fast),
+              curve: YsEase.standard.curve,
+              decoration: BoxDecoration(
+                color: palette.paperClearColor,
+                borderRadius: BorderRadius.circular(YsRadius.composer),
+                border: Border.all(
+                  color: focusNode.hasFocus
+                      ? palette.primaryInkColor
+                      : palette.lineColor,
+                  width: ysHairline,
+                ),
+              ),
+              child: child,
             ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 58),
@@ -813,71 +838,119 @@ final class _SignInBannerState extends ConsumerState<_SignInBanner> {
   }
 }
 
-/// Composer model picker: the thread's current model ([ChatController.setModel]
-/// switches it session-scoped) over the available-models flat union.
-final class _ModelPicker extends ConsumerWidget {
+/// Composer model chip: a quiet pill above the composer's left edge naming
+/// the thread's current model; it washes in on hover and while its menu is
+/// open. The menu lists the available-models flat union with the current one
+/// checked; a pick switches the thread session-scoped
+/// ([ChatController.setModel]). Web `_ModelPicker` parity.
+final class _ModelPicker extends ConsumerStatefulWidget {
   const _ModelPicker({required this.instanceId, required this.controller});
 
   final String instanceId;
   final ChatController controller;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ModelPicker> createState() => _ModelPickerState();
+}
+
+final class _ModelPickerState extends ConsumerState<_ModelPicker> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
     final all =
-        ref.watch(availableModelsProvider(instanceId)).value ??
+        ref
+            .watch(
+              availableModelsProvider(
+                widget.instanceId,
+                profile: widget.controller.profile,
+              ),
+            )
+            .value ??
         const <AvailableModel>[];
     if (all.isEmpty) return const SizedBox.shrink();
-    final current = controller.state.model;
-    final value = current == null ? '' : '${current.provider}/${current.model}';
-    final known =
-        value.isEmpty ||
-        all.any(
-          (entry) =>
-              entry.providerId == current!.provider &&
-              entry.modelId == current.model,
-        );
+    final current = widget.controller.state.model;
+    final label = current?.model ?? 'Default model';
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          Text(
-            'Model',
-            style: YsType.small.flutter.copyWith(
-              color: palette.contentMutedColor,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SizedBox(
-              height: 36,
-              child: YsSelect(
-                value: known ? value : '',
-                options: [
-                  ('', 'Instance default'),
-                  for (final model in all)
-                    (
-                      '${model.providerId}/${model.modelId}',
-                      '${model.providerName} · ${model.modelId}',
-                    ),
-                ],
-                onChanged: (v) {
-                  if (v.isEmpty) return;
-                  final slash = v.indexOf('/');
-                  unawaited(
-                    controller.setModel(
-                      ChatModel(
-                        provider: v.substring(0, slash),
-                        model: v.substring(slash + 1),
-                      ),
-                    ),
-                  );
-                },
-                semanticLabel: 'Thread model',
+      padding: const EdgeInsets.only(left: 6, bottom: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: YsMenuAnchor(
+          semanticLabel: 'Thread model',
+          onOpenChanged: (open) => setState(() => _open = open),
+          items: [
+            for (final model in all)
+              YsMenuItem(
+                label: '${model.providerName} · ${model.modelId}',
+                checked:
+                    current != null &&
+                    model.providerId == current.provider &&
+                    model.modelId == current.model,
+                onSelected: () => unawaited(
+                  widget.controller.setModel(
+                    ChatModel(provider: model.providerId, model: model.modelId),
+                  ),
+                ),
               ),
+          ],
+          builder: (context, menu) => Semantics(
+            container: true,
+            button: true,
+            label: 'Thread model: $label',
+            child: YsPressable(
+              onPressed: menu.open,
+              excludeSemantics: true,
+              builder: (context, state) {
+                final active = _open || state.hovered || state.pressed;
+                final ink = active
+                    ? palette.contentColor
+                    : palette.contentMutedColor;
+                return YsFocusRing(
+                  visible: state.focused,
+                  radius: YsRadius.pill,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: YsMotion.fast),
+                    height: 28,
+                    padding: const EdgeInsets.fromLTRB(8, 0, 6, 0),
+                    decoration: BoxDecoration(
+                      color: active
+                          ? palette.neutralFilmColor
+                          : palette.neutralFilmColor.withValues(alpha: 0),
+                      borderRadius: BorderRadius.circular(YsRadius.pill),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        YsIconWidget(YsIcon.sparkles, size: 14, color: ink),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            label,
+                            style: YsType.small.flutter.copyWith(color: ink),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        AnimatedRotation(
+                          turns: _open ? 0.5 : 0,
+                          duration: const Duration(milliseconds: YsMotion.fast),
+                          child: YsIconWidget(
+                            YsIcon.chevronDown,
+                            size: 14,
+                            color: ink,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
-        ],
+        ),
       ),
     );
   }

@@ -2,19 +2,26 @@ import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:hermuse_state/hermuse_state.dart';
+import 'package:jaspr_riverpod/jaspr_riverpod.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
-import 'brand.dart';
-import 'scope.dart';
+import 'agents.dart';
+import 'identity.dart';
 import 'screens.dart';
+import 'tool_icon.dart';
+import 'upcoming.dart';
 
-/// Profile panel (360 wide): avatar, name, status, tabs, and the selected
-/// tab: activity, approvals, automations or connectors.
+/// Profile panel (360 wide): avatar, name, what the agent does now, tabs,
+/// and the selected tab: activity, approvals, upcoming or identity.
 class HermusePanel extends StatelessComponent {
   const HermusePanel({
     required this.agentName,
     required this.instanceId,
+    required this.profile,
+    required this.avatarId,
+    required this.chat,
+    this.onEditAgent,
     required this.threadIds,
     required this.approvals,
     required this.tab,
@@ -22,12 +29,17 @@ class HermusePanel extends StatelessComponent {
     required this.onClose,
     required this.onOpenThread,
     required this.onOpenApproval,
+    required this.onStop,
     this.onOpenComputer,
     super.key,
   });
 
   final String agentName;
   final String instanceId;
+  final String profile;
+  final String avatarId;
+  final ChatState chat;
+  final VoidCallback? onEditAgent;
 
   /// The current chat's threads: activity of these opens its chat.
   final Set<String> threadIds;
@@ -42,112 +54,209 @@ class HermusePanel extends StatelessComponent {
   /// Opens the conversation waiting on an approval.
   final ValueChanged<String> onOpenApproval;
 
+  /// Stops the turn running in a thread (the Stop button of a running
+  /// task).
+  final ValueChanged<String> onStop;
+
   /// Shows the agent's computer (its browser and desktop) at will; null
   /// hides the button. The read-only demo shows its fake computer too:
   /// its stream is replayed frames, input stays inert.
   final VoidCallback? onOpenComputer;
 
   @override
-  Component build(BuildContext context) => aside(
-    classes: 'hermuse-panel',
-    attributes: {'aria-label': 'Profile'},
-    [
-      div(classes: 'hermuse-panel-close', [
-        YsButton.icon(
-          icon: YsIcon.close,
-          label: 'Close panel',
-          onPressed: onClose,
-        ),
-      ]),
-      div(classes: 'hermuse-panel-avatar', [
-        YsAvatar(
-          src: hermuseAvatarUrl,
-          alt: '$agentName avatar',
-          size: 100,
-          onEdit: () {},
-          editLabel: 'Edit avatar',
-        ),
-      ]),
-      h1(classes: 'hermuse-panel-name', [.text(agentName)]),
-      div(classes: 'hermuse-panel-status', [
-        span(classes: 'hermuse-panel-status-icon', [
-          YsPing(
-            live: true,
-            color: YsTheme.success,
-            child: RawText(ysConnectedSvg('currentColor')),
+  Component build(BuildContext context) {
+    final step = chat.agentStep;
+    return aside(
+      classes: 'hermuse-panel',
+      attributes: {'aria-label': 'Profile'},
+      [
+        div(classes: 'hermuse-panel-close', [
+          YsButton.icon(
+            icon: YsIcon.close,
+            label: 'Close panel',
+            onPressed: onClose,
           ),
         ]),
-        span(classes: 'hermuse-panel-status-text', [.text('Connected')]),
-      ]),
-      if (onOpenComputer case final onOpen?)
-        div(classes: 'hermuse-panel-computer', [
-          YsButton.neutral(label: 'Open computer', onPressed: onOpen),
+        div(classes: 'hermuse-panel-avatar', [
+          HermuseAgentAvatar(
+            instanceId: instanceId,
+            profile: profile,
+            avatarId: avatarId,
+            chat: chat,
+            alt: '$agentName avatar',
+            size: 100,
+            onEdit: onEditAgent,
+          ),
         ]),
-      div(classes: 'hermuse-panel-tabs', [
-        YsSegmentedTabs<PanelTab>(
-          segments: [
-            for (final t in PanelTab.values)
-              YsSegment(value: t, icon: _tabIcon(t), label: t.label),
+        h1(classes: 'hermuse-panel-name', [.text(agentName)]),
+        div(
+          classes: 'hermuse-panel-status',
+          attributes: {'role': 'status', 'aria-live': 'polite'},
+          [
+            if (step == null)
+              span(classes: 'hermuse-panel-status-icon', [
+                YsPing(
+                  live: true,
+                  color: YsTheme.success,
+                  child: RawText(ysConnectedSvg('currentColor')),
+                ),
+              ])
+            else
+              span(classes: 'hermuse-panel-status-icon hermuse-panel-working', [
+                YsPing(
+                  live: true,
+                  color: YsTheme.primary,
+                  child: span(classes: 'hermuse-panel-working-dot', []),
+                ),
+              ]),
+            span(classes: 'hermuse-panel-status-text', [
+              .text(step ?? 'Connected'),
+            ]),
           ],
-          selected: tab,
-          onSelected: onTab,
         ),
-      ]),
-      switch (tab) {
-        PanelTab.activity => HermuseWatch(
-          provider: activityProvider(instanceId),
-          builder: (context, activity) => _activity(activity.value ?? []),
-        ),
-        PanelTab.approvals => _approvals(),
-        PanelTab.automations => _AutomationsTab(
-          key: ValueKey(instanceId),
-          instanceId: instanceId,
-        ),
-        PanelTab.connectors => const _PanelEmpty(PanelTab.connectors),
-      },
-    ],
-  );
+        if (onOpenComputer case final onOpen?)
+          div(classes: 'hermuse-panel-computer', [
+            YsButton.neutral(label: 'Open computer', onPressed: onOpen),
+          ]),
+        div(classes: 'hermuse-panel-tabs', [
+          YsSegmentedTabs<PanelTab>(
+            segments: [
+              for (final t in PanelTab.values)
+                YsSegment(value: t, icon: _tabIcon(t), label: t.label),
+            ],
+            selected: tab,
+            onSelected: onTab,
+          ),
+        ]),
+        switch (tab) {
+          PanelTab.activity => HermuseWatch(
+            provider: tasksProvider(instanceId, profile: profile),
+            builder: (context, tasks) => _activity(tasks),
+          ),
+          PanelTab.approvals => _approvals(),
+          PanelTab.upcoming => HermuseUpcoming(
+            key: ValueKey('upcoming:$instanceId:$profile'),
+            instanceId: instanceId,
+            profile: profile,
+          ),
+          PanelTab.identity => HermuseIdentity(
+            key: ValueKey('identity:$instanceId:$profile'),
+            instanceId: instanceId,
+            profile: profile,
+            agentName: agentName,
+            onEditAgent: onEditAgent,
+          ),
+        },
+      ],
+    );
+  }
 
-  Component _activity(List<ActivityItem> items) {
-    if (items.isEmpty) return const _PanelEmpty(PanelTab.activity);
+  Component _activity(AsyncValue<List<Task>> tasks) {
+    final running = chat.runningTasks;
+    final items = tasks.value ?? const <Task>[];
+    if (running.isEmpty && items.isEmpty) {
+      if (tasks.isLoading) {
+        return p(
+          classes: 'hermuse-panel-note',
+          attributes: {'role': 'status'},
+          [.text('Loading activity…')],
+        );
+      }
+      return HermusePanelEmpty(
+        PanelTab.activity,
+        help: tasks.hasError
+            ? 'Could not load activity: ${hermuseErrorText(tasks.error!)}'
+            : null,
+      );
+    }
     return div(classes: 'hermuse-panel-section', [
+      if (running.isNotEmpty) ...[
+        h2(classes: 'hermuse-panel-heading', [.text('Now')]),
+        for (final task in running) _runningRow(task),
+      ],
       for (final day in activityDays(items, DateTime.now())) ...[
         h2(classes: 'hermuse-panel-heading', [.text(day.label)]),
-        for (final item in day.items) _activityRow(item),
+        for (final task in day.items) _taskRow(task),
       ],
     ]);
   }
 
-  Component _activityRow(ActivityItem item) {
-    final content = [
-      div(classes: 'hermuse-activity-icon', [
-        YsIconView(
-          item.kind == ActivityKind.webSearch
-              ? YsIcon.webSearch
-              : YsIcon.checkCircle,
-          size: 18,
-        ),
+  Component _runningRow(RunningTask task) {
+    final title = task.request.isNotEmpty
+        ? task.request
+        : task.threadTitle.isNotEmpty
+        ? task.threadTitle
+        : task.isMain
+        ? 'Main chat'
+        : 'New chat';
+    final body = [
+      div(classes: 'hermuse-activity-icon hermuse-activity-live', [
+        YsIconView(YsIcon.sparkles, size: 18),
       ]),
       div(classes: 'hermuse-activity-body', [
-        p(classes: 'hermuse-activity-title', [.text(item.title)]),
-        if (item.summary.isNotEmpty)
-          p(classes: 'hermuse-activity-desc', [.text(item.summary)]),
-        p(classes: 'hermuse-activity-time', [.text(formatChatTime(item.at))]),
+        p(classes: 'hermuse-activity-title hermuse-activity-clamp', [
+          .text(title),
+        ]),
+        p(classes: 'hermuse-activity-desc', [.text(task.step)]),
       ]),
     ];
-    if (!threadIds.contains(item.sessionId)) {
+    return div(classes: 'hermuse-activity hermuse-activity-running', [
+      if (threadIds.contains(task.threadId))
+        YsPressable(
+          classes: 'hermuse-activity-main hermuse-activity-link',
+          onPressed: () => onOpenThread(task.threadId),
+          builder: (context, state) =>
+              span(classes: 'hermuse-activity-row', body),
+        )
+      else
+        div(classes: 'hermuse-activity-main', body),
+      YsTooltip(
+        label: 'Stop',
+        child: YsButton.icon(
+          icon: YsIcon.stop,
+          label: 'Stop $title',
+          size: 32,
+          iconSize: 16,
+          onPressed: () => onStop(task.threadId),
+        ),
+      ),
+    ]);
+  }
+
+  Component _taskRow(Task task) {
+    final status = switch (task.status) {
+      TaskStatus.completed => null,
+      TaskStatus.failed => 'Failed',
+      TaskStatus.interrupted => 'Stopped',
+    };
+    final content = [
+      div(classes: 'hermuse-activity-icon', [
+        YsIconView(toolIcon(task.kind), size: 18),
+      ]),
+      div(classes: 'hermuse-activity-body', [
+        p(classes: 'hermuse-activity-title', [.text(task.title)]),
+        if (task.summary.isNotEmpty)
+          p(classes: 'hermuse-activity-desc hermuse-activity-clamp', [
+            .text(task.summary),
+          ]),
+        p(classes: 'hermuse-activity-time', [
+          .text([formatChatTime(task.finishedAt), ?status].join(' · ')),
+        ]),
+      ]),
+    ];
+    if (!threadIds.contains(task.sessionId)) {
       return div(classes: 'hermuse-activity', content);
     }
     return YsPressable(
       classes: 'hermuse-activity hermuse-activity-link',
-      onPressed: () => onOpenThread(item.sessionId),
+      onPressed: () => onOpenThread(task.sessionId),
       builder: (context, state) =>
           span(classes: 'hermuse-activity-row', content),
     );
   }
 
   Component _approvals() {
-    if (approvals.isEmpty) return const _PanelEmpty(PanelTab.approvals);
+    if (approvals.isEmpty) return const HermusePanelEmpty(PanelTab.approvals);
     return div(classes: 'hermuse-panel-section', [
       h2(classes: 'hermuse-panel-heading', [.text('Pending')]),
       for (final request in approvals)
@@ -172,8 +281,8 @@ class HermusePanel extends StatelessComponent {
   static YsIcon _tabIcon(PanelTab tab) => switch (tab) {
     PanelTab.activity => YsIcon.activity,
     PanelTab.approvals => YsIcon.approvals,
-    PanelTab.automations => YsIcon.upcoming,
-    PanelTab.connectors => YsIcon.link,
+    PanelTab.upcoming => YsIcon.upcoming,
+    PanelTab.identity => YsIcon.identity,
   };
 
   @css
@@ -277,6 +386,20 @@ class HermusePanel extends StatelessComponent {
         lineHeight: 18.px,
         color: .variable('--content-muted'),
       ),
+      css('.hermuse-activity-clamp').styles(
+        overflow: .hidden,
+        raw: {
+          'display': '-webkit-box',
+          '-webkit-line-clamp': '2',
+          '-webkit-box-orient': 'vertical',
+          'overflow-wrap': 'anywhere',
+        },
+      ),
+      css('.hermuse-activity-mono').styles(
+        fontSize: YsType.code.size.px,
+        lineHeight: YsType.code.lineHeight.px,
+        raw: {'font-family': YsType.monoFamily},
+      ),
       css('.hermuse-activity-time').styles(
         margin: .zero,
         fontSize: 12.px,
@@ -292,57 +415,32 @@ class HermusePanel extends StatelessComponent {
           'overflow-wrap': 'anywhere',
         },
       ),
-      css('.hermuse-automations').styles(
+      css('.hermuse-panel-note').styles(
         width: 100.percent,
-        display: .flex,
-        flexDirection: .column,
-        gap: .all(1.px),
-      ),
-      css('.hermuse-automations-note').styles(
         margin: .symmetric(vertical: YsSpace.xs.px),
         fontSize: 13.px,
         lineHeight: 18.px,
         color: .variable('--content-muted'),
       ),
-      css('.hermuse-automations-error').styles(
-        margin: .symmetric(vertical: YsSpace.xs.px),
-        fontSize: 13.px,
-        lineHeight: 18.px,
-        color: .variable('--error'),
-        raw: {'overflow-wrap': 'anywhere'},
+      css('.hermuse-panel-working-dot').styles(
+        width: YsLayout.statusDot.px,
+        height: YsLayout.statusDot.px,
+        margin: .all(4.px),
+        radius: .circular(YsRadius.pill.px),
+        display: .block,
+        backgroundColor: .variable('--primary'),
       ),
-      css('.hermuse-automation').styles(
-        padding: .all(8.px),
-        radius: .circular(YsRadius.row.px),
+      css('.hermuse-activity-running').styles(alignItems: .center),
+      css('.hermuse-activity-main').styles(
         display: .flex,
         flexDirection: .row,
         gap: .all(8.px),
+        raw: {'flex': '1', 'min-width': '0'},
       ),
-      css('.hermuse-automation .hermuse-activity-body')
-          .styles(raw: {'flex': '1', 'min-width': '0'}),
-      css('.hermuse-automation-name').styles(
-        display: .flex,
-        flexDirection: .row,
-        alignItems: .center,
-        gap: .all(YsSpace.xs.px),
-      ),
-      css('.hermuse-automation-tag').styles(
-        padding: .symmetric(horizontal: 6.px),
-        radius: .circular(YsRadius.pill.px),
-        fontSize: 11.px,
-        lineHeight: 16.px,
-        fontWeight: .w500,
-        color: .variable('--content-muted'),
-        backgroundColor: .variable('--neutral-ambient'),
-        raw: {'flex-shrink': '0'},
-      ),
-      css('.hermuse-automation-failed').styles(color: .variable('--error')),
-      css('.hermuse-automation-actions').styles(
-        display: .flex,
-        flexDirection: .row,
-        alignItems: .start,
-        raw: {'flex-shrink': '0'},
-      ),
+      css('.hermuse-activity-running .hermuse-activity-link')
+          .styles(padding: .zero, radius: .circular(YsRadius.row.px)),
+      css('.hermuse-activity-live').styles(color: .variable('--primary-ink')),
+      css('.hermuse-activity-body').styles(raw: {'min-width': '0'}),
       css('.hermuse-panel-empty-help').styles(
         margin: .fromLTRB(.zero, YsSpace.sm.px, .zero, .zero),
         fontSize: 13.px,
@@ -375,8 +473,8 @@ class HermusePanel extends StatelessComponent {
 
 /// The empty state of [tab]: its art, name and empty text, and an optional
 /// [help] line.
-class _PanelEmpty extends StatelessComponent {
-  const _PanelEmpty(this.tab, {this.help});
+class HermusePanelEmpty extends StatelessComponent {
+  const HermusePanelEmpty(this.tab, {this.help, super.key});
 
   final PanelTab tab;
   final String? help;
@@ -388,8 +486,8 @@ class _PanelEmpty extends StatelessComponent {
         switch (tab) {
           PanelTab.activity => YsArt.activity,
           PanelTab.approvals => YsArt.approvals,
-          PanelTab.automations => YsArt.upcoming,
-          PanelTab.connectors => YsArt.plugin,
+          PanelTab.upcoming => YsArt.upcoming,
+          PanelTab.identity => YsArt.activity,
         },
         size: YsLayout.artCompact,
         active: hovered,
@@ -400,194 +498,4 @@ class _PanelEmpty extends StatelessComponent {
         p(classes: 'hermuse-panel-empty-help', [.text(help)]),
     ]),
   );
-}
-
-/// Hermes' cron jobs of [instanceId], reloaded whenever the tab opens, with
-/// pause/resume, run now and delete (after a confirmation).
-class _AutomationsTab extends StatefulComponent {
-  const _AutomationsTab({required this.instanceId, super.key});
-
-  final String instanceId;
-
-  @override
-  State<_AutomationsTab> createState() => _AutomationsTabState();
-}
-
-class _AutomationsTabState extends State<_AutomationsTab> {
-  Automation? _deleting;
-
-  @override
-  void initState() {
-    super.initState();
-    // Fresh on every opening: jobs run and change on the server meanwhile.
-    context.container.invalidate(automationsProvider(component.instanceId));
-  }
-
-  void _perform(Automation automation, AutomationAction action) {
-    context.container
-        .read(automationsProvider(component.instanceId).notifier)
-        .perform(automation, action);
-  }
-
-  @override
-  Component build(BuildContext context) => HermuseWatch(
-    provider: automationsProvider(component.instanceId),
-    builder: (context, async) {
-      final board = async.value;
-      if (board == null) {
-        if (async.error case final error?) {
-          return div(classes: 'hermuse-automations', [
-            p(classes: 'hermuse-automations-error', [
-              .text('Could not load automations: $error'),
-            ]),
-            div([
-              YsButton.neutral(
-                label: 'Retry',
-                onPressed: () => context.container.invalidate(
-                  automationsProvider(component.instanceId),
-                ),
-              ),
-            ]),
-          ]);
-        }
-        return p(
-          classes: 'hermuse-automations-note',
-          attributes: {'role': 'status'},
-          [.text('Loading automations…')],
-        );
-      }
-      return div(classes: 'hermuse-automations', [
-        if (board.error case final error?)
-          p(
-            classes: 'hermuse-automations-error',
-            attributes: {'role': 'alert'},
-            [.text(error)],
-          ),
-        if (board.schedulerStopped)
-          p(classes: 'hermuse-automations-note', [
-            .text(
-              "The scheduler isn't running on this server: automations only "
-              'run when started here until the Hermes gateway runs.',
-            ),
-          ]),
-        if (board.automations.isEmpty)
-          const _PanelEmpty(
-            PanelTab.automations,
-            help: 'Ask your agent: "Every morning at 8, send me…"',
-          )
-        else
-          for (final automation in board.automations)
-            _row(automation, board.busy[automation.id]),
-        if (_deleting case final deleting?)
-          YsDialog(
-            title: 'Delete automation?',
-            onClose: () => setState(() => _deleting = null),
-            actions: [
-              YsButton.neutral(
-                label: 'Cancel',
-                onPressed: () => setState(() => _deleting = null),
-              ),
-              YsButton.destructive(
-                label: 'Delete',
-                onPressed: () {
-                  setState(() => _deleting = null);
-                  _perform(deleting, AutomationAction.delete);
-                },
-              ),
-            ],
-            child: p([
-              .text(
-                '“${deleting.name}” stops running and is removed from this '
-                'Hermes. This cannot be undone.',
-              ),
-            ]),
-          ),
-      ]);
-    },
-  );
-
-  Component _row(Automation automation, AutomationAction? busy) {
-    final last = automation.lastRunAt;
-    final failed = automation.lastOutcome == AutomationOutcome.failed;
-    final next = automation.nextRunAt;
-    return div(classes: 'hermuse-automation', [
-      div(classes: 'hermuse-activity-icon', [
-        YsIconView(YsIcon.upcoming, size: 18),
-      ]),
-      div(classes: 'hermuse-activity-body', [
-        p(classes: 'hermuse-activity-title hermuse-automation-name', [
-          span([.text(automation.name)]),
-          if (automation.owner == AutomationOwner.hermuse)
-            span(classes: 'hermuse-automation-tag', [.text('Hermuse')]),
-        ]),
-        p(classes: 'hermuse-activity-desc', [.text(automation.schedule)]),
-        p(classes: 'hermuse-activity-time', [
-          .text(switch (busy) {
-            AutomationAction.pause => 'Pausing…',
-            AutomationAction.resume => 'Resuming…',
-            AutomationAction.runNow => 'Running…',
-            AutomationAction.delete => 'Deleting…',
-            null when automation.paused => 'Paused',
-            null when next != null => 'Next: ${formatAutomationTime(next)}',
-            null => 'Not scheduled',
-          }),
-        ]),
-        if (last != null)
-          p(
-            classes: [
-              'hermuse-activity-time',
-              if (failed) 'hermuse-automation-failed',
-            ].join(' '),
-            attributes: {
-              if (failed && automation.lastError.isNotEmpty)
-                'title': automation.lastError,
-            },
-            [
-              .text(
-                'Last: ${formatAutomationTime(last)}'
-                '${switch (automation.lastOutcome) {
-                  AutomationOutcome.ok => ' · OK',
-                  AutomationOutcome.failed => ' · Failed',
-                  AutomationOutcome.deliveryFailed => ' · Not delivered',
-                  null => '',
-                }}',
-              ),
-            ],
-          ),
-        if (failed && automation.lastError.isNotEmpty)
-          p(classes: 'hermuse-activity-time hermuse-automation-failed', [
-            .text(automation.lastError),
-          ]),
-      ]),
-      div(classes: 'hermuse-automation-actions', [
-        for (final action in automation.actions)
-          YsTooltip(
-            label: _actionLabel(action),
-            child: YsButton.icon(
-              icon: switch (action) {
-                AutomationAction.pause => YsIcon.pause,
-                AutomationAction.resume => YsIcon.play,
-                AutomationAction.runNow => YsIcon.zap,
-                AutomationAction.delete => YsIcon.trash,
-              },
-              label: '${_actionLabel(action)} ${automation.name}',
-              size: 32,
-              iconSize: 16,
-              onPressed: busy != null
-                  ? null
-                  : action == AutomationAction.delete
-                  ? () => setState(() => _deleting = automation)
-                  : () => _perform(automation, action),
-            ),
-          ),
-      ]),
-    ]);
-  }
-
-  static String _actionLabel(AutomationAction action) => switch (action) {
-    AutomationAction.pause => 'Pause',
-    AutomationAction.resume => 'Resume',
-    AutomationAction.runNow => 'Run now',
-    AutomationAction.delete => 'Delete',
-  };
 }

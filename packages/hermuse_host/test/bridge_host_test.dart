@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:hermes_client/hermes_client.dart';
@@ -6,36 +7,85 @@ import 'package:test/test.dart';
 
 void main() {
   group('SupervisorBridgeHost', () {
-    test('returns the supervisor connection', () async {
+    test('suspension waits for startup and prevents a sidecar restart', () async {
       final home = await Directory.systemTemp.createTemp('bridge_host');
-      try {
+      addTearDown(() => home.delete(recursive: true));
+      final daemon = File('${home.path}/daemon.dart');
+      await daemon.writeAsString(
+        "import 'dart:async';\n"
+        'void main() { Timer.periodic(const Duration(seconds: 1), (_) {}); }\n',
+      );
+      final locating = Completer<void>();
+      final binary = Completer<CliproxyBinary>();
+      final supervisor = CliproxySupervisor(
+        secrets: MemorySecretStore(),
+        hermesHome: home.path,
+        locateBinary: () {
+          if (!locating.isCompleted) locating.complete();
+          return binary.future;
+        },
+        supervisorFactory:
+            ({required executable, required args, environment}) => Supervisor(
+              executable: Platform.resolvedExecutable,
+              arguments: [daemon.path],
+            ),
+        probe: (_, _) async => true,
+      );
+      addTearDown(supervisor.dispose);
+      final host = SupervisorBridgeHost(
+        secrets: MemorySecretStore(),
+        hermesHome: home.path,
+        supervisor: supervisor,
+      );
+      final starting = host.ensureStarted();
+      await locating.future;
+      var stopped = false;
+      final suspending = host.suspend().then((_) => stopped = true);
+      await expectLater(host.ensureStarted(), throwsStateError);
+      expect(stopped, isFalse);
+      binary.complete(
+        const CliproxyBinary(path: '/sidecar/cliproxy', sha256: 'b'),
+      );
+      await starting;
+      await suspending;
+      expect(supervisor.state, SupervisorState.stopped);
+      await expectLater(host.ensureStarted(), throwsStateError);
+      host.resume();
+      await host.ensureStarted();
+      expect(supervisor.state, SupervisorState.running);
+    });
+
+    test(
+      'concurrent requests share one failed startup and can retry',
+      () async {
+        var attempts = 0;
+        final binary = Completer<CliproxyBinary>();
+        final locating = Completer<void>();
         final supervisor = CliproxySupervisor(
           secrets: MemorySecretStore(),
-          hermesHome: home.path,
-          locateBinary: () async =>
-              const CliproxyBinary(path: '/sidecar/cliproxy', sha256: 'b'),
-          supervisorFactory:
-              ({required executable, required args, environment}) => Supervisor(
-                executable: Platform.resolvedExecutable,
-                arguments: const ['--version'],
-              ),
-          probe: (_, _) async => true,
+          hermesHome: '/unused',
+          locateBinary: () {
+            attempts++;
+            if (!locating.isCompleted) locating.complete();
+            return binary.future;
+          },
         );
+        addTearDown(supervisor.dispose);
         final host = SupervisorBridgeHost(
           secrets: MemorySecretStore(),
-          hermesHome: home.path,
+          hermesHome: '/unused',
           supervisor: supervisor,
         );
-        final connection = await host.ensureStarted();
-        expect(connection.baseUrl.host, '127.0.0.1');
-        expect(connection.apiKey, isNotEmpty);
-        expect(connection.managementKey, isNotEmpty);
-        expect(identical(host.supervisor, supervisor), isTrue);
-        await supervisor.dispose();
-      } finally {
-        await home.delete(recursive: true);
-      }
-    });
+        final first = expectLater(host.ensureStarted(), throwsStateError);
+        final second = expectLater(host.ensureStarted(), throwsStateError);
+        await locating.future;
+        binary.completeError(StateError('binary unavailable'));
+        await Future.wait([first, second]);
+        expect(attempts, 1);
+        await expectLater(host.ensureStarted(), throwsStateError);
+        expect(attempts, 2);
+      },
+    );
   });
 
   group('HermusePluginInstaller', () {

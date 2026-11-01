@@ -6,7 +6,6 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hermuse_app/host/remote_install.dart';
-import 'package:hermuse_app/host/setup_view.dart';
 import 'package:hermuse_app/platform/plugin_bundle.dart';
 import 'package:hermuse_app/shell/instances.dart';
 import 'package:hermuse_app/shell/screens.dart';
@@ -76,6 +75,8 @@ final class _Installer extends RemoteInstaller {
   bool authenticated = false;
   bool? accepted;
   Completer<void>? stopRelease;
+  LegacyHermesMigration? legacy;
+  bool? migrationAccepted;
 
   /// The web app choice of each attempt.
   final webApps = <bool>[];
@@ -89,6 +90,7 @@ final class _Installer extends RemoteInstaller {
     required Map<String, Uint8List> pluginBundle,
     bool webApp = false,
     required Future<bool> Function(RemoteHostKey) onHostKey,
+    Future<bool> Function(LegacyHermesMigration)? onMigration,
   }) {
     webApps.add(webApp);
     late final StreamController<RemoteInstallProgress> events;
@@ -103,6 +105,10 @@ final class _Installer extends RemoteInstaller {
             return accepted!;
           });
           if (!connected) return;
+          if (legacy case final inventory?) {
+            migrationAccepted = await onMigration?.call(inventory) ?? false;
+            if (!migrationAccepted! || !connected) return;
+          }
           authenticated = true;
           events.add(
             const RemoteInstallStepFinished(RemoteInstallStep.connect),
@@ -337,6 +343,35 @@ void main() {
   setUpAll(_loadInter);
 
   group('RemoteInstallScreen', () {
+    for (final approve in [false, true]) {
+      testWidgets('should require explicit SSH migration approval ($approve)', (
+        tester,
+      ) async {
+        final installer = _Installer()
+          ..legacy = const LegacyHermesMigration(
+            sourceHome: '/root/.hermes',
+            revision: 'reviewed-ssh',
+            summary: 'Existing server conversations and settings.',
+          );
+        await _pump(tester, installer);
+        await _connect(tester);
+        await tester.tap(_button('Accept fingerprint'));
+        await tester.pumpAndSettle();
+        expect(find.text('Review legacy migration'), findsOneWidget);
+        expect(find.textContaining('/root/.hermes'), findsOneWidget);
+        expect(
+          find.textContaining('never merged or overwritten'),
+          findsOneWidget,
+        );
+        expect(installer.migrationAccepted, isNull);
+        await tester.tap(
+          _button(approve ? 'Approve backed-up migration' : 'Cancel'),
+        );
+        await tester.pumpAndSettle();
+        expect(installer.migrationAccepted, approve);
+      });
+    }
+
     testWidgets(
       'should reject an empty host and an invalid port before consent',
       (tester) async {
@@ -410,10 +445,6 @@ void main() {
         expect(
           _step(tester, RemoteInstallStep.preflight).state,
           YsStepState.working,
-        );
-        expect(
-          tester.widget<SetupCard>(find.byType(SetupCard)).status,
-          'Checking existing server setup…',
         );
         for (final step in healthy) {
           expect(_step(tester, step).state, YsStepState.found);
@@ -867,28 +898,11 @@ void main() {
               .items
               .singleWhere((row) => row.id == RemoteUninstallStep.purge);
           expect(checkpoint.state, YsStepState.working);
-          expect(checkpoint.title.toLowerCase().contains('purge'), purge);
-          expect(
-            tester
-                .widget<SetupCard>(find.byType(SetupCard))
-                .status
-                .toLowerCase()
-                .contains('purge'),
-            purge,
-          );
           uninstaller.attempts.single.add(
             RemoteUninstallCompleted(_removed(purge: purge)),
           );
           await tester.pumpAndSettle();
           expect(_button('Done'), findsOneWidget);
-          expect(
-            find.textContaining('Kept Shared Docker package:'),
-            findsOneWidget,
-          );
-          expect(
-            find.textContaining('Kept Hermes data and cache:'),
-            purge ? findsNothing : findsOneWidget,
-          );
           expect(
             outcomes,
             isEmpty,

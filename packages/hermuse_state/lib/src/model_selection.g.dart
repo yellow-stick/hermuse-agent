@@ -58,7 +58,7 @@ final class ModelSelectionStateProvider
   /// [StateError].
   ModelSelectionStateProvider._({
     required ModelSelectionStateFamily super.from,
-    required (String, String) super.argument,
+    required (String, String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'modelSelectionProvider',
@@ -93,7 +93,7 @@ final class ModelSelectionStateProvider
 }
 
 String _$modelSelectionStateHash() =>
-    r'8b501975543188e0060bdadde641b4ead5f796ce';
+    r'55c8d31148059b0fe0076179d7a2bdf1f145cf30';
 
 /// Per-provider model selection (≤2: newest large + newest small by default).
 ///
@@ -117,7 +117,7 @@ final class ModelSelectionStateFamily extends $Family
           AsyncValue<ModelSelection>,
           ModelSelection,
           FutureOr<ModelSelection>,
-          (String, String)
+          (String, String, {String profile})
         > {
   ModelSelectionStateFamily._()
     : super(
@@ -143,11 +143,14 @@ final class ModelSelectionStateFamily extends $Family
   /// bridge cards with usable bridge credentials. Anything else throws
   /// [StateError].
 
-  ModelSelectionStateProvider call(String instanceId, String providerId) =>
-      ModelSelectionStateProvider._(
-        argument: (instanceId, providerId),
-        from: this,
-      );
+  ModelSelectionStateProvider call(
+    String instanceId,
+    String providerId, {
+    String profile = 'default',
+  }) => ModelSelectionStateProvider._(
+    argument: (instanceId, providerId, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'modelSelectionProvider';
@@ -169,11 +172,16 @@ final class ModelSelectionStateFamily extends $Family
 /// [StateError].
 
 abstract class _$ModelSelectionState extends $AsyncNotifier<ModelSelection> {
-  late final _$args = ref.$arg as (String, String);
+  late final _$args = ref.$arg as (String, String, {String profile});
   String get instanceId => _$args.$1;
   String get providerId => _$args.$2;
+  String get profile => _$args.profile;
 
-  FutureOr<ModelSelection> build(String instanceId, String providerId);
+  FutureOr<ModelSelection> build(
+    String instanceId,
+    String providerId, {
+    String profile = 'default',
+  });
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
@@ -186,7 +194,10 @@ abstract class _$ModelSelectionState extends $AsyncNotifier<ModelSelection> {
               Object?,
               Object?
             >;
-    return element.handleCreate(ref, () => build(_$args.$1, _$args.$2));
+    return element.handleCreate(
+      ref,
+      () => build(_$args.$1, _$args.$2, profile: _$args.profile),
+    );
   }
 }
 
@@ -219,7 +230,7 @@ final class AvailableModelsProvider
   /// one broken provider never empties the picker.
   AvailableModelsProvider._({
     required AvailableModelsFamily super.from,
-    required String super.argument,
+    required (String, {String profile}) super.argument,
   }) : super(
          retry: null,
          name: r'availableModelsProvider',
@@ -235,7 +246,7 @@ final class AvailableModelsProvider
   String toString() {
     return r'availableModelsProvider'
         ''
-        '($argument)';
+        '$argument';
   }
 
   @$internal
@@ -246,8 +257,8 @@ final class AvailableModelsProvider
 
   @override
   FutureOr<List<AvailableModel>> create(Ref ref) {
-    final argument = this.argument as String;
-    return availableModels(ref, argument);
+    final argument = this.argument as (String, {String profile});
+    return availableModels(ref, argument.$1, profile: argument.profile);
   }
 
   @override
@@ -261,7 +272,7 @@ final class AvailableModelsProvider
   }
 }
 
-String _$availableModelsHash() => r'30510f1d23a19e097172339cc1c21df9f0229be1';
+String _$availableModelsHash() => r'1cea514882e3e63ff4081425930a1e0454d99980';
 
 /// Flat chat-picker list: union of the ≤2 selected models of every connected
 /// provider on [instanceId] (native + bridge). Providers whose selection
@@ -269,7 +280,11 @@ String _$availableModelsHash() => r'30510f1d23a19e097172339cc1c21df9f0229be1';
 /// one broken provider never empties the picker.
 
 final class AvailableModelsFamily extends $Family
-    with $FunctionalFamilyOverride<FutureOr<List<AvailableModel>>, String> {
+    with
+        $FunctionalFamilyOverride<
+          FutureOr<List<AvailableModel>>,
+          (String, {String profile})
+        > {
   AvailableModelsFamily._()
     : super(
         retry: null,
@@ -284,8 +299,13 @@ final class AvailableModelsFamily extends $Family
   /// fails to load (disconnected mid-flight, empty discovery) are skipped, so
   /// one broken provider never empties the picker.
 
-  AvailableModelsProvider call(String instanceId) =>
-      AvailableModelsProvider._(argument: instanceId, from: this);
+  AvailableModelsProvider call(
+    String instanceId, {
+    String profile = 'default',
+  }) => AvailableModelsProvider._(
+    argument: (instanceId, profile: profile),
+    from: this,
+  );
 
   @override
   String toString() => r'availableModelsProvider';

@@ -6,6 +6,8 @@ build/
 .idea/
 .DS_Store
 coverage/
+.orca/drops
+-background
 
 # Local renders and references (tests, brand previews, design reference
 # captures with personal data). Regenerated on demand, never committed.

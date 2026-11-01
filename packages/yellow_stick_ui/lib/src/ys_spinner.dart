@@ -21,7 +21,21 @@ final class _YsSpinnerState extends State<YsSpinner>
   late final AnimationController _turn = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 900),
-  )..repeat();
+  );
+
+  /// Reduced motion: the arc stands still.
+  bool _still = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (_still) {
+      _turn.stop();
+    } else if (!_turn.isAnimating) {
+      _turn.repeat();
+    }
+  }
 
   @override
   void dispose() {
@@ -38,8 +52,9 @@ final class _YsSpinnerState extends State<YsSpinner>
       size: widget.size,
       strokeWidth: widget.strokeWidth,
     );
-    // Muted (e.g. widget tests settling): static arc, no scheduled frames.
-    if (!TickerMode.valuesOf(context).enabled) return arc;
+    // Muted (e.g. widget tests settling) or reduced motion: static arc, no
+    // scheduled frames.
+    if (_still || !TickerMode.valuesOf(context).enabled) return arc;
     return RotationTransition(turns: _turn, child: arc);
   }
 }

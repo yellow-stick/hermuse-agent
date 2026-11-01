@@ -58,4 +58,24 @@ void main() {
     await store.delete('a');
     expect(data, {'hermes/b/session_token': 'keep'});
   });
+
+  test('Linux values carry no character a plaintext keyring breaks on, and '
+      'values stored before still read', () async {
+    final data = <String, String>{'hermes/a/session_token': 'legacy'};
+    FlutterSecureStoragePlatform.instance = TestFlutterSecureStoragePlatform(
+      data,
+    );
+    final store = SecureSecretStore(const FlutterSecureStorage(), true, true);
+    await store.write('a', 'password', r'p"w\d');
+    await store.write('a', 'username', 'admin');
+
+    for (final stored in data.values) {
+      expect(stored, isNot(matches(r'["\\]')));
+    }
+    expect(await store.read('a', 'password'), r'p"w\d');
+    expect(await store.read('a', 'username'), 'admin');
+    expect(await store.read('a', 'session_token'), 'legacy');
+    await store.delete('a');
+    expect(data, isEmpty);
+  });
 }

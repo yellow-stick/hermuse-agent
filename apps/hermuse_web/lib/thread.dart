@@ -5,6 +5,7 @@ import 'package:jaspr/jaspr.dart';
 import 'package:hermes_client/hermes_client.dart';
 import 'package:hermuse_chat/hermuse_chat.dart';
 import 'package:hermuse_state/hermuse_state.dart';
+import 'package:universal_web/web.dart' as web;
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 import 'package:yellow_stick_ui_web/yellow_stick_ui_web.dart';
 
@@ -136,6 +137,7 @@ class HermuseThread extends StatelessComponent {
                       customAnswer: customAnswer,
                       onCustomAnswer: onCustomAnswer,
                       instanceId: instanceId,
+                      profile: controller.profile,
                       taskTitle: browserTaskTitle(thread.title),
                       onOpenComputer: controller.openComputer,
                     ),
@@ -406,8 +408,17 @@ class HermuseThread extends StatelessComponent {
           color: .variable('--line'),
           width: ysHairline.px,
         ),
-        raw: {'backdrop-filter': 'blur(12px)', 'box-shadow': 'var(--raised)'},
+        raw: {
+          'backdrop-filter': 'blur(12px)',
+          'box-shadow': 'var(--raised)',
+          'transition':
+              'border-color ${YsMotion.fast}ms ${YsEase.standard.css}',
+        },
       ),
+      // Writing (the message field focused) eases the outline to the accent
+      // ink, like the kit's input boxes; the attach and send buttons keep it.
+      css('.hermuse-composer:has(.hermuse-composer-input :focus)')
+          .styles(raw: {'border-color': 'var(--primary-ink)'}),
       css('.hermuse-composer-attach').styles(
         padding: .only(left: 8.px),
         color: .variable('--content-muted'),
@@ -470,21 +481,68 @@ class HermuseThread extends StatelessComponent {
           width: OutlineWidth(2.px),
         ),
       ),
-      // Per-turn model picker above the composer.
+      // Model chip above the composer, its icon over the attach button:
+      // quiet text until hovered, focused or open.
       css('.hermuse-modelpick').styles(
         display: .flex,
-        flexDirection: .row,
-        alignItems: .center,
-        gap: .all(8.px),
+        padding: .only(left: 6.px),
+        // Tightens the column gap: the chip belongs to the composer.
+        margin: .only(bottom: (-2).px),
       ),
+      css('.hermuse-modelpick-anchor')
+          .styles(display: .inlineFlex, maxWidth: 100.percent),
+      css('.hermuse-modelpick-chip', [
+        css('&').styles(
+          height: 28.px,
+          maxWidth: 100.percent,
+          padding: .only(left: 8.px, right: 6.px),
+          radius: .circular(YsRadius.pill.px),
+          display: .inlineFlex,
+          alignItems: .center,
+          gap: .all(6.px),
+          color: .variable('--content-muted'),
+          backgroundColor: Colors.transparent,
+          cursor: .pointer,
+          border: .none,
+          fontSize: 13.px,
+          lineHeight: 18.px,
+          raw: {
+            'font-family': 'inherit',
+            'transition':
+                'background-color ${YsMotion.fast}ms, '
+                'color ${YsMotion.fast}ms',
+          },
+        ),
+        css('&:hover').styles(
+          color: .variable('--content'),
+          backgroundColor: .variable('--neutral-film'),
+        ),
+        css('&[aria-expanded="true"]').styles(
+          color: .variable('--content'),
+          backgroundColor: .variable('--neutral-film'),
+        ),
+        css('&:focus-visible').styles(
+          outline: Outline(
+            style: OutlineStyle.solid,
+            color: .variable('--primary'),
+            width: OutlineWidth(2.px),
+          ),
+        ),
+      ]),
       css('.hermuse-modelpick-label').styles(
-        fontSize: 13.px,
-        lineHeight: 18.px,
-        color: .variable('--content-muted'),
-        raw: {'flex-shrink': '0'},
+        overflow: .hidden,
+        textOverflow: .ellipsis,
+        raw: {'white-space': 'nowrap'},
       ),
-      css('.hermuse-modelpick-select').styles(flex: .grow(1)),
-      css('.hermuse-modelpick-select .ys-select').styles(height: 36.px),
+      css('.hermuse-modelpick-chevron').styles(
+        display: .inlineFlex,
+        margin: .only(left: (-2).px),
+        raw: {'transition': 'transform ${YsMotion.fast}ms'},
+      ),
+      css(
+        '.hermuse-modelpick-chip[aria-expanded="true"] '
+        '.hermuse-modelpick-chevron',
+      ).styles(raw: {'transform': 'rotate(180deg)'}),
       // Inline sign-in form (replaces Retry when credentials are stale).
       css('.hermuse-signin').styles(
         display: .flex,
@@ -536,6 +594,8 @@ class HermuseThread extends StatelessComponent {
     ),
     css.media(MediaQuery.raw(ysReducedMotionQuery), [
       css('.hermuse-morph-in').styles(raw: {'animation': 'none'}),
+      css('.hermuse-thread .hermuse-composer')
+          .styles(raw: {'transition': 'none'}),
     ]),
   ];
 }
@@ -575,15 +635,15 @@ class _MorphState extends State<_Morph> {
 /// message; until then (empty title) it is "New side chat".
 String sideChatTitle(String title) => title.isEmpty ? 'New side chat' : title;
 
-/// Floating thread header: the "Chats" pill over the main chat,
-/// "Back to main chat" + a pill titled with the side chat over a side chat.
-/// Both pills open the chats panel; nothing shows while it is open.
+/// Floating agent picker with chat and side-chat navigation.
+/// The agent picker remains available when the chats panel is open.
 class HermuseThreadHeader extends StatelessComponent {
   const HermuseThreadHeader({
     required this.state,
     required this.panelOpen,
     required this.onOpenPanel,
     required this.onBackToMain,
+    required this.agentPicker,
     super.key,
   });
 
@@ -591,14 +651,15 @@ class HermuseThreadHeader extends StatelessComponent {
   final bool panelOpen;
   final VoidCallback onOpenPanel;
   final VoidCallback onBackToMain;
+  final Component agentPicker;
 
   @override
   Component build(BuildContext context) {
-    if (panelOpen) return .fragment([]);
     final thread = state.activeThread;
     final side = thread.id != state.mainThread.id;
     return div(classes: 'hermuse-floating-left hermuse-thread-head', [
-      if (side)
+      agentPicker,
+      if (side && !panelOpen)
         YsTooltip(
           side: YsTooltipSide.below,
           label: 'Back to main chat',
@@ -609,12 +670,14 @@ class HermuseThreadHeader extends StatelessComponent {
             builder: (context, press) => YsIconView(YsIcon.arrowLeft, size: 18),
           ),
         ),
-      YsButton.pill(
-        icon: YsIcon.menu,
-        label: side ? sideChatTitle(thread.title) : 'Chats',
-        tooltip: 'Open chat and side chats',
-        onPressed: onOpenPanel,
-      ),
+      if (!panelOpen)
+        YsButton.pill(
+          icon: YsIcon.menu,
+          label: side ? sideChatTitle(thread.title) : 'Chats',
+          tooltip: 'Open chat and side chats',
+          onPressed: onOpenPanel,
+          glass: true,
+        ),
     ]);
   }
 
@@ -627,7 +690,7 @@ class HermuseThreadHeader extends StatelessComponent {
         flexDirection: .row,
         alignItems: .center,
         gap: .all(8.px),
-        raw: {'max-width': 'calc(100% - 24px)'},
+        raw: {'max-width': 'calc(100% - 72px)'},
       ),
       css('.ys-btn-pill').styles(raw: {'min-width': '0', 'max-width': '320px'}),
       css('.ys-btn-pill-label').styles(
@@ -644,17 +707,10 @@ class HermuseThreadHeader extends StatelessComponent {
         justifyContent: .center,
         alignItems: .center,
         color: .variable('--content'),
-        backgroundColor: .variable('--paper-clear'),
         cursor: .pointer,
         border: .none,
-        raw: {
-          'backdrop-filter': 'blur(12px)',
-          'flex-shrink': '0',
-          'box-shadow': 'var(--raised)',
-        },
+        raw: {'flex-shrink': '0'},
       ),
-      css('.hermuse-thread-back:hover')
-          .styles(backgroundColor: .variable('--neutral-film')),
       css('.hermuse-thread-back:focus-visible').styles(
         outline: Outline(
           style: OutlineStyle.solid,
@@ -663,6 +719,7 @@ class HermuseThreadHeader extends StatelessComponent {
         ),
       ),
     ]),
+    ...ysGlassRules('.hermuse-thread-head .hermuse-thread-back'),
   ];
 }
 
@@ -771,59 +828,87 @@ class _SignInBannerState extends State<_SignInBanner> {
   }
 }
 
-/// Composer model picker: the thread's current model ([ChatController.setModel]
-/// switches it session-scoped) over the available-models flat union.
-class _ModelPicker extends StatelessComponent {
+/// Composer model chip: a quiet pill above the composer's left edge naming
+/// the thread's current model; it washes in on hover and while its menu is
+/// open. The menu lists the available-models flat union with the current one
+/// checked; a pick switches the thread session-scoped
+/// ([ChatController.setModel]). Desktop `_ModelPicker` parity.
+class _ModelPicker extends StatefulComponent {
   const _ModelPicker({required this.instanceId, required this.controller});
 
   final String instanceId;
   final ChatController controller;
 
   @override
+  State<_ModelPicker> createState() => _ModelPickerState();
+}
+
+class _ModelPickerState extends State<_ModelPicker> {
+  final _trigger = GlobalNodeKey<web.HTMLElement>();
+
+  /// Where the menu opens; null while it is closed.
+  YsMenuAnchor? _menu;
+
+  void _openMenu() {
+    final trigger = _trigger.currentNode;
+    if (trigger == null) return;
+    setState(() => _menu = YsMenuAnchor.of(trigger));
+  }
+
+  @override
   Component build(BuildContext context) => HermuseWatch(
-    provider: availableModelsProvider(instanceId),
+    provider: availableModelsProvider(
+      component.instanceId,
+      profile: component.controller.profile,
+    ),
     builder: (context, models) {
       final all = models.value ?? const <AvailableModel>[];
       if (all.isEmpty) return .fragment([]);
-      final current = controller.state.model;
-      final value = current == null
-          ? ''
-          : '${current.provider}/${current.model}';
-      final known =
-          value.isEmpty ||
-          all.any(
-            (entry) =>
-                entry.providerId == current!.provider &&
-                entry.modelId == current.model,
-          );
+      final current = component.controller.state.model;
+      final label = current?.model ?? 'Default model';
       return div(classes: 'hermuse-modelpick', [
-        span(classes: 'hermuse-modelpick-label', [.text('Model')]),
-        div(classes: 'hermuse-modelpick-select', [
-          YsSelect(
-            value: known ? value : '',
-            options: [
-              ('', 'Instance default'),
-              for (final model in all)
-                (
-                  '${model.providerId}/${model.modelId}',
-                  '${model.providerName} · ${model.modelId}',
-                ),
-            ],
-            onChanged: (v) {
-              if (v.isEmpty) return;
-              final slash = v.indexOf('/');
-              unawaited(
-                controller.setModel(
-                  ChatModel(
-                    provider: v.substring(0, slash),
-                    model: v.substring(slash + 1),
-                  ),
-                ),
-              );
+        span(key: _trigger, classes: 'hermuse-modelpick-anchor', [
+          YsPressable(
+            onPressed: _openMenu,
+            label: 'Thread model: $label',
+            classes: 'hermuse-modelpick-chip',
+            attributes: {
+              'aria-haspopup': 'menu',
+              'aria-expanded': '${_menu != null}',
             },
-            label: 'Thread model',
+            builder: (context, press) => .fragment([
+              YsIconView(YsIcon.sparkles, size: 14),
+              span(classes: 'hermuse-modelpick-label', [.text(label)]),
+              span(classes: 'hermuse-modelpick-chevron', [
+                YsIconView(YsIcon.chevronDown, size: 14),
+              ]),
+            ]),
           ),
         ]),
+        if (_menu case final at?)
+          YsMenu(
+            label: 'Thread model',
+            anchor: at,
+            onClose: () => setState(() => _menu = null),
+            items: [
+              for (final model in all)
+                YsMenuItem(
+                  label: '${model.providerName} · ${model.modelId}',
+                  checked:
+                      current != null &&
+                      model.providerId == current.provider &&
+                      model.modelId == current.model,
+                  onSelected: () => unawaited(
+                    component.controller.setModel(
+                      ChatModel(
+                        provider: model.providerId,
+                        model: model.modelId,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
       ]);
     },
   );

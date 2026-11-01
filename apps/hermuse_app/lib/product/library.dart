@@ -8,6 +8,7 @@ import 'package:hermuse_state/hermuse_state.dart';
 import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
+import '../shell/agents.dart' show nativeAgentProfileProvider;
 import 'plugin_gate.dart';
 import 'route.dart';
 import 'widgets.dart';
@@ -100,7 +101,12 @@ final class _LibraryState extends ConsumerState<_Library> {
 
   @override
   Widget build(BuildContext context) {
-    final artifacts = ref.watch(artifactsProvider(widget.instanceId));
+    final artifacts = ref.watch(
+      artifactsProvider(
+        widget.instanceId,
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
+    );
     final all = artifacts.value ?? const <Artifact>[];
     final detail = all.where((a) => a.id == _detailId).firstOrNull;
     final editing = _editing;
@@ -380,7 +386,13 @@ final class _SystemFileEditorState extends ConsumerState<_SystemFileEditor> {
     });
     try {
       await ref
-          .read(systemFileProvider(widget.instanceId, widget.name).notifier)
+          .read(
+            systemFileProvider(
+              widget.instanceId,
+              widget.name,
+              profile: ref.read(nativeAgentProfileProvider),
+            ).notifier,
+          )
           .save(_draft.text);
       if (mounted) widget.onClose();
     } on Object catch (e) {
@@ -391,7 +403,13 @@ final class _SystemFileEditorState extends ConsumerState<_SystemFileEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final file = ref.watch(systemFileProvider(widget.instanceId, widget.name));
+    final file = ref.watch(
+      systemFileProvider(
+        widget.instanceId,
+        widget.name,
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
+    );
     final content = file.value?.content;
     if (!_loaded && content != null) {
       _loaded = true;
@@ -435,7 +453,12 @@ final class _Reflections extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = YsTheme.of(context);
-    final reflections = ref.watch(reflectionsProvider(instanceId));
+    final reflections = ref.watch(
+      reflectionsProvider(
+        instanceId,
+        profile: ref.watch(nativeAgentProfileProvider),
+      ),
+    );
     final all = reflections.value ?? const <Reflection>[];
     if (reflections.isLoading && reflections.value == null) {
       return const HermuseRouteSub('Loading reflections…');

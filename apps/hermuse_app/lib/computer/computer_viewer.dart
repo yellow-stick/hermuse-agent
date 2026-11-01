@@ -84,8 +84,12 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
     super.dispose();
   }
 
-  Future<ComputerClient> _computer() =>
-      ref.read(computerClientProvider(widget.instanceId).future);
+  Future<ComputerClient> _computer() => ref.read(
+    computerClientProvider(
+      widget.instanceId,
+      profile: widget.controller.profile,
+    ).future,
+  );
 
   void _pollIn(Duration delay) {
     _poll?.cancel();
@@ -273,7 +277,12 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
   @override
   Widget build(BuildContext context) {
     // Keeps the instance's computer client while the viewer shows.
-    ref.watch(computerClientProvider(widget.instanceId));
+    ref.watch(
+      computerClientProvider(
+        widget.instanceId,
+        profile: widget.controller.profile,
+      ),
+    );
     final palette = YsTheme.of(context);
     final chat = widget.controller.state;
     final thread = chat.activeThread;
@@ -311,8 +320,6 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
               if (host.isNotEmpty) host,
             ].join(' · '),
           );
-    const black = Color(0xFF000000);
-    final blue = Color(browserBlue.value);
     final actions = [
       if (session != null)
         _ModeToggle(
@@ -329,29 +336,20 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
             color: palette.error,
             size: 18,
           ),
-          foreground: view.inControl
-              ? palette.contentColor
-              : palette.errorColor,
-          background: view.inControl ? Color(browserPillGrey.value) : null,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          foreground: palette.contentColor,
+          padding: const EdgeInsets.symmetric(horizontal: YsSpace.md),
           onPressed: () => unawaited(widget.controller.interrupt()),
         ),
       if (view.inControl)
-        BrowserPill(
+        YsButton.primary(
           label: 'Done',
           semanticLabel: 'Hand browser control back to the assistant',
-          leading: const YsIconWidget(YsIcon.check, size: 18, color: black),
-          foreground: black,
-          background: blue,
-          radius: 24,
+          icon: YsIcon.check,
           onPressed: session?.release,
         )
       else
-        BrowserPill(
+        YsButton.primary(
           label: 'Take control of the browser',
-          foreground: black,
-          background: blue,
-          radius: 24,
           onPressed: session?.take,
         ),
     ];
@@ -382,7 +380,7 @@ final class _ComputerViewerState extends ConsumerState<ComputerViewer> {
               ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(YsSpace.lg),
                 child: live
                     ? _Screen(
                         frame: frame,
@@ -432,7 +430,7 @@ BrowserBlock? _latestBrowserBlock(Thread thread) {
   return null;
 }
 
-/// Viewer header: title and subtitle, [actions], close. Below 640 px the
+/// Viewer header: title and subtitle, [actions], close. Below 800 px the
 /// actions wrap on a row of their own.
 final class _Header extends StatelessWidget {
   const _Header({
@@ -442,8 +440,6 @@ final class _Header extends StatelessWidget {
     required this.onClose,
   });
 
-  static const _titleStyle = YsTextStyle(15, 20, YsWeight.semibold);
-
   final String title;
   final String subtitle;
   final List<Widget> actions;
@@ -452,27 +448,46 @@ final class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = YsTheme.of(context);
-    final heading = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    final heading = Row(
       children: [
-        Text(
-          title,
-          style: _titleStyle.flutter.copyWith(color: palette.contentColor),
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.ellipsis,
-        ),
-        if (subtitle.isNotEmpty)
-          Text(
-            subtitle,
-            style: YsType.small.flutter.copyWith(
-              color: palette.contentMutedColor,
-            ),
-            maxLines: 1,
-            softWrap: false,
-            overflow: TextOverflow.ellipsis,
+        ExcludeSemantics(
+          child: YsIconWidget(
+            YsIcon.monitor,
+            size: 20,
+            color: palette.contentMutedColor,
           ),
+        ),
+        const SizedBox(width: YsSpace.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: YsType.heading.flutter.copyWith(
+                  color: palette.contentColor,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (subtitle.isNotEmpty) ...[
+                const SizedBox(height: YsSpace.xxs),
+                Text(
+                  subtitle,
+                  style: YsType.small.flutter.copyWith(
+                    color: palette.contentMutedColor,
+                  ),
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
+        ),
       ],
     );
     final close = YsButton.icon(
@@ -484,22 +499,26 @@ final class _Header extends StatelessWidget {
     );
     return DecoratedBox(
       decoration: BoxDecoration(
+        color: palette.paperColor,
         border: Border(
           bottom: BorderSide(color: palette.lineColor, width: ysHairline),
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 5, 12, 5),
+        padding: const EdgeInsets.symmetric(
+          horizontal: YsSpace.lg,
+          vertical: YsSpace.md,
+        ),
         child: LayoutBuilder(
-          builder: (context, constraints) => constraints.maxWidth >= 640
+          builder: (context, constraints) => constraints.maxWidth >= 800
               ? Row(
                   children: [
                     Expanded(child: heading),
                     for (final action in actions) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: YsSpace.sm),
                       action,
                     ],
-                    const SizedBox(width: 8),
+                    const SizedBox(width: YsSpace.sm),
                     close,
                   ],
                 )
@@ -509,15 +528,15 @@ final class _Header extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(child: heading),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: YsSpace.sm),
                         close,
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: YsSpace.sm),
                     Wrap(
                       alignment: WrapAlignment.end,
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: YsSpace.sm,
+                      runSpacing: YsSpace.sm,
                       children: actions,
                     ),
                   ],
@@ -541,10 +560,10 @@ final class _ModeToggle extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.neutralAmbientColor,
-        borderRadius: BorderRadius.circular(YsRadius.pill),
+        borderRadius: BorderRadius.circular(YsRadius.row),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(4),
+        padding: const EdgeInsets.all(YsSpace.xs),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -560,27 +579,35 @@ final class _ModeToggle extends StatelessWidget {
                 child: YsPressable(
                   onPressed: () => onChanged(value),
                   excludeSemantics: true,
-                  builder: (context, state) => ExcludeSemantics(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: YsMotion.fast),
-                      height: 28,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: mode == value
-                            ? palette.neutralFilmColor
-                            : state.hovered
-                            ? palette.neutralWashColor
-                            : const Color(0x00000000),
-                        borderRadius: BorderRadius.circular(YsRadius.segment),
-                      ),
-                      child: Center(
-                        widthFactor: 1,
-                        child: Text(
-                          label,
-                          style: YsType.label.flutter.copyWith(
-                            color: mode == value
-                                ? palette.contentColor
-                                : palette.contentMutedColor,
+                  builder: (context, state) => YsFocusRing(
+                    visible: state.focused,
+                    radius: YsRadius.option,
+                    child: ExcludeSemantics(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: YsMotion.fast),
+                        height: 28,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: YsSpace.md,
+                        ),
+                        decoration: BoxDecoration(
+                          color: mode == value
+                              ? palette.paperColor
+                              : state.hovered
+                              ? palette.neutralWashColor
+                              : palette.neutralAmbientColor.withValues(
+                                  alpha: 0,
+                                ),
+                          borderRadius: BorderRadius.circular(YsRadius.option),
+                        ),
+                        child: Center(
+                          widthFactor: 1,
+                          child: Text(
+                            label,
+                            style: YsType.label.flutter.copyWith(
+                              color: mode == value
+                                  ? palette.contentColor
+                                  : palette.contentMutedColor,
+                            ),
                           ),
                         ),
                       ),
@@ -611,8 +638,12 @@ final class _Tabs extends StatelessWidget {
   final ValueChanged<String> onClose;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+  Widget build(BuildContext context) => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    padding: const EdgeInsets.symmetric(
+      horizontal: YsSpace.lg,
+      vertical: YsSpace.sm,
+    ),
     child: Semantics(
       container: true,
       role: SemanticsRole.tabBar,
@@ -621,17 +652,15 @@ final class _Tabs extends StatelessWidget {
       child: Row(
         children: [
           for (final (i, tab) in tabs.indexed) ...[
-            if (i > 0) const SizedBox(width: 4),
-            Flexible(
-              child: SizedBox(
-                width: 172,
-                height: 40,
-                child: _Tab(
-                  tab: tab,
-                  completed: !(working && tab.active),
-                  onActivate: () => onActivate(tab.id),
-                  onClose: () => onClose(tab.id),
-                ),
+            if (i > 0) const SizedBox(width: YsSpace.xs),
+            SizedBox(
+              width: 172,
+              height: 40,
+              child: _Tab(
+                tab: tab,
+                completed: !(working && tab.active),
+                onActivate: () => onActivate(tab.id),
+                onClose: () => onClose(tab.id),
               ),
             ),
           ],
@@ -671,56 +700,66 @@ final class _Tab extends StatelessWidget {
       child: YsPressable(
         onPressed: onActivate,
         excludeSemantics: true,
-        builder: (context, state) => AnimatedContainer(
-          duration: const Duration(milliseconds: YsMotion.fast),
-          padding: const EdgeInsets.only(left: 12, right: 6),
-          decoration: BoxDecoration(
-            color: tab.active
-                ? palette.neutralAmbientColor
-                : state.hovered
-                ? palette.neutralWashColor
-                : const Color(0x00000000),
-            borderRadius: BorderRadius.circular(YsRadius.row),
-          ),
-          child: Row(
-            children: [
-              ExcludeSemantics(
-                child: completed
-                    ? YsIconWidget(
-                        YsIcon.checkCircle,
-                        size: 16,
-                        color: palette.successColor,
-                      )
-                    : const BrowserGlyphIcon(
-                        BrowserGlyph.globe,
-                        color: browserBlue,
-                        size: 16,
-                      ),
+        builder: (context, state) => YsFocusRing(
+          visible: state.focused,
+          radius: YsRadius.row,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: YsMotion.fast),
+            padding: const EdgeInsets.only(left: YsSpace.md, right: YsSpace.xs),
+            decoration: BoxDecoration(
+              color: tab.active
+                  ? palette.paperColor
+                  : state.hovered
+                  ? palette.neutralWashColor
+                  : palette.canvasColor,
+              border: Border.all(
+                color: tab.active
+                    ? palette.lineColor
+                    : palette.lineColor.withValues(alpha: 0),
+                width: ysHairline,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ExcludeSemantics(
-                  child: Text(
-                    host,
-                    style: YsType.small.flutter.copyWith(
-                      color: tab.active
-                          ? palette.contentColor
-                          : palette.contentMutedColor,
+              borderRadius: BorderRadius.circular(YsRadius.row),
+            ),
+            child: Row(
+              children: [
+                ExcludeSemantics(
+                  child: completed
+                      ? YsIconWidget(
+                          YsIcon.checkCircle,
+                          size: 16,
+                          color: palette.successColor,
+                        )
+                      : BrowserGlyphIcon(
+                          BrowserGlyph.globe,
+                          color: palette.primaryInk,
+                          size: 16,
+                        ),
+                ),
+                const SizedBox(width: YsSpace.sm),
+                Expanded(
+                  child: ExcludeSemantics(
+                    child: Text(
+                      host,
+                      style: YsType.small.flutter.copyWith(
+                        color: tab.active
+                            ? palette.contentColor
+                            : palette.contentMutedColor,
+                      ),
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 1,
-                    softWrap: false,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-              YsButton.icon(
-                icon: YsIcon.close,
-                onPressed: onClose,
-                semanticLabel: 'Close browser window: $host',
-                size: 24,
-                iconSize: 14,
-              ),
-            ],
+                YsButton.icon(
+                  icon: YsIcon.close,
+                  onPressed: onClose,
+                  semanticLabel: 'Close browser window: $host',
+                  size: 24,
+                  iconSize: 14,
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -928,7 +967,7 @@ final class _ScreenState extends State<_Screen> {
                 child: SizedBox.fromSize(
                   size: size,
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(YsRadius.row),
                     child: FrameImage(widget.frame),
                   ),
                 ),

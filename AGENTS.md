@@ -29,8 +29,8 @@ as pull requests from forks (`CONTRIBUTING.md`).
 - Primary transport: Hermes dashboard `/api/ws` JSON-RPC, same as Hermes Desktop.
 - Behaviour is shared: both apps render `hermuse_chat`'s `ChatState` and call the same `ChatController` — an action must not behave differently on web and native.
 - Design tokens are the contract: both kits read values from `yellow_stick_ui_core` (Luna-vocabulary roles: `canvas`, `paper`, `content`, `primary`, `line`, …) and render their own way. Never hardcode a color, radius, spacing or icon in a widget; add it to the core package.
-- Main/side chat model: one Main chat per Hermes instance, every other thread a side chat (parent = main session). Sessions from other surfaces (CLI, Telegram, …) are not listed.
-- Product data lives as Markdown + JSON under `HERMES_HOME/hermuse/` (readable, editable, backed up with any tool).
+- Main/side chat model: one Main chat per agent profile on each Hermes instance, every other thread a side chat (parent = that profile's main session). Session identities, caches and selection are scoped by instance + profile. Sessions from other surfaces (CLI, Telegram, …) are not listed.
+- Each agent is a real Hermes profile with an independent SOUL prompt. Product data lives as Markdown + JSON under that profile's `HERMES_HOME/hermuse/` (readable, editable, backed up with any tool).
 - Naming: product is "Hermuse Agent" by Yellow Stick. Never "Muse"/"Hermes" in the product name; compatibility is phrased "works with Hermes Agent". Keep the README trademark disclaimer as-is.
 
 ## Setup and commands

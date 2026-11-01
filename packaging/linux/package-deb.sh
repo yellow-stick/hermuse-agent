@@ -65,7 +65,7 @@ cp -a "$bundle/." "$opt/"
 # Content stays byte-identical; only modes are normalised for dpkg/lintian.
 find "$opt" -type d -exec chmod 0755 {} +
 find "$opt" -type f -exec chmod 0644 {} +
-chmod 0755 "$opt/$HERMUSE_BINARY" "$opt/$HERMUSE_BUNDLE_CLIPROXY" "$opt/$HERMUSE_BUNDLE_HELPER"
+chmod 0755 "$opt/$HERMUSE_BINARY" "$opt/$HERMUSE_BUNDLE_CLIPROXY" "$opt/$HERMUSE_BUNDLE_HELPER" "$opt/$HERMUSE_BUNDLE_SERVICE"
 ln -s "/opt/$HERMUSE_DEB_PACKAGE/$HERMUSE_BINARY" "$root/usr/bin/$HERMUSE_DEB_PACKAGE"
 
 render_template "$HERMUSE_LINUX_DIR/hermuse-agent.desktop.in" \

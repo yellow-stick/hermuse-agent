@@ -45,6 +45,7 @@ final class DashboardTransport implements HermesTransport {
       httpClient,
       baseUrl: instance.baseUrl,
       sessionToken: token,
+      profile: instance.profile ?? 'default',
     );
     final transport = DashboardTransport._(
       instance,
@@ -110,7 +111,11 @@ final class DashboardTransport implements HermesTransport {
   Future<R> call<P extends JsonObject, R extends Object>(
     HermesMethod<P, R> method,
     P params,
-  ) => _peer.call(method, params);
+  ) async {
+    final json = params.toJson();
+    json.putIfAbsent('profile', () => instance.profile ?? 'default');
+    return method.decodeResult(await _peer.request(method.name, json));
+  }
 
   @override
   void onServerRequest(ServerRequestHandler handler) {

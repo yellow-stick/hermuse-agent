@@ -6,6 +6,7 @@ import 'package:yellow_stick_ui/yellow_stick_ui.dart';
 import 'package:yellow_stick_ui_core/yellow_stick_ui_core.dart';
 
 import '../product/destination.dart';
+import 'settings.dart';
 
 /// Left navigation rail: destinations, instance switcher, settings.
 final class HermuseRail extends ConsumerWidget {
@@ -13,14 +14,16 @@ final class HermuseRail extends ConsumerWidget {
     required this.destination,
     required this.onDestination,
     required this.onSettings,
+    this.onInstances,
     super.key,
   });
 
   final HermuseDestination destination;
   final ValueChanged<HermuseDestination> onDestination;
 
-  /// Opens instance management (connections, setup, sign-in).
+  /// Opens the app's appearance and account preferences.
   final VoidCallback onSettings;
+  final VoidCallback? onInstances;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -107,10 +110,14 @@ final class HermuseRail extends ConsumerWidget {
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _RailItem(
-                icon: YsIcon.menu,
-                label: 'Settings',
-                onPressed: onSettings,
+              SettingsMenu(
+                onSettings: onSettings,
+                onInstances: onInstances,
+                builder: (context, menu) => _RailItem(
+                  icon: YsIcon.menu,
+                  label: 'Settings',
+                  onPressed: menu.open,
+                ),
               ),
             ],
           ),

@@ -501,6 +501,7 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
     final id = _chat.state.mainThread.id;
     return ThreadRef(
       instanceId: _chat.instanceId,
+      profile: _chat.profile,
       sessionId: id.startsWith('draft-') ? '' : id,
     );
   }
@@ -1174,7 +1175,11 @@ class _HermuseSidebarState extends State<HermuseSidebar> {
       entry.pinned ? 'unpin this side chat' : 'pin this side chat',
       () => setSideChatPinned(
         HermuseScope.container.read(hermuseDatabaseProvider),
-        ThreadRef(instanceId: _chat.instanceId, sessionId: entry.threadId),
+        ThreadRef(
+          instanceId: _chat.instanceId,
+          sessionId: entry.threadId,
+          profile: _chat.profile,
+        ),
         pinned: !entry.pinned,
       ),
     ),
