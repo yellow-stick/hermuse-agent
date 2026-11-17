@@ -14,8 +14,8 @@ dependencies:
   hermuse_demo: ^0.1.0
   hermuse_state: ^0.1.0
   http: ^1.6.0
-  jaspr: ^0.23.5
-  jaspr_riverpod: ^0.4.6
+  jaspr: ^0.24.0-beta.1
+  jaspr_riverpod: ^0.5.0-beta-0
   riverpod: ^3.4.3
   universal_web: ^1.1.1
   uuid: ^4.6.0
@@ -23,12 +23,12 @@ dependencies:
   yellow_stick_ui_web: ^0.1.0
 
 dev_dependencies:
-  build_runner: ^2.15.1
-  build_web_compilers: ^4.8.5
-  jaspr_builder: ^0.23.5
-  jaspr_test: ^0.23.5
+  build_runner: ^2.16.2
+  build_web_compilers: ^4.8.12
+  jaspr_builder: ^0.24.0-beta.1
+  jaspr_test: ^0.24.0-beta.1
   lints: ^6.1.0
-  test: ^1.26.0
+  test: ^1.32.0
 
 jaspr:
   mode: static
